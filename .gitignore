@@ -1,0 +1,11 @@
+.gradle/
+.idea/
+**/build/
+*.iml
+local.properties
+
+# Release signing secrets
+keystore.properties
+nineesim-keystore.properties
+*.jks
+*.keystore
