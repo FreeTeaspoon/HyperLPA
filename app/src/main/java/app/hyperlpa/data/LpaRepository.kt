@@ -15,6 +15,8 @@ import app.hyperlpa.domain.model.LpaOperation
 import app.hyperlpa.domain.model.NotificationOperation
 import app.hyperlpa.domain.model.OperationFailure
 import app.hyperlpa.domain.model.ProfileClass
+import app.hyperlpa.domain.model.ProfileDownloadPreview
+import app.hyperlpa.domain.model.ProfileDownloadResult
 import app.hyperlpa.domain.model.ProfileInfo
 import app.hyperlpa.domain.model.ProfileState
 import app.hyperlpa.domain.model.ReaderInfo
@@ -46,6 +48,7 @@ import net.typeblog.lpac_jni.ProfileDownloadInput
 import net.typeblog.lpac_jni.ProfileDownloadState
 import net.typeblog.lpac_jni.RemoteProfileInfo
 import java.time.Instant
+import java.util.concurrent.CompletableFuture
 
 @Immutable
 data class LpaRepositoryState(
@@ -54,6 +57,8 @@ data class LpaRepositoryState(
     val profiles: List<ProfileInfo> = emptyList(),
     val notifications: List<LpaNotification> = emptyList(),
     val euiccInfo: EuiccInfo? = null,
+    val pendingProfileDownload: ProfileDownloadPreview? = null,
+    val completedProfileDownload: ProfileDownloadResult? = null,
     val operation: LpaOperation = LpaOperation.Idle,
     val failure: OperationFailure? = null,
     val initialized: Boolean = false,
@@ -78,6 +83,8 @@ class LpaRepository(
     )
     private val endpointById = linkedMapOf<String, ReaderEndpoint>()
     private val operationMutex = Mutex()
+    private val downloadDecisionLock = Any()
+    private var pendingDownloadDecision: CompletableFuture<Boolean>? = null
     private var settings = AppSettings()
     private var session: LpaSession? = null
     private val mutableState = MutableStateFlow(LpaRepositoryState())
@@ -242,57 +249,92 @@ class LpaRepository(
         }
     }
 
-    suspend fun downloadProfile(request: DownloadRequest) = operationMutex.withLock {
-        withOperation(LpaOperation.Downloading(DownloadStage.PREPARING)) {
-            prepareOperationSession()
-            if (settings.notificationBeforeDownload) processNotificationsSafely("profile download preparation")
-            val assistant = requireSession().assistant
-            val profilesBeforeDownload = mutableState.value.profiles.map(ProfileInfo::iccid).toSet()
-            val initialFreeMemory = try {
-                assistant.euiccInfo2?.freeNvram
-            } catch (error: Throwable) {
-                if (error is CancellationException) throw error
-                mutableState.value.euiccInfo?.freeNonVolatileMemory
-            }
-            var remoteProfile: RemoteProfileInfo? = null
-            assistant.downloadProfile(
-                ProfileDownloadInput(
-                    address = request.smdpAddress,
-                    matchingId = request.matchingId,
-                    imei = request.imei,
-                    confirmationCode = request.confirmationCode,
-                ),
-            ) { stage ->
-                val mapped = when (stage) {
-                    is ProfileDownloadState.Preparing -> DownloadStage.PREPARING
-                    is ProfileDownloadState.Connecting -> DownloadStage.CONNECTING
-                    is ProfileDownloadState.Authenticating -> DownloadStage.AUTHENTICATING
-                    is ProfileDownloadState.ConfirmingDownload -> DownloadStage.CONFIRMING
-                    is ProfileDownloadState.Downloading -> DownloadStage.DOWNLOADING
-                    is ProfileDownloadState.Finalizing -> DownloadStage.FINALIZING
+    suspend fun downloadProfile(
+        request: DownloadRequest,
+        confirmBeforeInstall: Boolean = true,
+    ) = operationMutex.withLock {
+        mutableState.value = mutableState.value.copy(completedProfileDownload = null)
+        try {
+            withOperation(LpaOperation.Downloading(DownloadStage.PREPARING)) {
+                prepareOperationSession()
+                if (settings.notificationBeforeDownload) {
+                    processNotificationsSafely("profile download preparation")
                 }
-                val metadata = (stage as? ProfileDownloadState.ConfirmingDownload)?.metadata
-                if (metadata != null) remoteProfile = metadata
-                mutableState.value = mutableState.value.copy(
-                    operation = LpaOperation.Downloading(mapped, metadata?.name),
-                )
-                true
-            }
-            val postInstallFreeMemory = try {
-                assistant.euiccInfo2?.freeNvram
-            } catch (error: Throwable) {
-                if (error is CancellationException) throw error
-                null
-            }
-            if (settings.notificationAfterDownload) processNotificationsSafely("profile download")
-            refreshAfterMutation("Profile download")
-            val installedIccid = remoteProfile
-                ?.iccid
-                ?.takeIf(String::isNotBlank)
-                ?: mutableState.value.profiles
-                    .firstOrNull { it.iccid !in profilesBeforeDownload }
+                val assistant = requireSession().assistant
+                val profilesBeforeDownload = mutableState.value.profiles.map(ProfileInfo::iccid).toSet()
+                val initialFreeMemory = try {
+                    assistant.euiccInfo2?.freeNvram
+                } catch (error: Throwable) {
+                    if (error is CancellationException) throw error
+                    mutableState.value.euiccInfo?.freeNonVolatileMemory
+                }
+                var remoteProfile: RemoteProfileInfo? = null
+                assistant.downloadProfile(
+                    ProfileDownloadInput(
+                        address = request.smdpAddress,
+                        matchingId = request.matchingId,
+                        imei = request.imei,
+                        confirmationCode = request.confirmationCode,
+                    ),
+                ) { stage ->
+                    val mapped = when (stage) {
+                        is ProfileDownloadState.Preparing -> DownloadStage.PREPARING
+                        is ProfileDownloadState.Connecting -> DownloadStage.CONNECTING
+                        is ProfileDownloadState.Authenticating -> DownloadStage.AUTHENTICATING
+                        is ProfileDownloadState.ConfirmingDownload -> DownloadStage.CONFIRMING
+                        is ProfileDownloadState.Downloading -> DownloadStage.DOWNLOADING
+                        is ProfileDownloadState.Finalizing -> DownloadStage.FINALIZING
+                        is ProfileDownloadState.Installing -> DownloadStage.INSTALLING
+                    }
+                    val metadata = (stage as? ProfileDownloadState.ConfirmingDownload)?.metadata
+                    val installProgress = stage as? ProfileDownloadState.Installing
+                    if (metadata != null) remoteProfile = metadata
+                    if (confirmBeforeInstall && stage is ProfileDownloadState.ConfirmingDownload) {
+                        val decision = CompletableFuture<Boolean>()
+                        synchronized(downloadDecisionLock) {
+                            pendingDownloadDecision = decision
+                        }
+                        mutableState.value = mutableState.value.copy(
+                            operation = LpaOperation.Downloading(mapped, metadata?.name),
+                            pendingProfileDownload = metadata?.toPreview(
+                                request,
+                                initialFreeMemory,
+                            ) ?: request.toPreview(initialFreeMemory),
+                        )
+                        val confirmed = runCatching(decision::get).getOrDefault(false)
+                        synchronized(downloadDecisionLock) {
+                            if (pendingDownloadDecision === decision) pendingDownloadDecision = null
+                        }
+                        if (!confirmed) {
+                            mutableState.value = mutableState.value.copy(pendingProfileDownload = null)
+                        }
+                        confirmed
+                    } else {
+                        mutableState.value = mutableState.value.copy(
+                            operation = LpaOperation.Downloading(
+                                stage = mapped,
+                                profileName = metadata?.name ?: remoteProfile?.name,
+                                sentBytes = installProgress?.sentBytes,
+                                totalBytes = installProgress?.totalBytes,
+                            ),
+                        )
+                        true
+                    }
+                }
+                val postInstallFreeMemory = try {
+                    assistant.euiccInfo2?.freeNvram
+                } catch (error: Throwable) {
+                    if (error is CancellationException) throw error
+                    null
+                }
+                if (settings.notificationAfterDownload) processNotificationsSafely("profile download")
+                refreshAfterMutation("Profile download")
+                val installedIccid = remoteProfile
                     ?.iccid
-            if (installedIccid != null) {
+                    ?.takeIf(String::isNotBlank)
+                    ?: mutableState.value.profiles
+                        .firstOrNull { it.iccid !in profilesBeforeDownload }
+                        ?.iccid
                 val finalFreeMemory =
                     postInstallFreeMemory ?: mutableState.value.euiccInfo?.freeNonVolatileMemory
                 val installedBytes = if (initialFreeMemory != null && finalFreeMemory != null) {
@@ -300,21 +342,46 @@ class LpaRepository(
                 } else {
                     null
                 }
-                try {
-                    metadataStore.setCloudData(
-                        iccid = installedIccid,
-                        smdpAddress = request.smdpAddress,
-                        installedBytes = installedBytes,
-                        eid = mutableState.value.euiccInfo?.eid,
-                    )
-                } catch (error: Throwable) {
-                    if (error is CancellationException) throw error
-                    log(
-                        LogLevel.WARNING,
-                        "Nekoko Cloud",
-                        "The profile was installed, but its measured size could not be saved",
+                if (installedIccid != null) {
+                    try {
+                        metadataStore.setCloudData(
+                            iccid = installedIccid,
+                            smdpAddress = request.smdpAddress,
+                            installedBytes = installedBytes,
+                            eid = mutableState.value.euiccInfo?.eid,
+                        )
+                    } catch (error: Throwable) {
+                        if (error is CancellationException) throw error
+                        log(
+                            LogLevel.WARNING,
+                            "Nekoko Cloud",
+                            "The profile was installed, but its measured size could not be saved",
+                        )
+                    }
+                }
+                if (confirmBeforeInstall) {
+                    val previewProfile = mutableState.value.pendingProfileDownload?.profile
+                        ?: remoteProfile?.toPreview(request, initialFreeMemory)?.profile
+                        ?: request.toPreview(initialFreeMemory).profile
+                    val installedProfile = installedIccid
+                        ?.let { iccid -> mutableState.value.profiles.firstOrNull { it.iccid == iccid } }
+                        ?: previewProfile.copy(iccid = installedIccid ?: previewProfile.iccid)
+                    mutableState.value = mutableState.value.copy(
+                        pendingProfileDownload = null,
+                        completedProfileDownload = ProfileDownloadResult(
+                            profile = installedProfile,
+                            installedBytes = installedBytes,
+                            freeNonVolatileMemory = finalFreeMemory,
+                        ),
                     )
                 }
+            }
+        } finally {
+            synchronized(downloadDecisionLock) {
+                pendingDownloadDecision = null
+            }
+            if (confirmBeforeInstall && mutableState.value.completedProfileDownload == null) {
+                mutableState.value = mutableState.value.copy(pendingProfileDownload = null)
             }
         }
     }
@@ -357,6 +424,19 @@ class LpaRepository(
 
     fun clearFailure() {
         mutableState.value = mutableState.value.copy(failure = null)
+    }
+
+    fun clearProfileDownloadResult() {
+        mutableState.value = mutableState.value.copy(completedProfileDownload = null)
+    }
+
+    fun confirmProfileDownload() = resolvePendingProfileDownload(true)
+
+    fun cancelProfileDownload() = resolvePendingProfileDownload(false)
+
+    private fun resolvePendingProfileDownload(confirmed: Boolean) {
+        val decision = synchronized(downloadDecisionLock) { pendingDownloadDecision }
+        decision?.complete(confirmed)
     }
 
     private suspend fun connectInternal(endpoint: ReaderEndpoint) = withContext(ioDispatcher) {
@@ -530,10 +610,58 @@ class LpaRepository(
     }
 
     override fun close() {
+        cancelProfileDownload()
         closeSession()
         providers.forEach { (_, provider) -> provider.close() }
     }
 }
+
+private fun RemoteProfileInfo.toPreview(
+    request: DownloadRequest,
+    freeNonVolatileMemory: Int?,
+): ProfileDownloadPreview {
+    val network = decodeMccMnc(mccMnc)
+    return ProfileDownloadPreview(
+        profile = ProfileInfo(
+            iccid = iccid,
+            state = ProfileState.DISABLED,
+            name = name,
+            nickname = "",
+            providerName = providerName,
+            isdPAid = "",
+            profileClass = when (profileClass) {
+                net.typeblog.lpac_jni.ProfileClass.Operational -> ProfileClass.OPERATIONAL
+                net.typeblog.lpac_jni.ProfileClass.Testing -> ProfileClass.TESTING
+                net.typeblog.lpac_jni.ProfileClass.Provisioning -> ProfileClass.PROVISIONING
+            },
+            iconBase64 = iconBase64,
+            mcc = network?.mcc,
+            mnc = network?.mnc,
+            gid1 = gid1,
+            gid2 = gid2,
+            smdpAddress = request.smdpAddress,
+        ),
+        request = request,
+        freeNonVolatileMemory = freeNonVolatileMemory,
+    )
+}
+
+private fun DownloadRequest.toPreview(
+    freeNonVolatileMemory: Int?,
+) = ProfileDownloadPreview(
+    profile = ProfileInfo(
+        iccid = "",
+        state = ProfileState.DISABLED,
+        name = "eSIM profile",
+        nickname = "",
+        providerName = "",
+        isdPAid = "",
+        profileClass = ProfileClass.UNKNOWN,
+        smdpAddress = smdpAddress,
+    ),
+    request = this,
+    freeNonVolatileMemory = freeNonVolatileMemory,
+)
 
 private fun LocalProfileAssistant.switchProfile(
     iccid: String,

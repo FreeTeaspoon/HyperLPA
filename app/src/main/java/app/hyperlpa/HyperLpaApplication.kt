@@ -26,7 +26,7 @@ class HyperLpaApplication : Application() {
         }
         applyPredictiveBackFlag(
             getSharedPreferences(RuntimeUiPreferences, MODE_PRIVATE)
-                .getBoolean(PredictiveBackKey, false),
+                .getBoolean(PredictiveBackKey, true),
         )
     }
 
@@ -38,7 +38,7 @@ class HyperLpaApplication : Application() {
 
     fun isPredictiveBackEnabled(): Boolean =
         getSharedPreferences(RuntimeUiPreferences, MODE_PRIVATE)
-            .getBoolean(PredictiveBackKey, false)
+            .getBoolean(PredictiveBackKey, true)
 
     private fun applyPredictiveBackFlag(enabled: Boolean) {
         runCatching {

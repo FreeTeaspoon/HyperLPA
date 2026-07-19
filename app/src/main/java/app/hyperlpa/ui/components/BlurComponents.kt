@@ -27,6 +27,12 @@ fun rememberAppBackdrop(): LayerBackdrop? {
 }
 
 @Composable
+fun rememberContentBackdrop(): LayerBackdrop? {
+    if (!LocalBlurEnabled.current || !isRuntimeShaderSupported()) return null
+    return rememberLayerBackdrop { drawContent() }
+}
+
+@Composable
 fun BlurredBar(
     backdrop: LayerBackdrop?,
     modifier: Modifier = Modifier,

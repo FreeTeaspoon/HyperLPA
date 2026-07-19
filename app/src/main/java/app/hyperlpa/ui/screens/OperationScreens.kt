@@ -1,17 +1,30 @@
 package app.hyperlpa.ui.screens
 
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
+import android.content.Context
+import android.graphics.Bitmap
+import android.text.format.DateFormat
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.captionBar
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,12 +34,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.hyperlpa.data.metadata.normalizeProfileTags
 import app.hyperlpa.data.metadata.providerIconKey
 import app.hyperlpa.data.settings.AppSettings
 import app.hyperlpa.domain.model.ActivityLogEntry
@@ -35,24 +52,36 @@ import app.hyperlpa.domain.model.EuiccInfo
 import app.hyperlpa.domain.model.LogLevel
 import app.hyperlpa.domain.model.LpaNotification
 import app.hyperlpa.domain.model.ProfileClass
+import app.hyperlpa.domain.model.ProfileDownloadPreview
+import app.hyperlpa.domain.model.ProfileDownloadResult
 import app.hyperlpa.domain.model.ProfileInfo
 import app.hyperlpa.domain.model.ProfileState
 import app.hyperlpa.ui.components.EmptyState
 import app.hyperlpa.ui.components.GroupedCard
 import app.hyperlpa.ui.components.ProfileArtwork
+import app.hyperlpa.ui.components.ResolvedProfileArtwork
 import app.hyperlpa.ui.components.SectionHeading
 import app.hyperlpa.ui.components.DetailLazyScaffold
+import app.hyperlpa.ui.components.FormattedProfileDisplayName
+import app.hyperlpa.ui.components.formatProfileDisplayName
+import app.hyperlpa.ui.components.rememberProfileArtworkBitmap
 import app.hyperlpa.ui.components.redactIdentifier
+import app.hyperlpa.ui.components.effect.ProfileGradientBackdrop
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import kotlin.math.roundToInt
+import top.yukonga.miuix.kmp.basic.BasicComponent
+import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
 import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.IconButton
+import top.yukonga.miuix.kmp.basic.ProgressIndicatorDefaults
 import top.yukonga.miuix.kmp.basic.Surface
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
@@ -61,9 +90,14 @@ import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.BankCards
 import top.yukonga.miuix.kmp.icon.extended.Delete
 import top.yukonga.miuix.kmp.icon.extended.Download
+import top.yukonga.miuix.kmp.icon.extended.Edit
+import top.yukonga.miuix.kmp.icon.extended.ExpandLess
+import top.yukonga.miuix.kmp.icon.extended.ExpandMore
 import top.yukonga.miuix.kmp.icon.extended.Info
 import top.yukonga.miuix.kmp.icon.extended.Messages
+import top.yukonga.miuix.kmp.icon.extended.Ok
 import top.yukonga.miuix.kmp.icon.extended.Refresh
+import top.yukonga.miuix.kmp.icon.extended.Scan
 import top.yukonga.miuix.kmp.icon.extended.Search
 import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
@@ -76,6 +110,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 fun ProfileDetailsScreen(
     profile: ProfileInfo?,
     settings: AppSettings,
+    suggestedTags: Set<String>,
     operatorIcon: ByteArray?,
     hasProfileIcon: Boolean,
     hasProviderIcon: Boolean,
@@ -85,24 +120,56 @@ fun ProfileDetailsScreen(
     onDelete: () -> Unit,
     onSetTags: (Set<String>) -> Unit,
     onSetReminder: (String, Instant?) -> Unit,
+    onRequestNotificationPermission: ((Boolean) -> Unit) -> Unit,
     onSetIcon: (uri: String?, applyToProvider: Boolean) -> Unit,
     onApplyIconToProvider: () -> Unit,
 ) {
     var showRename by remember { mutableStateOf(false) }
     var nickname by remember(profile?.nickname) { mutableStateOf(profile?.nickname.orEmpty()) }
     var showDelete by remember { mutableStateOf(false) }
+    var showDeleteConfirmation by remember { mutableStateOf(false) }
     var showTags by remember { mutableStateOf(false) }
-    var tagsText by remember(profile?.tags) { mutableStateOf(profile?.tags?.joinToString(", ").orEmpty()) }
+    var editableTags by remember(profile?.tags) { mutableStateOf(profile?.tags.orEmpty()) }
+    var newTag by remember { mutableStateOf("") }
     var showReminder by remember { mutableStateOf(false) }
     var showIconOptions by remember { mutableStateOf(false) }
+    var showRemoveProfileIconConfirmation by remember { mutableStateOf(false) }
     var pickForProvider by remember { mutableStateOf(false) }
+    val context = LocalContext.current
     val providerLabel = profile?.providerName?.trim().orEmpty().ifBlank { "this provider" }
     val canShareByProvider = providerIconKey(profile?.providerName) != null
     val pickIcon = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let { onSetIcon(it.toString(), pickForProvider) }
     }
+    val displayName = remember(profile, settings.phoneFormatStrategy) {
+        profile?.let { formatProfileDisplayName(it, settings.phoneFormatStrategy) }
+    }
+    val formattedNickname = remember(profile, settings.phoneFormatStrategy) {
+        profile?.nickname?.takeIf(String::isNotBlank)?.let { nicknameValue ->
+            formatProfileDisplayName(
+                rawName = nicknameValue,
+                strategy = settings.phoneFormatStrategy,
+                mcc = profile.mcc,
+                mnc = profile.mnc,
+                iccid = profile.iccid,
+            ).fullText
+        }
+    }
+    val artworkBitmap = rememberProfileArtworkBitmap(profile, operatorIcon)
+    val collapsedTitle = displayName?.nameText
+        ?.takeIf(String::isNotBlank)
+        ?: profile?.providerName?.takeIf(String::isNotBlank)
+        ?: "Profile"
 
-    DetailLazyScaffold(title = profile?.nickname?.ifBlank { profile.name }.orEmpty().ifBlank { "Profile" }, onBack = onBack) { _ ->
+    DetailLazyScaffold(
+        title = "",
+        onBack = onBack,
+        collapsedTitle = collapsedTitle,
+        collapsedBarRevealStart = 118.dp,
+        background = if (profile == null) null else {
+            { ProfileGradientBackdrop(bitmap = artworkBitmap) }
+        },
+    ) { _ ->
         if (profile == null) {
             item {
                 EmptyState(
@@ -116,7 +183,8 @@ fun ProfileDetailsScreen(
                 ProfileHero(
                     profile = profile,
                     settings = settings,
-                    operatorIcon = operatorIcon,
+                    artworkBitmap = artworkBitmap,
+                    displayName = requireNotNull(displayName),
                 )
             }
             item { SectionHeading("Profile") }
@@ -134,7 +202,7 @@ fun ProfileDetailsScreen(
                     )
                     ArrowPreference(
                         title = "Display name",
-                        summary = profile.nickname.ifBlank { "Use profile name" },
+                        summary = formattedNickname ?: "Use profile name",
                         onClick = { showRename = true },
                     )
                     ArrowPreference(
@@ -149,7 +217,11 @@ fun ProfileDetailsScreen(
                     ArrowPreference(
                         title = "Tags",
                         summary = profile.tags.takeIf { it.isNotEmpty() }?.joinToString() ?: "No tags",
-                        onClick = { showTags = true },
+                        onClick = {
+                            editableTags = profile.tags
+                            newTag = ""
+                            showTags = true
+                        },
                     )
                     ArrowPreference(
                         title = "Reminder",
@@ -163,7 +235,7 @@ fun ProfileDetailsScreen(
                 GroupedCard {
                     ValuePreference(
                         title = "ICCID",
-                        value = redactIdentifier(profile.iccid, settings.iccidRedaction, settings.revealSensitiveData),
+                        value = redactIdentifier(profile.iccid, settings.iccidRedaction),
                     )
                     ValuePreference(title = "ISD-P AID", value = profile.isdPAid.ifBlank { "Unavailable" })
                     ValuePreference(title = "Profile class", value = profile.profileClass.displayName())
@@ -227,10 +299,27 @@ fun ProfileDetailsScreen(
     ) {
         DialogActionRow(
             onCancel = { showDelete = false },
-            confirmText = "Delete",
+            confirmText = "Continue",
             destructive = true,
             onConfirm = {
                 showDelete = false
+                showDeleteConfirmation = true
+            },
+        )
+    }
+
+    OverlayDialog(
+        show = showDeleteConfirmation,
+        title = "Delete profile permanently?",
+        summary = "This is your final confirmation. The profile will be permanently removed from the eUICC.",
+        onDismissRequest = { showDeleteConfirmation = false },
+    ) {
+        DialogActionRow(
+            onCancel = { showDeleteConfirmation = false },
+            confirmText = "Delete profile",
+            destructive = true,
+            onConfirm = {
+                showDeleteConfirmation = false
                 onDelete()
                 onBack()
             },
@@ -242,30 +331,18 @@ fun ProfileDetailsScreen(
         title = "Profile tags",
         onDismissRequest = { showTags = false },
     ) {
-        Column(Modifier.imePadding()) {
-            Text(
-                text = "Separate tags with commas. Tags stay on this device and can be used for filtering and reminders.",
-                style = MiuixTheme.textStyles.body2,
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-            )
-            Spacer(Modifier.height(14.dp))
-            TextField(
-                value = tagsText,
-                onValueChange = { tagsText = it },
-                label = "Travel, work, backup…",
-                useLabelAsPlaceholder = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(18.dp))
-            DialogActionRow(
-                onCancel = { showTags = false },
-                confirmText = "Save",
-                onConfirm = {
-                    onSetTags(tagsText.toTagSet())
-                    showTags = false
-                },
-            )
-        }
+        ProfileTagsEditor(
+            tags = editableTags,
+            suggestedTags = suggestedTags,
+            newTag = newTag,
+            onNewTagChange = { newTag = it },
+            onTagsChange = { editableTags = it },
+            onCancel = { showTags = false },
+            onSave = { tags ->
+                onSetTags(tags)
+                showTags = false
+            },
+        )
     }
 
     OverlayBottomSheet(
@@ -275,22 +352,39 @@ fun ProfileDetailsScreen(
     ) {
         Column {
             val label = profile?.nickname?.ifBlank { profile.name }.orEmpty().ifBlank { "eSIM profile" }
+            val setReminder: (Instant) -> Unit = { reminderAt ->
+                onRequestNotificationPermission { granted ->
+                    if (granted) {
+                        onSetReminder(label, reminderAt)
+                        showReminder = false
+                    } else {
+                        Toast.makeText(
+                            context,
+                            "Notification permission is required for reminders",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                }
+            }
             ReminderOption("Tomorrow", "In 24 hours") {
-                onSetReminder(label, Instant.now().plus(Duration.ofDays(1)))
-                showReminder = false
+                setReminder(Instant.now().plus(Duration.ofDays(1)))
             }
             ReminderOption("In one week", "Seven days from now") {
-                onSetReminder(label, Instant.now().plus(Duration.ofDays(7)))
-                showReminder = false
+                setReminder(Instant.now().plus(Duration.ofDays(7)))
             }
             ReminderOption("In one month", "Thirty days from now") {
-                onSetReminder(label, Instant.now().plus(Duration.ofDays(30)))
-                showReminder = false
+                setReminder(Instant.now().plus(Duration.ofDays(30)))
+            }
+            ReminderOption("Custom", "Choose a date and time") {
+                showCustomReminderPicker(context, profile?.reminderAt) { reminderAt ->
+                    setReminder(reminderAt)
+                }
             }
             ReminderOption("Clear reminder", profile?.reminderAt?.formatDateTime() ?: "No reminder scheduled") {
                 onSetReminder(label, null)
                 showReminder = false
             }
+            BottomSheetFooterSpacer()
         }
     }
 
@@ -332,8 +426,8 @@ fun ProfileDetailsScreen(
                     "Remove icon for this profile",
                     "Restore the shared provider icon or operator artwork",
                 ) {
-                    onSetIcon(null, false)
                     showIconOptions = false
+                    showRemoveProfileIconConfirmation = true
                 }
             }
             if (hasProviderIcon) {
@@ -345,7 +439,25 @@ fun ProfileDetailsScreen(
                     showIconOptions = false
                 }
             }
+            BottomSheetFooterSpacer()
         }
+    }
+
+    OverlayDialog(
+        show = showRemoveProfileIconConfirmation,
+        title = "Remove icon for this profile?",
+        summary = "The shared provider icon or operator artwork will be shown instead.",
+        onDismissRequest = { showRemoveProfileIconConfirmation = false },
+    ) {
+        DialogActionRow(
+            onCancel = { showRemoveProfileIconConfirmation = false },
+            confirmText = "Remove",
+            destructive = true,
+            onConfirm = {
+                showRemoveProfileIconConfirmation = false
+                onSetIcon(null, false)
+            },
+        )
     }
 }
 
@@ -357,19 +469,36 @@ fun DownloadProfileScreen(
     onBack: () -> Unit,
     onValueChange: (String) -> Unit,
     onScanQr: ((String?) -> Unit) -> Unit,
-    onDownload: (DownloadRequest) -> Unit,
+    onContinue: (DownloadRequest) -> Unit,
 ) {
     var localValue by remember(initialValue) { mutableStateOf(initialValue) }
     val requestResult = remember(localValue, imei) {
         runCatching { DownloadRequest.parse(localValue, imei.takeIf(String::isNotBlank)) }
     }
 
-    DetailLazyScaffold(title = "Download profile", onBack = onBack) { _ ->
+    DetailLazyScaffold(
+        title = "Download profile",
+        onBack = onBack,
+        actions = {
+            IconButton(
+                onClick = {
+                    onScanQr { scanned ->
+                        scanned?.let {
+                            localValue = it
+                            onValueChange(it)
+                        }
+                    }
+                },
+            ) {
+                Icon(MiuixIcons.Scan, contentDescription = "Scan QR code")
+            }
+        },
+    ) { _ ->
         item {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp).imePadding()) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
                 Spacer(Modifier.height(14.dp))
                 Text(
-                    text = "Paste an LPA activation code or enter an SM-DP+ address. HyperLPA talks directly to the provisioning server.",
+                    text = "Paste an LPA activation code or enter an SM-DP+ address.",
                     style = MiuixTheme.textStyles.body1,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     modifier = Modifier.padding(horizontal = 4.dp),
@@ -383,27 +512,13 @@ fun DownloadProfileScreen(
                     },
                     label = "LPA:1\$address\$matching-id or SM-DP+ address",
                     useLabelAsPlaceholder = true,
-                    minLines = 3,
-                    maxLines = 7,
+                    minLines = 2,
+                    maxLines = 6,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Spacer(Modifier.height(12.dp))
-                TextButton(
-                    text = "Scan QR code",
-                    onClick = {
-                        onScanQr { scanned ->
-                            scanned?.let {
-                                localValue = it
-                                onValueChange(it)
-                            }
-                        }
-                    },
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                Spacer(Modifier.height(10.dp))
             }
         }
-        item { SectionHeading("Provisioning request") }
         item {
             GroupedCard {
                 val request = requestResult.getOrNull()
@@ -424,25 +539,313 @@ fun DownloadProfileScreen(
             }
         }
         item {
+            val primaryColors = ButtonDefaults.buttonColorsPrimary()
             Button(
-                onClick = { requestResult.getOrNull()?.let(onDownload) },
+                onClick = { requestResult.getOrNull()?.let(onContinue) },
                 enabled = requestResult.isSuccess && localValue.isNotBlank() && !busy,
-                colors = ButtonDefaults.buttonColorsPrimary(),
+                colors = primaryColors.copy(
+                    disabledColor = if (busy) primaryColors.color else primaryColors.disabledColor,
+                    disabledContentColor = if (busy) {
+                        primaryColors.contentColor
+                    } else {
+                        primaryColors.disabledContentColor
+                    },
+                ),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 18.dp)
+                    .padding(start = 12.dp, top = 10.dp, end = 12.dp, bottom = 18.dp)
                     .defaultMinSize(minHeight = 52.dp),
             ) {
                 if (busy) {
-                    CircularProgressIndicator(size = 22.dp)
-                    Spacer(Modifier.width(10.dp))
-                    Text("Downloading…")
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        CircularProgressIndicator(
+                            colors = ProgressIndicatorDefaults.progressIndicatorColors(
+                                foregroundColor = primaryColors.contentColor,
+                                disabledForegroundColor = primaryColors.contentColor,
+                                backgroundColor = primaryColors.contentColor.copy(alpha = 0.24f),
+                            ),
+                            size = 22.dp,
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text("Checking profile…")
+                    }
                 } else {
-                    Icon(MiuixIcons.Download, contentDescription = null, modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.width(10.dp))
-                    Text("Download profile")
+                    Text("Continue")
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun ProfileDownloadConfirmationScreen(
+    preview: ProfileDownloadPreview,
+    cloudIcon: ByteArray?,
+    estimatedDownloadBytes: Long?,
+    enrichmentLoading: Boolean,
+    showCancelConfirmation: Boolean,
+    onBack: () -> Unit,
+    onDownload: () -> Unit,
+    onDismissCancelConfirmation: () -> Unit,
+    onConfirmCancel: () -> Unit,
+) {
+    val profile = preview.profile
+    val artworkProfile = if (cloudIcon != null) profile.copy(iconBase64 = null) else profile
+    val displayName = profile.name.ifBlank { profile.providerName }.ifBlank { "eSIM profile" }
+    val network = listOfNotNull(profile.mcc, profile.mnc)
+        .filter(String::isNotBlank)
+        .joinToString(" ")
+        .ifBlank { "Unavailable" }
+    var moreExpanded by rememberSaveable { mutableStateOf(false) }
+
+    DetailLazyScaffold(title = "Download profile", onBack = onBack) { _ ->
+        item {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 18.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                ProfileArtwork(
+                    profile = artworkProfile,
+                    cloudIcon = cloudIcon,
+                    isEnabled = true,
+                    size = 72.dp,
+                    cornerRadius = 18.dp,
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = displayName,
+                    style = MiuixTheme.textStyles.title2,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                profile.providerName
+                    .takeIf { it.isNotBlank() && !it.equals(displayName, ignoreCase = true) }
+                    ?.let { provider ->
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = provider,
+                            style = MiuixTheme.textStyles.body1,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+            }
+        }
+        item { SectionHeading("Profile information") }
+        item {
+            GroupedCard {
+                ValuePreference(
+                    title = "Provider",
+                    value = profile.providerName.ifBlank { "Unavailable" },
+                )
+                ValuePreference(title = "ICCID", value = profile.iccid.ifBlank { "Unavailable" })
+                ValuePreference(
+                    title = "Available storage",
+                    value = preview.freeNonVolatileMemory?.let { "${formatBytes(it)} free" }
+                        ?: "Unavailable",
+                )
+                ValuePreference(
+                    title = "Estimated download size",
+                    value = when {
+                        estimatedDownloadBytes != null -> "~${formatBytes(estimatedDownloadBytes)}"
+                        enrichmentLoading -> "Checking Nekoko Cloud…"
+                        else -> "Unavailable"
+                    },
+                )
+                BasicComponent(
+                    title = "More",
+                    summary = if (moreExpanded) "Hide technical profile information" else {
+                        "Network, profile class and group identifiers"
+                    },
+                    endActions = {
+                        Icon(
+                            imageVector = if (moreExpanded) MiuixIcons.ExpandLess else MiuixIcons.ExpandMore,
+                            contentDescription = if (moreExpanded) "Show less" else "Show more",
+                            modifier = Modifier.size(22.dp),
+                        )
+                    },
+                    onClick = { moreExpanded = !moreExpanded },
+                )
+                AnimatedVisibility(
+                    visible = moreExpanded,
+                    enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+                    exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
+                ) {
+                    Column {
+                        ValuePreference(title = "Network", value = network)
+                        ValuePreference(title = "Profile class", value = profile.profileClass.displayName())
+                        profile.gid1?.takeIf(String::isNotBlank)?.let { ValuePreference("GID1", it) }
+                        profile.gid2?.takeIf(String::isNotBlank)?.let { ValuePreference("GID2", it) }
+                    }
+                }
+            }
+        }
+        item {
+            Button(
+                onClick = onDownload,
+                colors = ButtonDefaults.buttonColorsPrimary(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, top = 10.dp, end = 12.dp, bottom = 18.dp)
+                    .defaultMinSize(minHeight = 52.dp),
+            ) {
+                Icon(MiuixIcons.Download, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Download")
+            }
+        }
+    }
+
+    OverlayDialog(
+        show = showCancelConfirmation,
+        title = "Cancel profile download?",
+        summary = "Going back will close the secure provisioning session. You can return to the activation code and try again.",
+        onDismissRequest = onDismissCancelConfirmation,
+    ) {
+        DialogActionRow(
+            onCancel = onDismissCancelConfirmation,
+            cancelText = "Stay here",
+            confirmText = "Go back",
+            destructive = true,
+            onConfirm = onConfirmCancel,
+        )
+    }
+}
+
+@Composable
+fun ProfileDownloadResultScreen(
+    result: ProfileDownloadResult,
+    profile: ProfileInfo,
+    busy: Boolean,
+    onBack: () -> Unit,
+    onEnable: () -> Unit,
+    onRename: (String) -> Unit,
+    onDone: () -> Unit,
+) {
+    var showRename by remember { mutableStateOf(false) }
+    var nickname by remember(profile.nickname, profile.name) {
+        mutableStateOf(profile.nickname.ifBlank { profile.name })
+    }
+
+    DetailLazyScaffold(title = "Download profile", onBack = onBack) { _ ->
+        item {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 28.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = MiuixTheme.colorScheme.primaryContainer,
+                    contentColor = MiuixTheme.colorScheme.onPrimaryContainer,
+                ) {
+                    Icon(
+                        imageVector = MiuixIcons.Ok,
+                        contentDescription = null,
+                        modifier = Modifier.padding(22.dp).size(42.dp),
+                    )
+                }
+                Spacer(Modifier.height(20.dp))
+                Text(
+                    text = "Installation successful",
+                    style = MiuixTheme.textStyles.title1,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "${profile.providerName.ifBlank { "The profile" }} was installed on your eUICC.",
+                    style = MiuixTheme.textStyles.body1,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
+        item { SectionHeading("Storage") }
+        item {
+            GroupedCard {
+                ValuePreference(
+                    title = "Used by this profile",
+                    value = result.installedBytes?.let(::formatBytes) ?: "Unavailable",
+                )
+                ValuePreference(
+                    title = "Free storage",
+                    value = result.freeNonVolatileMemory?.let(::formatBytes) ?: "Unavailable",
+                )
+            }
+        }
+        if (profile.state != ProfileState.ENABLED && profile.iccid.isNotBlank()) {
+            item {
+                Button(
+                    onClick = onEnable,
+                    enabled = !busy,
+                    colors = ButtonDefaults.buttonColorsPrimary(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 5.dp)
+                        .defaultMinSize(minHeight = 52.dp),
+                ) {
+                    Text("Enable profile")
+                }
+            }
+        }
+        if (profile.iccid.isNotBlank()) {
+            item {
+                Button(
+                    onClick = { showRename = true },
+                    enabled = !busy,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 5.dp)
+                        .defaultMinSize(minHeight = 52.dp),
+                ) {
+                    Icon(MiuixIcons.Edit, contentDescription = null, modifier = Modifier.size(19.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Rename profile")
+                }
+            }
+        }
+        item {
+            Button(
+                onClick = onDone,
+                enabled = !busy,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, top = 5.dp, end = 12.dp, bottom = 18.dp)
+                    .defaultMinSize(minHeight = 52.dp),
+            ) {
+                Text("Done")
+            }
+        }
+    }
+
+    OverlayDialog(
+        show = showRename,
+        title = "Rename profile",
+        summary = "The nickname is stored on the eUICC.",
+        onDismissRequest = { showRename = false },
+    ) {
+        Column {
+            TextField(
+                value = nickname,
+                onValueChange = { nickname = it.take(64) },
+                label = "Profile name",
+                useLabelAsPlaceholder = true,
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(18.dp))
+            DialogActionRow(
+                onCancel = { showRename = false },
+                confirmText = "Rename",
+                onConfirm = {
+                    onRename(nickname.trim())
+                    showRename = false
+                },
+            )
         }
     }
 }
@@ -461,7 +864,7 @@ fun BatchDownloadScreen(
 
     DetailLazyScaffold(title = "Batch download", onBack = onBack) { _ ->
         item {
-            Column(Modifier.fillMaxWidth().padding(12.dp).imePadding()) {
+            Column(Modifier.fillMaxWidth().padding(12.dp)) {
                 Text(
                     text = "Enter one activation code per line. Downloads are submitted in order and serialized by the LPA engine.",
                     style = MiuixTheme.textStyles.body1,
@@ -514,6 +917,8 @@ fun EuiccDetailsScreen(
     onReset: () -> Unit,
 ) {
     var showReset by remember { mutableStateOf(false) }
+    var showResetConfirmation by remember { mutableStateOf(false) }
+    var showFinalResetConfirmation by remember { mutableStateOf(false) }
     DetailLazyScaffold(title = "eUICC information", onBack = onBack) { _ ->
         if (info == null) {
             item {
@@ -529,7 +934,7 @@ fun EuiccDetailsScreen(
                 GroupedCard {
                     ValuePreference(
                         title = "EID",
-                        value = redactIdentifier(info.eid, settings.eidRedaction, settings.revealSensitiveData),
+                        value = redactIdentifier(info.eid, settings.eidRedaction),
                     )
                     ValuePreference(title = "SAS accreditation", value = info.sasAccreditationNumber.ifBlank { "Unavailable" })
                     ValuePreference(title = "Firmware", value = info.firmwareVersion.ifBlank { "Unavailable" })
@@ -575,13 +980,139 @@ fun EuiccDetailsScreen(
     ) {
         DialogActionRow(
             onCancel = { showReset = false },
-            confirmText = "Reset",
+            confirmText = "Continue",
             destructive = true,
             onConfirm = {
                 showReset = false
+                showResetConfirmation = true
+            },
+        )
+    }
+    OverlayDialog(
+        show = showResetConfirmation,
+        title = "Reset eUICC memory now?",
+        summary = "The reset may permanently remove profiles or provisioning state.",
+        onDismissRequest = { showResetConfirmation = false },
+    ) {
+        DialogActionRow(
+            onCancel = { showResetConfirmation = false },
+            confirmText = "Continue",
+            destructive = true,
+            onConfirm = {
+                showResetConfirmation = false
+                showFinalResetConfirmation = true
+            },
+        )
+    }
+    OverlayDialog(
+        show = showFinalResetConfirmation,
+        title = "Permanently reset eUICC memory?",
+        summary = "This is your final confirmation. Any profiles or provisioning state removed by the reset cannot be recovered.",
+        onDismissRequest = { showFinalResetConfirmation = false },
+    ) {
+        DialogActionRow(
+            onCancel = { showFinalResetConfirmation = false },
+            confirmText = "Reset memory",
+            destructive = true,
+            onConfirm = {
+                showFinalResetConfirmation = false
                 onReset()
             },
         )
+    }
+}
+
+@Composable
+fun TagsAndRemindersScreen(
+    settings: AppSettings,
+    notificationPermissionGranted: Boolean,
+    onBack: () -> Unit,
+    onOpenTagManager: () -> Unit,
+    onOpenScheduledReminders: () -> Unit,
+    onSetRemindersEnabled: (Boolean) -> Unit,
+    onRequestNotificationPermission: ((Boolean) -> Unit) -> Unit,
+    onOpenNotificationSettings: () -> Unit,
+    onTestNotification: () -> Unit,
+) {
+    val context = LocalContext.current
+    val permissionRequiredMessage = "Notification permission is required for reminders"
+    val manageNotificationPermission = {
+        if (notificationPermissionGranted) {
+            onOpenNotificationSettings()
+        } else {
+            onRequestNotificationPermission { granted ->
+                if (!granted) {
+                    Toast.makeText(context, permissionRequiredMessage, Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    DetailLazyScaffold(title = "Tags & reminders", onBack = onBack) { _ ->
+        item { SectionHeading("General") }
+        item {
+            GroupedCard {
+                ArrowPreference(
+                    title = "Tag manager",
+                    summary = "View, search and edit profile tags",
+                    onClick = onOpenTagManager,
+                )
+                SwitchPreference(
+                    checked = settings.scheduledReminders,
+                    onCheckedChange = { enabled ->
+                        if (!enabled) {
+                            onSetRemindersEnabled(false)
+                        } else {
+                            onRequestNotificationPermission { granted ->
+                                if (granted) {
+                                    onSetRemindersEnabled(true)
+                                } else {
+                                    Toast.makeText(context, permissionRequiredMessage, Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                    },
+                    title = "Profile reminders",
+                    summary = "Schedule notifications for profile dates and events",
+                )
+            }
+        }
+        item { SectionHeading("Notifications") }
+        item {
+            GroupedCard {
+                ArrowPreference(
+                    title = "Notification permission",
+                    summary = if (notificationPermissionGranted) "Permissions active" else "Permissions required",
+                    endActions = {
+                        if (!notificationPermissionGranted) {
+                            TextButton(
+                                text = "Enable",
+                                onClick = manageNotificationPermission,
+                            )
+                        }
+                    },
+                    onClick = manageNotificationPermission,
+                )
+                ArrowPreference(
+                    title = "Test notification",
+                    summary = "Verify reminder notification delivery",
+                    onClick = {
+                        onRequestNotificationPermission { granted ->
+                            if (granted) {
+                                onTestNotification()
+                            } else {
+                                Toast.makeText(context, permissionRequiredMessage, Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    },
+                )
+                ArrowPreference(
+                    title = "View scheduled reminders",
+                    summary = "Manage upcoming profile notifications",
+                    onClick = onOpenScheduledReminders,
+                )
+            }
+        }
     }
 }
 
@@ -592,35 +1123,81 @@ fun TagManagerScreen(
     onSetTags: (String, Set<String>) -> Unit,
 ) {
     var selected by remember { mutableStateOf<ProfileInfo?>(null) }
-    var tagsText by remember { mutableStateOf("") }
-    val allTags = profiles.flatMap { it.tags }.groupingBy(String::lowercase).eachCount().toList().sortedByDescending { it.second }
+    var editableTags by remember { mutableStateOf(emptySet<String>()) }
+    var newTag by remember { mutableStateOf("") }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    val allTags = profiles
+        .flatMap(ProfileInfo::tags)
+        .groupBy(String::lowercase)
+        .map { (_, tags) -> tags.first() to tags.size }
+        .sortedWith(compareByDescending<Pair<String, Int>> { it.second }.thenBy { it.first.lowercase() })
+    val visibleTags = allTags.filter { (tag, _) ->
+        searchQuery.isBlank() || tag.contains(searchQuery, ignoreCase = true)
+    }
+    val filteredProfiles = profiles.filter { profile ->
+        searchQuery.isBlank() || listOf(
+            profile.nickname,
+            profile.name,
+            profile.providerName,
+            profile.tags.joinToString(" "),
+        ).any { it.contains(searchQuery, ignoreCase = true) }
+    }
 
     DetailLazyScaffold(title = "Profile tags", onBack = onBack) { _ ->
         if (profiles.isEmpty()) {
             item { EmptyState("No profiles", "Connect an eUICC to organise its profiles.", icon = MiuixIcons.BankCards) }
         } else {
-            item { SectionHeading("Tag overview") }
+            item {
+                TextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    label = "Search tags or profiles",
+                    useLabelAsPlaceholder = true,
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                )
+            }
+            item { SectionHeading("Active tags") }
             item {
                 GroupedCard {
                     if (allTags.isEmpty()) {
                         ArrowPreference(title = "No tags yet", summary = "Open a profile below to add tags", enabled = false)
+                    } else if (visibleTags.isEmpty()) {
+                        ArrowPreference(title = "No matching tags", summary = "Profile matches may still appear below", enabled = false)
                     } else {
-                        allTags.forEach { (tag, count) -> ValuePreference(tag, "$count ${if (count == 1) "profile" else "profiles"}") }
+                        visibleTags.forEach { (tag, count) ->
+                            ArrowPreference(
+                                title = tag,
+                                summary = "$count ${if (count == 1) "profile" else "profiles"}",
+                                onClick = { searchQuery = tag },
+                            )
+                        }
                     }
                 }
             }
             item { SectionHeading("Profiles") }
-            item {
-                GroupedCard {
-                    profiles.forEach { profile ->
-                        ArrowPreference(
-                            title = profile.nickname.ifBlank { profile.name.ifBlank { "eSIM profile" } },
-                            summary = profile.tags.takeIf { it.isNotEmpty() }?.joinToString() ?: "No tags",
-                            onClick = {
-                                selected = profile
-                                tagsText = profile.tags.joinToString(", ")
-                            },
-                        )
+            if (filteredProfiles.isEmpty()) {
+                item {
+                    EmptyState(
+                        title = "No tags found",
+                        message = "Try a different tag or profile name.",
+                        icon = MiuixIcons.Search,
+                    )
+                }
+            } else {
+                item {
+                    GroupedCard {
+                        filteredProfiles.forEach { profile ->
+                            ArrowPreference(
+                                title = profile.nickname.ifBlank { profile.name.ifBlank { "eSIM profile" } },
+                                summary = profile.tags.takeIf { it.isNotEmpty() }?.joinToString() ?: "No tags",
+                                onClick = {
+                                    selected = profile
+                                    editableTags = profile.tags
+                                    newTag = ""
+                                },
+                            )
+                        }
                     }
                 }
             }
@@ -631,24 +1208,18 @@ fun TagManagerScreen(
         title = selected?.nickname?.ifBlank { selected?.name.orEmpty() }?.ifBlank { "Profile tags" },
         onDismissRequest = { selected = null },
     ) {
-        Column(Modifier.imePadding()) {
-            TextField(
-                value = tagsText,
-                onValueChange = { tagsText = it },
-                label = "Comma-separated tags",
-                useLabelAsPlaceholder = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(18.dp))
-            DialogActionRow(
-                onCancel = { selected = null },
-                confirmText = "Save",
-                onConfirm = {
-                    selected?.let { onSetTags(it.iccid, tagsText.toTagSet()) }
-                    selected = null
-                },
-            )
-        }
+        ProfileTagsEditor(
+            tags = editableTags,
+            suggestedTags = allTags.mapTo(linkedSetOf()) { it.first },
+            newTag = newTag,
+            onNewTagChange = { newTag = it },
+            onTagsChange = { editableTags = it },
+            onCancel = { selected = null },
+            onSave = { tags ->
+                selected?.let { onSetTags(it.iccid, tags) }
+                selected = null
+            },
+        )
     }
 }
 
@@ -656,36 +1227,61 @@ fun TagManagerScreen(
 fun ScheduledRemindersScreen(
     profiles: List<ProfileInfo>,
     onBack: () -> Unit,
+    onOpen: (ProfileInfo) -> Unit,
     onClear: (ProfileInfo) -> Unit,
 ) {
     val scheduled = profiles.filter { it.reminderAt != null }.sortedBy { it.reminderAt }
+    val now = Instant.now()
+    val upcoming = scheduled.filter { it.reminderAt?.isAfter(now) == true }
+    val pastDue = scheduled.filterNot { it.reminderAt?.isAfter(now) == true }
     DetailLazyScaffold(title = "Scheduled reminders", onBack = onBack) { _ ->
         if (scheduled.isEmpty()) {
             item {
                 EmptyState(
                     title = "No reminders",
-                    message = "Open a profile and schedule a reminder for tomorrow, next week, or next month.",
+                    message = "Open a profile and schedule a reminder for a preset or custom date.",
                     icon = MiuixIcons.Messages,
                 )
             }
         } else {
-            item { SectionHeading("Upcoming") }
-            item {
-                GroupedCard {
-                    scheduled.forEach { profile ->
-                        ArrowPreference(
-                            title = profile.nickname.ifBlank { profile.name.ifBlank { "eSIM profile" } },
-                            summary = profile.reminderAt?.formatDateTime(),
-                            endActions = {
-                                TextButton(text = "Clear", onClick = { onClear(profile) })
-                            },
-                            enabled = false,
-                        )
+            if (upcoming.isNotEmpty()) {
+                item { SectionHeading("Upcoming") }
+                item {
+                    GroupedCard {
+                        upcoming.forEach { profile ->
+                            ReminderManagerPreference(profile, onOpen, onClear)
+                        }
+                    }
+                }
+            }
+            if (pastDue.isNotEmpty()) {
+                item { SectionHeading("Past due") }
+                item {
+                    GroupedCard {
+                        pastDue.forEach { profile ->
+                            ReminderManagerPreference(profile, onOpen, onClear)
+                        }
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun ReminderManagerPreference(
+    profile: ProfileInfo,
+    onOpen: (ProfileInfo) -> Unit,
+    onClear: (ProfileInfo) -> Unit,
+) {
+    ArrowPreference(
+        title = profile.nickname.ifBlank { profile.name.ifBlank { "eSIM profile" } },
+        summary = profile.reminderAt?.formatDateTime(),
+        endActions = {
+            TextButton(text = "Clear", onClick = { onClear(profile) })
+        },
+        onClick = { onOpen(profile) },
+    )
 }
 
 @Composable
@@ -759,27 +1355,50 @@ fun LogsScreen(
 private fun ProfileHero(
     profile: ProfileInfo,
     settings: AppSettings,
-    operatorIcon: ByteArray?,
+    artworkBitmap: Bitmap?,
+    displayName: FormattedProfileDisplayName,
 ) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        ProfileArtwork(
+        ResolvedProfileArtwork(
             profile = profile,
-            cloudIcon = operatorIcon,
+            bitmap = artworkBitmap,
             isEnabled = profile.state == ProfileState.ENABLED,
             size = 78.dp,
             cornerRadius = 20.dp,
         )
         Spacer(Modifier.height(16.dp))
-        Text(
-            text = profile.nickname.ifBlank { profile.name.ifBlank { "eSIM profile" } },
-            style = MiuixTheme.textStyles.title1,
-            fontWeight = FontWeight.Bold,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
+        if (displayName.hasPhoneNumber) {
+            if (displayName.nameText.isNotEmpty()) {
+                Text(
+                    text = displayName.nameText,
+                    style = MiuixTheme.textStyles.title1,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                )
+            }
+            Text(
+                text = displayName.phoneText,
+                style = MiuixTheme.textStyles.title1,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+            )
+        } else {
+            Text(
+                text = displayName.fullText,
+                style = MiuixTheme.textStyles.title1,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+            )
+        }
         Spacer(Modifier.height(4.dp))
         Text(
             text = profile.providerName.ifBlank { "Unknown operator" },
@@ -788,7 +1407,7 @@ private fun ProfileHero(
         )
         Spacer(Modifier.height(5.dp))
         Text(
-            text = redactIdentifier(profile.iccid, settings.iccidRedaction, settings.revealSensitiveData),
+            text = redactIdentifier(profile.iccid, settings.iccidRedaction),
             style = MiuixTheme.textStyles.footnote1,
             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
         )
@@ -797,9 +1416,15 @@ private fun ProfileHero(
 
 @Composable
 private fun ValuePreference(title: String, value: String) {
-    ArrowPreference(
+    BasicComponent(
         title = title,
         summary = value,
+        titleColor = BasicComponentDefaults.titleColor(
+            disabledColor = MiuixTheme.colorScheme.onBackground,
+        ),
+        summaryColor = BasicComponentDefaults.summaryColor(
+            disabledColor = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        ),
         enabled = false,
     )
 }
@@ -807,6 +1432,151 @@ private fun ValuePreference(title: String, value: String) {
 @Composable
 private fun ReminderOption(title: String, summary: String, onClick: () -> Unit) {
     ArrowPreference(title = title, summary = summary, onClick = onClick)
+}
+
+@Composable
+private fun ProfileTagsEditor(
+    tags: Set<String>,
+    suggestedTags: Set<String>,
+    newTag: String,
+    onNewTagChange: (String) -> Unit,
+    onTagsChange: (Set<String>) -> Unit,
+    onCancel: () -> Unit,
+    onSave: (Set<String>) -> Unit,
+) {
+    val availableSuggestions = suggestedTags
+        .filter { suggestion -> tags.none { it.equals(suggestion, ignoreCase = true) } }
+        .sortedBy(String::lowercase)
+        .take(6)
+    val canAddTag = newTag.split(',', '\n').any { it.trim().isNotEmpty() } && tags.size < 16
+
+    Column {
+        Text(
+            text = "Tags stay on this device and make profiles easier to find and organise.",
+            style = MiuixTheme.textStyles.body2,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        )
+        Spacer(Modifier.height(14.dp))
+        Text(
+            text = "Active tags",
+            style = MiuixTheme.textStyles.body1,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.height(8.dp))
+        if (tags.isEmpty()) {
+            Text(
+                text = "No tags assigned to this profile",
+                style = MiuixTheme.textStyles.body2,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+            )
+        } else {
+            GroupedCard {
+                tags.sortedBy(String::lowercase).forEach { tag ->
+                    BasicComponent(
+                        title = tag,
+                        summary = "Text tag",
+                        endActions = {
+                            TextButton(
+                                text = "Remove",
+                                onClick = { onTagsChange(tags.filterNot { it == tag }.toSet()) },
+                            )
+                        },
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        TextField(
+            value = newTag,
+            onValueChange = { onNewTagChange(it.take(256)) },
+            label = "Text tag (e.g. Work, Travel)",
+            useLabelAsPlaceholder = true,
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        TextButton(
+            text = "Add tag",
+            enabled = canAddTag,
+            onClick = {
+                onTagsChange(tags.withTagInput(newTag))
+                onNewTagChange("")
+            },
+            colors = ButtonDefaults.textButtonColorsPrimary(),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (availableSuggestions.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "Existing tags",
+                style = MiuixTheme.textStyles.body1,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(8.dp))
+            GroupedCard {
+                availableSuggestions.forEach { suggestion ->
+                    ArrowPreference(
+                        title = suggestion,
+                        summary = "Add to this profile",
+                        onClick = { onTagsChange(tags.withTagInput(suggestion)) },
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        DialogActionRow(
+            onCancel = onCancel,
+            confirmText = "Save",
+            onConfirm = { onSave(tags.withTagInput(newTag)) },
+        )
+        BottomSheetFooterSpacer()
+    }
+}
+
+private fun showCustomReminderPicker(
+    context: Context,
+    reminderAt: Instant?,
+    onReminderSelected: (Instant) -> Unit,
+) {
+    val now = Instant.now()
+    val zoneId = ZoneId.systemDefault()
+    val initialDateTime = (reminderAt?.takeIf { it.isAfter(now) } ?: now.plus(Duration.ofDays(1)))
+        .atZone(zoneId)
+
+    DatePickerDialog(
+        context,
+        { _, year, month, dayOfMonth ->
+            val selectedDate = LocalDate.of(year, month + 1, dayOfMonth)
+            TimePickerDialog(
+                context,
+                { _, hour, minute ->
+                    val selectedAt = selectedDate.atTime(hour, minute).atZone(zoneId).toInstant()
+                    if (selectedAt.isAfter(Instant.now())) {
+                        onReminderSelected(selectedAt)
+                    } else {
+                        Toast.makeText(context, "Choose a future date and time", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                initialDateTime.hour,
+                initialDateTime.minute,
+                DateFormat.is24HourFormat(context),
+            ).show()
+        },
+        initialDateTime.year,
+        initialDateTime.monthValue - 1,
+        initialDateTime.dayOfMonth,
+    ).apply {
+        datePicker.minDate = System.currentTimeMillis()
+        show()
+    }
+}
+
+@Composable
+private fun BottomSheetFooterSpacer() {
+    val systemBarPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() +
+        WindowInsets.captionBar.asPaddingValues().calculateBottomPadding()
+    Spacer(Modifier.height(systemBarPadding + 16.dp))
 }
 
 @Composable
@@ -879,12 +1649,13 @@ private fun LogCard(entry: ActivityLogEntry) {
 @Composable
 private fun DialogActionRow(
     onCancel: () -> Unit,
+    cancelText: String = "Cancel",
     confirmText: String,
     destructive: Boolean = false,
     onConfirm: () -> Unit,
 ) {
     Row(Modifier.fillMaxWidth()) {
-        TextButton(text = "Cancel", onClick = onCancel, modifier = Modifier.weight(1f))
+        TextButton(text = cancelText, onClick = onCancel, modifier = Modifier.weight(1f))
         Spacer(Modifier.width(16.dp))
         TextButton(
             text = confirmText,
@@ -901,11 +1672,8 @@ private fun DialogActionRow(
     }
 }
 
-private fun String.toTagSet(): Set<String> = split(',', '\n')
-    .map(String::trim)
-    .filter(String::isNotEmpty)
-    .take(16)
-    .toSet()
+private fun Set<String>.withTagInput(input: String): Set<String> =
+    normalizeProfileTags(this + input.split(',', '\n'))
 
 private fun Instant.formatDateTime(): String = DateTimeFormatter
     .ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)
@@ -917,9 +1685,11 @@ private fun Enum<*>.displayName(): String = name
     .split('_')
     .joinToString(" ") { word -> word.replaceFirstChar(Char::uppercase) }
 
-private fun formatBytes(bytes: Int): String {
+private fun formatBytes(bytes: Int): String = formatBytes(bytes.toLong())
+
+private fun formatBytes(bytes: Long): String {
     if (bytes < 1024) return "$bytes B"
-    val kib = bytes / 1024f
+    val kib = bytes / 1024.0
     if (kib < 1024f) return "${(kib * 10).roundToInt() / 10f} KiB"
     val mib = kib / 1024f
     return "${(mib * 10).roundToInt() / 10f} MiB"

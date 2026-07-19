@@ -285,17 +285,132 @@ exit:
     return fret;
 }
 
-int es10b_load_bound_profile_package_r(struct euicc_ctx *ctx, struct es10b_load_bound_profile_package_result *result,
-                                       const char *b64_BoundProfilePackage) {
+typedef int (*es10b_bpp_chunk_callback)(const uint8_t *chunk, int chunk_len, void *user_data);
+
+static int es10b_for_each_bpp_chunk(const struct euicc_derutil_node *n_BoundProfilePackage,
+                                    es10b_bpp_chunk_callback callback, void *user_data) {
+    const uint8_t *reqbuf;
+    int reqbuf_len;
+    struct euicc_derutil_node tmpnode, tmpchildnode;
+
+    if (euicc_derutil_unpack_find_tag(&tmpnode, 0xBF23, n_BoundProfilePackage->value,
+                                      n_BoundProfilePackage->length) < 0) {
+        return -1;
+    }
+
+    reqbuf = n_BoundProfilePackage->self.ptr;
+    reqbuf_len = tmpnode.self.ptr - n_BoundProfilePackage->self.ptr + tmpnode.self.length;
+    if (callback(reqbuf, reqbuf_len, user_data) < 0) {
+        return -1;
+    }
+
+    if (euicc_derutil_unpack_find_tag(&tmpnode, 0xA0, n_BoundProfilePackage->value,
+                                      n_BoundProfilePackage->length) < 0) {
+        return -1;
+    }
+    if (callback(tmpnode.self.ptr, tmpnode.self.length, user_data) < 0) {
+        return -1;
+    }
+
+    if (euicc_derutil_unpack_find_tag(&tmpnode, 0xA1, n_BoundProfilePackage->value,
+                                      n_BoundProfilePackage->length) < 0) {
+        return -1;
+    }
+    reqbuf_len = tmpnode.value - tmpnode.self.ptr;
+    if (callback(tmpnode.self.ptr, reqbuf_len, user_data) < 0) {
+        return -1;
+    }
+
+    tmpchildnode.self.ptr = tmpnode.value;
+    tmpchildnode.self.length = 0;
+    while (euicc_derutil_unpack_next(&tmpchildnode, &tmpchildnode, tmpnode.value, tmpnode.length) == 0) {
+        if (callback(tmpchildnode.self.ptr, tmpchildnode.self.length, user_data) < 0) {
+            return -1;
+        }
+    }
+
+    if (euicc_derutil_unpack_find_tag(&tmpnode, 0xA2, n_BoundProfilePackage->value,
+                                      n_BoundProfilePackage->length) == 0 &&
+        callback(tmpnode.self.ptr, tmpnode.self.length, user_data) < 0) {
+        return -1;
+    }
+
+    if (euicc_derutil_unpack_find_tag(&tmpnode, 0xA3, n_BoundProfilePackage->value,
+                                      n_BoundProfilePackage->length) < 0) {
+        return -1;
+    }
+    reqbuf_len = tmpnode.value - tmpnode.self.ptr;
+    if (callback(tmpnode.self.ptr, reqbuf_len, user_data) < 0) {
+        return -1;
+    }
+
+    tmpchildnode.self.ptr = tmpnode.value;
+    tmpchildnode.self.length = 0;
+    while (euicc_derutil_unpack_next(&tmpchildnode, &tmpchildnode, tmpnode.value, tmpnode.length) == 0) {
+        if (callback(tmpchildnode.self.ptr, tmpchildnode.self.length, user_data) < 0) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+struct es10b_bpp_size_context {
+    uint64_t total_bytes;
+};
+
+static int es10b_count_bpp_chunk(const uint8_t *chunk, int chunk_len, void *user_data) {
+    struct es10b_bpp_size_context *progress = user_data;
+    (void)chunk;
+    progress->total_bytes += (uint64_t)chunk_len;
+    return 0;
+}
+
+struct es10b_bpp_tx_context {
+    struct euicc_ctx *ctx;
+    struct es10b_load_bound_profile_package_result *result;
+    es10b_load_bound_profile_package_progress_callback progress_callback;
+    void *progress_user_data;
+    uint64_t sent_bytes;
+    uint64_t total_bytes;
+};
+
+static int es10b_transmit_bpp_chunk(const uint8_t *chunk, int chunk_len, void *user_data) {
+    struct es10b_bpp_tx_context *progress = user_data;
+
+    if (es10b_load_bound_profile_package_tx(progress->ctx, progress->result, chunk, chunk_len) < 0) {
+        return -1;
+    }
+
+    progress->sent_bytes += (uint64_t)chunk_len;
+    if (progress->progress_callback != NULL &&
+        progress->progress_callback(progress->sent_bytes, progress->total_bytes,
+                                    progress->progress_user_data) < 0) {
+        return -1;
+    }
+    return 0;
+}
+
+int es10b_load_bound_profile_package_r_progress(
+    struct euicc_ctx *ctx, struct es10b_load_bound_profile_package_result *result,
+    const char *b64_BoundProfilePackage, es10b_load_bound_profile_package_progress_callback progress_callback,
+    void *progress_user_data) {
     int fret = 0;
 
     uint8_t *bpp = NULL;
     int bpp_len;
+    struct euicc_derutil_node n_BoundProfilePackage;
+    struct es10b_bpp_size_context size_context = {0};
+    struct es10b_bpp_tx_context tx_context = {
+        .ctx = ctx,
+        .result = result,
+        .progress_callback = progress_callback,
+        .progress_user_data = progress_user_data,
+    };
 
-    const uint8_t *reqbuf;
-    int reqbuf_len;
-
-    struct euicc_derutil_node tmpnode, tmpchildnode, n_BoundProfilePackage;
+    result->seqNumber = 0;
+    result->bppCommandId = ES10B_BPP_COMMAND_ID_UNDEFINED;
+    result->errorReason = ES10B_ERROR_REASON_UNDEFINED;
 
     bpp = malloc(euicc_base64_decode_len(b64_BoundProfilePackage));
     if (!bpp) {
@@ -309,82 +424,18 @@ int es10b_load_bound_profile_package_r(struct euicc_ctx *ctx, struct es10b_load_
         goto err;
     }
 
-    if (euicc_derutil_unpack_find_tag(&tmpnode, 0xBF23, n_BoundProfilePackage.value, n_BoundProfilePackage.length)
-        < 0) {
+    if (es10b_for_each_bpp_chunk(&n_BoundProfilePackage, es10b_count_bpp_chunk, &size_context) < 0 ||
+        size_context.total_bytes == 0) {
+        goto err;
+    }
+    tx_context.total_bytes = size_context.total_bytes;
+
+    if (progress_callback != NULL && progress_callback(0, tx_context.total_bytes, progress_user_data) < 0) {
         goto err;
     }
 
-    reqbuf = n_BoundProfilePackage.self.ptr;
-    reqbuf_len = tmpnode.self.ptr - n_BoundProfilePackage.self.ptr + tmpnode.self.length;
-
-    if (es10b_load_bound_profile_package_tx(ctx, result, reqbuf, reqbuf_len) < 0) {
+    if (es10b_for_each_bpp_chunk(&n_BoundProfilePackage, es10b_transmit_bpp_chunk, &tx_context) < 0) {
         goto err;
-    }
-
-    if (euicc_derutil_unpack_find_tag(&tmpnode, 0xA0, n_BoundProfilePackage.value, n_BoundProfilePackage.length) < 0) {
-        goto err;
-    }
-
-    reqbuf = tmpnode.self.ptr;
-    reqbuf_len = tmpnode.self.length;
-
-    if (es10b_load_bound_profile_package_tx(ctx, result, reqbuf, reqbuf_len) < 0) {
-        goto err;
-    }
-
-    if (euicc_derutil_unpack_find_tag(&tmpnode, 0xA1, n_BoundProfilePackage.value, n_BoundProfilePackage.length) < 0) {
-        goto err;
-    }
-
-    reqbuf = tmpnode.self.ptr;
-    reqbuf_len = tmpnode.value - tmpnode.self.ptr;
-
-    if (es10b_load_bound_profile_package_tx(ctx, result, reqbuf, reqbuf_len) < 0) {
-        goto err;
-    }
-
-    tmpchildnode.self.ptr = tmpnode.value;
-    tmpchildnode.self.length = 0;
-
-    while (euicc_derutil_unpack_next(&tmpchildnode, &tmpchildnode, tmpnode.value, tmpnode.length) == 0) {
-        reqbuf = tmpchildnode.self.ptr;
-        reqbuf_len = tmpchildnode.self.length;
-
-        if (es10b_load_bound_profile_package_tx(ctx, result, reqbuf, reqbuf_len) < 0) {
-            goto err;
-        }
-    }
-
-    if (euicc_derutil_unpack_find_tag(&tmpnode, 0xA2, n_BoundProfilePackage.value, n_BoundProfilePackage.length) == 0) {
-        reqbuf = tmpnode.self.ptr;
-        reqbuf_len = tmpnode.self.length;
-
-        if (es10b_load_bound_profile_package_tx(ctx, result, reqbuf, reqbuf_len) < 0) {
-            goto err;
-        }
-    }
-
-    if (euicc_derutil_unpack_find_tag(&tmpnode, 0xA3, n_BoundProfilePackage.value, n_BoundProfilePackage.length) < 0) {
-        goto err;
-    }
-
-    reqbuf = tmpnode.self.ptr;
-    reqbuf_len = tmpnode.value - tmpnode.self.ptr;
-
-    if (es10b_load_bound_profile_package_tx(ctx, result, reqbuf, reqbuf_len) < 0) {
-        goto err;
-    }
-
-    tmpchildnode.self.ptr = tmpnode.value;
-    tmpchildnode.self.length = 0;
-
-    while (euicc_derutil_unpack_next(&tmpchildnode, &tmpchildnode, tmpnode.value, tmpnode.length) == 0) {
-        reqbuf = tmpchildnode.self.ptr;
-        reqbuf_len = tmpchildnode.self.length;
-
-        if (es10b_load_bound_profile_package_tx(ctx, result, reqbuf, reqbuf_len) < 0) {
-            goto err;
-        }
     }
 
     goto exit;
@@ -395,6 +446,11 @@ exit:
     free(bpp);
     bpp = NULL;
     return fret;
+}
+
+int es10b_load_bound_profile_package_r(struct euicc_ctx *ctx, struct es10b_load_bound_profile_package_result *result,
+                                       const char *b64_BoundProfilePackage) {
+    return es10b_load_bound_profile_package_r_progress(ctx, result, b64_BoundProfilePackage, NULL, NULL);
 }
 
 int es10b_get_euicc_challenge_r(struct euicc_ctx *ctx, char **b64_euiccChallenge) {
@@ -801,13 +857,20 @@ int es10b_prepare_download(struct euicc_ctx *ctx, const char *confirmationCode) 
 }
 
 int es10b_load_bound_profile_package(struct euicc_ctx *ctx, struct es10b_load_bound_profile_package_result *result) {
+    return es10b_load_bound_profile_package_progress(ctx, result, NULL, NULL);
+}
+
+int es10b_load_bound_profile_package_progress(
+    struct euicc_ctx *ctx, struct es10b_load_bound_profile_package_result *result,
+    es10b_load_bound_profile_package_progress_callback progress_callback, void *progress_user_data) {
     int fret;
 
     if (ctx->http._internal.b64_bound_profile_package == NULL) {
         return -1;
     }
 
-    fret = es10b_load_bound_profile_package_r(ctx, result, ctx->http._internal.b64_bound_profile_package);
+    fret = es10b_load_bound_profile_package_r_progress(ctx, result, ctx->http._internal.b64_bound_profile_package,
+                                                       progress_callback, progress_user_data);
     if (fret < 0) {
         return fret;
     }

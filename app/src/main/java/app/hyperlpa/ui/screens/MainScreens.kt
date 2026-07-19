@@ -18,7 +18,9 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -49,11 +51,17 @@ import app.hyperlpa.ui.components.PageStateHost
 import app.hyperlpa.ui.components.PageStateKind
 import app.hyperlpa.ui.components.ProfileArtwork
 import app.hyperlpa.ui.components.SectionHeading
+import app.hyperlpa.ui.components.formatProfileDisplayName
 import app.hyperlpa.ui.components.redactIdentifier
 import app.hyperlpa.ui.navigation.AppRoute
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.PullToRefresh
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Surface
 import top.yukonga.miuix.kmp.basic.Switch
@@ -90,110 +98,141 @@ fun ProfilesScreen(
     onOpenProfile: (ProfileInfo) -> Unit,
     onEnableChange: (String, Boolean) -> Unit,
     onDownload: () -> Unit,
+    onRefresh: () -> Unit,
 ) {
+    // Keep both layout positions alive while profile refresh/enrichment temporarily
+    // swaps the content for a loading state during a profile switch.
+    val listState = rememberLazyListState()
+    val gridState = rememberLazyGridState()
+    val profiles = state.profiles
+    val hasNoSearchResults = state.searchQuery.isNotBlank() &&
+        state.lpa.profiles.isNotEmpty() &&
+        profiles.isEmpty()
     val pageState = when {
         !state.lpa.initialized ||
             (state.lpa.operation is LpaOperation.DiscoveringReaders && state.lpa.profiles.isEmpty()) -> PageStateKind.LOADING
+        !state.profileEnrichmentReady && state.lpa.profiles.isNotEmpty() -> PageStateKind.LOADING
         state.lpa.readers.isEmpty() -> PageStateKind.ERROR
         state.lpa.selectedReader == null -> PageStateKind.EMPTY
-        state.profiles.isEmpty() -> PageStateKind.EMPTY
+        profiles.isEmpty() -> PageStateKind.EMPTY
         else -> PageStateKind.CONTENT
     }
 
-    CenteredContent(modifier = modifier) { sidePadding ->
-        if (state.settings.profileLayout == ProfileLayout.WATERFALL && pageState == PageStateKind.CONTENT) {
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(280.dp),
-                modifier = Modifier
-                    .fillMaxSize()
-                    .scrollEndHaptic()
-                    .overScrollVertical()
-                    .nestedScroll(scrollBehavior.nestedScrollConnection),
-                overscrollEffect = null,
-                contentPadding = PaddingValues(
-                    start = sidePadding,
-                    end = sidePadding,
-                    top = contentPadding.calculateTopPadding(),
-                    bottom = contentPadding.calculateBottomPadding() + 24.dp,
-                ),
-                horizontalArrangement = Arrangement.spacedBy(0.dp),
+    PullToRefresh(
+        isRefreshing = state.lpa.operation is LpaOperation.Refreshing,
+        onRefresh = onRefresh,
+        modifier = modifier,
+        contentPadding = contentPadding,
+        topAppBarScrollBehavior = scrollBehavior,
+    ) {
+        CenteredContent { sidePadding ->
+            if (pageState == PageStateKind.LOADING) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
             ) {
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    ProfilesHeader(
-                        state = state,
-                        onSearchChange = onSearchChange,
-                        onSelectReader = onSelectReader,
-                        onRefreshReaders = onRefreshReaders,
-                        onOpenEuiccDetails = onOpenEuiccDetails,
-                    )
+                    LoadingState(message = "Looking for eUICC readers")
                 }
-                items(state.profiles, key = ProfileInfo::iccid) { profile ->
-                    ProfileCard(
-                        profile = profile,
-                        state = state,
-                        onOpen = { onOpenProfile(profile) },
-                        onEnableChange = { enabled -> onEnableChange(profile.iccid, enabled) },
-                    )
-                }
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .scrollEndHaptic()
-                    .overScrollVertical()
-                    .nestedScroll(scrollBehavior.nestedScrollConnection),
-                overscrollEffect = null,
-                contentPadding = PaddingValues(
-                    start = sidePadding,
-                    end = sidePadding,
-                    top = contentPadding.calculateTopPadding(),
-                    bottom = contentPadding.calculateBottomPadding() + 24.dp,
-                ),
-            ) {
-                item(key = "header") {
-                    ProfilesHeader(
-                        state = state,
-                        onSearchChange = onSearchChange,
-                        onSelectReader = onSelectReader,
-                        onRefreshReaders = onRefreshReaders,
-                        onOpenEuiccDetails = onOpenEuiccDetails,
-                    )
-                }
-                item(key = "state") {
-                    PageStateHost(
-                        state = pageState,
-                        loadingMessage = "Looking for eUICC readers",
-                        emptyTitle = if (state.lpa.selectedReader == null) "Choose a reader" else "No profiles installed",
-                        emptyMessage = if (state.lpa.selectedReader == null) {
-                            "Select an available secure-element reader to continue."
-                        } else {
-                            "Download an activation code to install your first eSIM profile."
-                        },
-                        errorTitle = "No eUICC reader found",
-                        errorMessage = "Connect a USB or BLE reader, install NBridge, or enable OMAPI access.",
-                        onRetry = onRefreshReaders,
-                    ) {
-                        Column {
-                            state.profiles.forEach { profile ->
-                                ProfileCard(
-                                    profile = profile,
-                                    state = state,
-                                    onOpen = { onOpenProfile(profile) },
-                                    onEnableChange = { enabled -> onEnableChange(profile.iccid, enabled) },
-                                )
-                            }
-                        }
+            } else if (state.settings.profileLayout == ProfileLayout.WATERFALL && pageState == PageStateKind.CONTENT) {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(280.dp),
+                    state = gridState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .scrollEndHaptic()
+                        .overScrollVertical()
+                        .nestedScroll(scrollBehavior.nestedScrollConnection),
+                    overscrollEffect = null,
+                    contentPadding = PaddingValues(
+                        start = sidePadding,
+                        end = sidePadding,
+                        top = contentPadding.calculateTopPadding(),
+                        bottom = contentPadding.calculateBottomPadding() + 24.dp,
+                    ),
+                    horizontalArrangement = Arrangement.spacedBy(0.dp),
+                ) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        ProfilesHeader(
+                            state = state,
+                            onSearchChange = onSearchChange,
+                            onSelectReader = onSelectReader,
+                            onRefreshReaders = onRefreshReaders,
+                            onOpenEuiccDetails = onOpenEuiccDetails,
+                        )
+                    }
+                    items(profiles, key = ProfileInfo::iccid) { profile ->
+                        ProfileCard(
+                            profile = profile,
+                            state = state,
+                            onOpen = { onOpenProfile(profile) },
+                            onEnableChange = { enabled -> onEnableChange(profile.iccid, enabled) },
+                        )
                     }
                 }
-                if (state.lpa.selectedReader != null && state.profiles.isEmpty()) {
-                    item(key = "download") {
-                        TextButton(
-                            text = "Download profile",
-                            onClick = onDownload,
-                            colors = ButtonDefaults.textButtonColorsPrimary(),
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .scrollEndHaptic()
+                        .overScrollVertical()
+                        .nestedScroll(scrollBehavior.nestedScrollConnection),
+                    overscrollEffect = null,
+                    contentPadding = PaddingValues(
+                        start = sidePadding,
+                        end = sidePadding,
+                        top = contentPadding.calculateTopPadding(),
+                        bottom = contentPadding.calculateBottomPadding() + 24.dp,
+                    ),
+                ) {
+                    item(key = "header") {
+                        ProfilesHeader(
+                            state = state,
+                            onSearchChange = onSearchChange,
+                            onSelectReader = onSelectReader,
+                            onRefreshReaders = onRefreshReaders,
+                            onOpenEuiccDetails = onOpenEuiccDetails,
                         )
+                    }
+                    if (pageState == PageStateKind.CONTENT) {
+                        items(profiles, key = ProfileInfo::iccid) { profile ->
+                            ProfileCard(
+                                profile = profile,
+                                state = state,
+                                onOpen = { onOpenProfile(profile) },
+                                onEnableChange = { enabled -> onEnableChange(profile.iccid, enabled) },
+                            )
+                        }
+                    } else {
+                        item(key = "state") {
+                            PageStateHost(
+                                state = pageState,
+                                loadingMessage = "Looking for eUICC readers",
+                                emptyTitle = when {
+                                    state.lpa.selectedReader == null -> "Choose a reader"
+                                    hasNoSearchResults -> "No profiles found"
+                                    else -> "No profiles installed"
+                                },
+                                emptyMessage = when {
+                                    state.lpa.selectedReader == null -> "Select an available secure-element reader to continue."
+                                    hasNoSearchResults -> "Try a different search."
+                                    else -> "Download an activation code to install your first eSIM profile."
+                                },
+                                errorTitle = "No eUICC reader found",
+                                errorMessage = "Connect a USB or BLE reader, install NBridge, or enable OMAPI access.",
+                                onRetry = onRefreshReaders,
+                            ) {}
+                        }
+                    }
+                    if (pageState == PageStateKind.EMPTY && state.lpa.selectedReader != null && !hasNoSearchResults) {
+                        item(key = "download") {
+                            TextButton(
+                                text = "Download profile",
+                                onClick = onDownload,
+                                colors = ButtonDefaults.textButtonColorsPrimary(),
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -209,48 +248,63 @@ private fun ProfilesHeader(
     onRefreshReaders: () -> Unit,
     onOpenEuiccDetails: () -> Unit,
 ) {
-    SectionHeading("Reader")
-    GroupedCard {
-        if (state.lpa.readers.isEmpty()) {
-            ArrowPreference(
-                title = "Find readers",
-                summary = "Scan NBridge, OMAPI and USB CCID sources",
-                onClick = onRefreshReaders,
-            )
-        } else {
-            val selectedIndex = state.lpa.readers.indexOfFirst { it.id == state.lpa.selectedReaderId }.coerceAtLeast(0)
-            OverlayDropdownPreference(
-                title = "Active reader",
-                summary = state.lpa.selectedReader?.detail ?: "Select a reader",
-                items = state.lpa.readers.map { it.name },
-                selectedIndex = selectedIndex,
-                onSelectedIndexChange = { index -> state.lpa.readers.getOrNull(index)?.id?.let(onSelectReader) },
-            )
-            state.lpa.euiccInfo?.let { info ->
-                ArrowPreference(
-                    title = "EID",
-                    summary = redactIdentifier(
-                        value = info.eid,
-                        mode = state.settings.eidRedaction,
-                        reveal = state.settings.revealSensitiveData,
-                    ),
-                    onClick = onOpenEuiccDetails,
-                )
+    Column(modifier = Modifier.fillMaxWidth()) {
+        val showEid = state.settings.showEidOnHome && state.lpa.euiccInfo != null
+        if (state.settings.showReaderSelectorOnHome || showEid) {
+            GroupedCard {
+                if (state.settings.showReaderSelectorOnHome) {
+                    if (state.lpa.readers.isEmpty()) {
+                        ArrowPreference(
+                            title = "Find readers",
+                            summary = "Scan NBridge, OMAPI and USB CCID sources",
+                            onClick = onRefreshReaders,
+                        )
+                    } else {
+                        val selectedIndex = state.lpa.readers.indexOfFirst {
+                            it.id == state.lpa.selectedReaderId
+                        }.coerceAtLeast(0)
+                        OverlayDropdownPreference(
+                            title = "Active reader",
+                            summary = state.lpa.selectedReader?.detail ?: "Select a reader",
+                            items = state.lpa.readers.map { it.name },
+                            selectedIndex = selectedIndex,
+                            onSelectedIndexChange = { index ->
+                                state.lpa.readers.getOrNull(index)?.id?.let(onSelectReader)
+                            },
+                        )
+                    }
+                }
+                if (showEid) {
+                    val info = requireNotNull(state.lpa.euiccInfo)
+                    ArrowPreference(
+                        title = "EID",
+                        summary = redactIdentifier(
+                            value = info.eid,
+                            mode = state.settings.eidRedaction,
+                        ),
+                        onClick = onOpenEuiccDetails,
+                    )
+                }
             }
         }
-    }
-    AnimatedVisibility(visible = state.settings.showProfileSearch && state.lpa.selectedReader != null) {
-        Column {
-            SectionHeading("Profiles")
-            TextField(
-                value = state.searchQuery,
-                onValueChange = onSearchChange,
-                label = "Search profiles",
-                useLabelAsPlaceholder = true,
-                singleLine = true,
-                leadingIcon = { Icon(MiuixIcons.Search, contentDescription = null) },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-            )
+        AnimatedVisibility(visible = state.settings.showProfileSearch && state.lpa.selectedReader != null) {
+            Column {
+                TextField(
+                    value = state.searchQuery,
+                    onValueChange = onSearchChange,
+                    label = "Search profiles",
+                    useLabelAsPlaceholder = true,
+                    singleLine = true,
+                    leadingIcon = {
+                        Icon(
+                            imageVector = MiuixIcons.Search,
+                            contentDescription = null,
+                            modifier = Modifier.padding(start = 16.dp, end = 8.dp),
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                )
+            }
         }
     }
 }
@@ -263,15 +317,27 @@ private fun ProfileCard(
     onEnableChange: (Boolean) -> Unit,
 ) {
     val isEnabled = profile.state == ProfileState.ENABLED
+    val displayName = remember(profile, state.settings.phoneFormatStrategy) {
+        formatProfileDisplayName(profile, state.settings.phoneFormatStrategy)
+    }
     val operatorAndTags = buildList {
-        add(profile.providerName.ifBlank { "Unknown operator" })
-        addAll(profile.tags.filter(String::isNotBlank))
+        if (state.settings.showProfileProviderOnHome) {
+            add(profile.providerName.ifBlank { "Unknown operator" })
+        }
+        if (state.settings.showProfileTagsOnHome) {
+            addAll(profile.tags.filter(String::isNotBlank))
+        }
     }.joinToString(" · ")
+    val profileBytes = if (state.settings.showProfileSizeOnHome) {
+        profile.estimatedBytes?.takeIf { it > 0 }
+    } else {
+        null
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(bottom = 8.dp),
         cornerRadius = 16.dp,
-        insideMargin = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+        insideMargin = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
         pressFeedbackType = PressFeedbackType.Sink,
         onClick = onOpen,
     ) {
@@ -280,62 +346,86 @@ private fun ProfileCard(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ProfileArtwork(
-                profile = profile,
-                cloudIcon = state.operatorIcons[profile.iccid],
-                isEnabled = isEnabled,
-            )
+            if (state.settings.showProfileIconOnHome) {
+                ProfileArtwork(
+                    profile = profile,
+                    cloudIcon = state.operatorIcons[profile.iccid],
+                    isEnabled = isEnabled,
+                )
+            }
             Column(Modifier.weight(1f)) {
-                Text(
-                    text = profile.nickname.ifBlank { profile.name.ifBlank { "eSIM profile" } },
-                    style = MiuixTheme.textStyles.title3,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = operatorAndTags,
-                    style = MiuixTheme.textStyles.body2,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
+                if (state.settings.showProfileNameOnHome) {
                     Text(
-                        text = redactIdentifier(
-                            profile.iccid,
-                            state.settings.iccidRedaction,
-                            state.settings.revealSensitiveData,
-                        ),
-                        style = MiuixTheme.textStyles.footnote1,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        modifier = Modifier.weight(1f),
+                        text = displayName.fullText,
+                        style = MiuixTheme.textStyles.body1,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                    profile.estimatedBytes?.takeIf { it > 0 }?.let { bytes ->
+                }
+                if (operatorAndTags.isNotEmpty()) {
+                    Text(
+                        text = operatorAndTags,
+                        style = MiuixTheme.textStyles.body2,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (state.settings.showProfileRemindersOnHome) {
+                    profile.reminderAt?.let { reminderAt ->
                         Text(
-                            text = "${if (profile.sizeIsEstimated) "~" else ""}${formatProfileBytes(bytes)}",
+                            text = "Reminder · ${reminderAt.formatReminderDateTime()}",
                             style = MiuixTheme.textStyles.footnote1,
-                            color = if (profile.sizeIsEstimated) {
-                                MiuixTheme.colorScheme.onSurfaceVariantSummary
-                            } else {
-                                MiuixTheme.colorScheme.primary
-                            },
+                            color = MiuixTheme.colorScheme.primary,
                             maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                 }
+                if (state.settings.showProfileIccidOnHome || profileBytes != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (state.settings.showProfileIccidOnHome) {
+                            Text(
+                                text = redactIdentifier(
+                                    profile.iccid,
+                                    state.settings.iccidRedaction,
+                                ),
+                                style = MiuixTheme.textStyles.footnote1,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        profileBytes?.let { bytes ->
+                            Text(
+                                text = "${if (profile.sizeIsEstimated) "~" else ""}${formatProfileBytes(bytes)}",
+                                style = MiuixTheme.textStyles.footnote1,
+                                color = if (profile.sizeIsEstimated) {
+                                    MiuixTheme.colorScheme.onSurfaceVariantSummary
+                                } else {
+                                    MiuixTheme.colorScheme.primary
+                                },
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
             }
-            Switch(
-                checked = isEnabled,
-                onCheckedChange = onEnableChange,
-                modifier = Modifier.semantics {
-                    contentDescription = if (isEnabled) "Disable profile" else "Enable profile"
-                },
-            )
+            if (state.settings.showProfileSwitchOnHome) {
+                Switch(
+                    checked = isEnabled,
+                    onCheckedChange = onEnableChange,
+                    modifier = Modifier.semantics {
+                        contentDescription = if (isEnabled) "Disable profile" else "Enable profile"
+                    },
+                )
+            }
         }
     }
 }private fun formatProfileBytes(bytes: Long): String {
@@ -354,42 +444,51 @@ fun NotificationsScreen(
     scrollBehavior: ScrollBehavior,
     onProcess: (Long) -> Unit,
     onDelete: (Long) -> Unit,
+    onRefresh: () -> Unit,
 ) {
-    CenteredContent(modifier = modifier) { sidePadding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .scrollEndHaptic()
-                .overScrollVertical()
-                .nestedScroll(scrollBehavior.nestedScrollConnection),
-            overscrollEffect = null,
-            contentPadding = PaddingValues(
-                start = sidePadding,
-                end = sidePadding,
-                top = contentPadding.calculateTopPadding(),
-                bottom = contentPadding.calculateBottomPadding() + 24.dp,
-            ),
-        ) {
-            item { SectionHeading("Pending on eUICC") }
-            if (state.lpa.selectedReader == null) {
-                item {
-                    EmptyState(
-                        title = "No reader connected",
-                        message = "Connect a reader on the Profiles page to load notifications.",
-                        icon = MiuixIcons.Messages,
-                    )
-                }
-            } else if (state.lpa.notifications.isEmpty()) {
-                item {
-                    EmptyState(
-                        title = "No pending notifications",
-                        message = "Profile management notifications are already up to date.",
-                        icon = MiuixIcons.Messages,
-                    )
-                }
-            } else {
-                items(state.lpa.notifications, key = LpaNotification::sequenceNumber) { notification ->
-                    NotificationCard(notification = notification, onProcess = onProcess, onDelete = onDelete)
+    PullToRefresh(
+        isRefreshing = state.lpa.operation is LpaOperation.Refreshing,
+        onRefresh = onRefresh,
+        modifier = modifier,
+        contentPadding = contentPadding,
+        topAppBarScrollBehavior = scrollBehavior,
+    ) {
+        CenteredContent { sidePadding ->
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .scrollEndHaptic()
+                    .overScrollVertical()
+                    .nestedScroll(scrollBehavior.nestedScrollConnection),
+                overscrollEffect = null,
+                contentPadding = PaddingValues(
+                    start = sidePadding,
+                    end = sidePadding,
+                    top = contentPadding.calculateTopPadding(),
+                    bottom = contentPadding.calculateBottomPadding() + 24.dp,
+                ),
+            ) {
+                item { SectionHeading("Pending on eUICC") }
+                if (state.lpa.selectedReader == null) {
+                    item {
+                        EmptyState(
+                            title = "No reader connected",
+                            message = "Connect a reader on the Profiles page to load notifications.",
+                            icon = MiuixIcons.Messages,
+                        )
+                    }
+                } else if (state.lpa.notifications.isEmpty()) {
+                    item {
+                        EmptyState(
+                            title = "No pending notifications",
+                            message = "Profile management notifications are already up to date.",
+                            icon = MiuixIcons.Messages,
+                        )
+                    }
+                } else {
+                    items(state.lpa.notifications, key = LpaNotification::sequenceNumber) { notification ->
+                        NotificationCard(notification = notification, onProcess = onProcess, onDelete = onDelete)
+                    }
                 }
             }
         }
@@ -403,48 +502,50 @@ private fun NotificationCard(
     onDelete: (Long) -> Unit,
 ) {
     GroupedCard {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = MiuixIcons.Messages,
-                contentDescription = null,
-                tint = MiuixTheme.colorScheme.primary,
-                modifier = Modifier.size(26.dp),
-            )
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = notification.operation.label,
-                    style = MiuixTheme.textStyles.title3,
-                    fontWeight = FontWeight.SemiBold,
+        Column(Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = MiuixIcons.Messages,
+                    contentDescription = null,
+                    tint = MiuixTheme.colorScheme.primary,
+                    modifier = Modifier.size(26.dp),
                 )
-                Text(
-                    text = notification.address.ifBlank { "No notification address" },
-                    style = MiuixTheme.textStyles.body2,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = "Sequence ${notification.sequenceNumber}",
-                    style = MiuixTheme.textStyles.footnote1,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = notification.operation.label,
+                        style = MiuixTheme.textStyles.title3,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = notification.address.ifBlank { "No notification address" },
+                        style = MiuixTheme.textStyles.body2,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = "Sequence ${notification.sequenceNumber}",
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+            ) {
+                TextButton(text = "Remove", onClick = { onDelete(notification.sequenceNumber) })
+                TextButton(
+                    text = "Send",
+                    onClick = { onProcess(notification.sequenceNumber) },
+                    colors = ButtonDefaults.textButtonColorsPrimary(),
                 )
             }
-        }
-        Spacer(Modifier.height(12.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-        ) {
-            TextButton(text = "Remove", onClick = { onDelete(notification.sequenceNumber) })
-            TextButton(
-                text = "Send",
-                onClick = { onProcess(notification.sequenceNumber) },
-                colors = ButtonDefaults.textButtonColorsPrimary(),
-            )
         }
     }
 }
@@ -488,11 +589,8 @@ fun ToolsScreen(
         item { SectionHeading("Organisation") }
         item {
             GroupedCard {
-                ToolPreference("Tags", "Group and label installed profiles", MiuixIcons.BankCards) {
-                    onNavigate(AppRoute.TagManager)
-                }
-                ToolPreference("Scheduled reminders", "Review upcoming profile reminders", MiuixIcons.Messages) {
-                    onNavigate(AppRoute.ScheduledReminders)
+                ToolPreference("Tags & reminders", "Manage tags, dates and reminder permissions", MiuixIcons.Messages) {
+                    onNavigate(AppRoute.TagsAndReminders)
                 }
                 ToolPreference("Statistics", "Profile and notification overview", MiuixIcons.Info) {
                     onNavigate(AppRoute.Statistics)
@@ -515,6 +613,11 @@ fun ToolsScreen(
         }
     }
 }
+
+private fun Instant.formatReminderDateTime(): String = DateTimeFormatter
+    .ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)
+    .withZone(ZoneId.systemDefault())
+    .format(this)
 
 @Composable
 fun SettingsScreen(
@@ -539,7 +642,7 @@ fun SettingsScreen(
                 )
                 ArrowPreference(
                     title = "Profile display",
-                    summary = "${state.settings.profileLayout.name.lowercase()} · ${state.settings.profileSort.name.lowercase()}",
+                    summary = "Layout, sorting and profile search",
                     onClick = { onNavigate(AppRoute.ProfileDisplaySettings) },
                 )
             }
@@ -556,6 +659,11 @@ fun SettingsScreen(
                     title = "Notification processing",
                     summary = "Automatic send and removal policies",
                     onClick = { onNavigate(AppRoute.NotificationSettings) },
+                )
+                ArrowPreference(
+                    title = "Tags & reminders",
+                    summary = "Tags, reminder permissions and scheduled alerts",
+                    onClick = { onNavigate(AppRoute.TagsAndReminders) },
                 )
                 ArrowPreference(
                     title = "Advanced LPA settings",

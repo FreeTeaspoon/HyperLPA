@@ -52,6 +52,7 @@ import app.hyperlpa.data.settings.FloatingBottomBarStyle
 import app.hyperlpa.data.settings.NavigationLabels
 import app.hyperlpa.data.settings.NavigationStyle
 import app.hyperlpa.domain.model.LpaOperation
+import app.hyperlpa.domain.model.DownloadStage
 import app.hyperlpa.ui.adaptive.AdaptiveTopAppBar
 import app.hyperlpa.ui.adaptive.rememberIsWideWindow
 import app.hyperlpa.ui.components.BlurredBar
@@ -67,6 +68,8 @@ import app.hyperlpa.ui.screens.AidManagerScreen
 import app.hyperlpa.ui.screens.AppearanceSettingsScreen
 import app.hyperlpa.ui.screens.BatchDownloadScreen
 import app.hyperlpa.ui.screens.DownloadProfileScreen
+import app.hyperlpa.ui.screens.ProfileDownloadConfirmationScreen
+import app.hyperlpa.ui.screens.ProfileDownloadResultScreen
 import app.hyperlpa.ui.screens.EuiccDetailsScreen
 import app.hyperlpa.ui.screens.LogsScreen
 import app.hyperlpa.ui.screens.NotificationSettingsScreen
@@ -80,6 +83,7 @@ import app.hyperlpa.ui.screens.ScheduledRemindersScreen
 import app.hyperlpa.ui.screens.SettingsScreen
 import app.hyperlpa.ui.screens.StatisticsScreen
 import app.hyperlpa.ui.screens.TagManagerScreen
+import app.hyperlpa.ui.screens.TagsAndRemindersScreen
 import app.hyperlpa.ui.screens.ToolsScreen
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -87,11 +91,13 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
 import top.yukonga.miuix.kmp.basic.FloatingNavigationBar
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
+import top.yukonga.miuix.kmp.basic.LinearProgressIndicator
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.NavigationBar
 import top.yukonga.miuix.kmp.basic.NavigationBarDisplayMode
@@ -110,7 +116,6 @@ import top.yukonga.miuix.kmp.icon.extended.Back
 import top.yukonga.miuix.kmp.icon.extended.BankCards
 import top.yukonga.miuix.kmp.icon.extended.Download
 import top.yukonga.miuix.kmp.icon.extended.Messages
-import top.yukonga.miuix.kmp.icon.extended.Refresh
 import top.yukonga.miuix.kmp.icon.extended.Settings
 import top.yukonga.miuix.kmp.icon.extended.Tune
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
@@ -119,10 +124,16 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 @Composable
 fun HyperLpaApp(
     state: HyperLpaUiState,
+    backStack: List<AppRoute>,
     viewModel: HyperLpaViewModel,
+    notificationPermissionGranted: Boolean,
+    onRequestNotificationPermission: ((Boolean) -> Unit) -> Unit,
+    onOpenNotificationSettings: () -> Unit,
+    onTestProfileReminder: () -> Unit,
     onScanQr: ((String?) -> Unit) -> Unit,
 ) {
     val currentState = rememberUpdatedState(state)
+    val currentNotificationPermissionGranted = rememberUpdatedState(notificationPermissionGranted)
     val entries = remember {
         entryProvider<AppRoute> {
             entry<AppRoute.Shell> {
@@ -140,6 +151,7 @@ fun HyperLpaApp(
                 ProfileDetailsScreen(
                     profile = profile,
                     settings = currentState.value.settings,
+                    suggestedTags = currentState.value.profiles.flatMap { it.tags }.toSet(),
                     operatorIcon = currentState.value.operatorIcons[route.iccid],
                     hasProfileIcon = currentState.value.metadata[route.iccid]?.iconUri != null,
                     hasProviderIcon = providerKey != null &&
@@ -150,6 +162,7 @@ fun HyperLpaApp(
                     onDelete = { viewModel.deleteProfile(route.iccid) },
                     onSetTags = { tags -> viewModel.setProfileTags(route.iccid, tags) },
                     onSetReminder = { label, instant -> viewModel.setProfileReminder(route.iccid, label, instant) },
+                    onRequestNotificationPermission = onRequestNotificationPermission,
                     onSetIcon = { uri, applyToProvider ->
                         viewModel.setProfileIcon(
                             iccid = route.iccid,
@@ -171,14 +184,78 @@ fun HyperLpaApp(
                     onBack = viewModel::navigateBack,
                     onValueChange = viewModel::setActivationCodeDraft,
                     onScanQr = onScanQr,
-                    onDownload = viewModel::downloadProfile,
+                    onContinue = viewModel::downloadProfile,
+                )
+            }
+            entry<AppRoute.ConfirmProfileDownload> {
+                val livePreview = currentState.value.lpa.pendingProfileDownload
+                var retainedPreview by remember { mutableStateOf(livePreview) }
+                var retainedIcon by remember { mutableStateOf(currentState.value.downloadPreviewIcon) }
+                var retainedEstimatedBytes by remember {
+                    mutableStateOf(currentState.value.estimatedDownloadBytes)
+                }
+                var retainedEnrichmentLoading by remember {
+                    mutableStateOf(currentState.value.downloadPreviewEnrichmentLoading)
+                }
+                LaunchedEffect(
+                    livePreview,
+                    currentState.value.downloadPreviewIcon,
+                    currentState.value.estimatedDownloadBytes,
+                    currentState.value.downloadPreviewEnrichmentLoading,
+                ) {
+                    if (livePreview != null) {
+                        retainedPreview = livePreview
+                        retainedIcon = currentState.value.downloadPreviewIcon
+                        retainedEstimatedBytes = currentState.value.estimatedDownloadBytes
+                        retainedEnrichmentLoading = currentState.value.downloadPreviewEnrichmentLoading
+                    }
+                }
+                (livePreview ?: retainedPreview)?.let { preview ->
+                    ProfileDownloadConfirmationScreen(
+                        preview = preview,
+                        cloudIcon = if (livePreview != null) {
+                            currentState.value.downloadPreviewIcon
+                        } else {
+                            retainedIcon
+                        },
+                        estimatedDownloadBytes = if (livePreview != null) {
+                            currentState.value.estimatedDownloadBytes
+                        } else {
+                            retainedEstimatedBytes
+                        },
+                        enrichmentLoading = if (livePreview != null) {
+                            currentState.value.downloadPreviewEnrichmentLoading
+                        } else {
+                            retainedEnrichmentLoading
+                        },
+                        showCancelConfirmation = currentState.value.showCancelDownloadConfirmation,
+                        onBack = viewModel::navigateBack,
+                        onDownload = viewModel::confirmProfileDownload,
+                        onDismissCancelConfirmation = viewModel::dismissCancelProfileDownload,
+                        onConfirmCancel = viewModel::confirmCancelProfileDownload,
+                    )
+                }
+            }
+            entry<AppRoute.ProfileDownloadResult> { route ->
+                val result = route.result
+                val profile = currentState.value.profiles
+                    .firstOrNull { it.iccid == result.profile.iccid }
+                    ?: result.profile
+                ProfileDownloadResultScreen(
+                    result = result,
+                    profile = profile,
+                    busy = currentState.value.lpa.operation !is LpaOperation.Idle,
+                    onBack = viewModel::navigateBack,
+                    onEnable = { viewModel.setProfileEnabled(profile.iccid, true) },
+                    onRename = { nickname -> viewModel.renameProfile(profile.iccid, nickname) },
+                    onDone = viewModel::finishProfileDownload,
                 )
             }
             entry<AppRoute.BatchDownload> {
                 BatchDownloadScreen(
                     imei = currentState.value.settings.imei,
                     onBack = viewModel::navigateBack,
-                    onDownload = viewModel::downloadProfile,
+                    onDownload = viewModel::downloadProfileWithoutConfirmation,
                 )
             }
             entry<AppRoute.EuiccDetails> {
@@ -238,6 +315,19 @@ fun HyperLpaApp(
                     onSave = viewModel::setIsdrAids,
                 )
             }
+            entry<AppRoute.TagsAndReminders> {
+                TagsAndRemindersScreen(
+                    settings = currentState.value.settings,
+                    notificationPermissionGranted = currentNotificationPermissionGranted.value,
+                    onBack = viewModel::navigateBack,
+                    onOpenTagManager = { viewModel.navigate(AppRoute.TagManager) },
+                    onOpenScheduledReminders = { viewModel.navigate(AppRoute.ScheduledReminders) },
+                    onSetRemindersEnabled = viewModel::setScheduledReminders,
+                    onRequestNotificationPermission = onRequestNotificationPermission,
+                    onOpenNotificationSettings = onOpenNotificationSettings,
+                    onTestNotification = onTestProfileReminder,
+                )
+            }
             entry<AppRoute.TagManager> {
                 TagManagerScreen(
                     profiles = currentState.value.profiles,
@@ -249,6 +339,7 @@ fun HyperLpaApp(
                 ScheduledRemindersScreen(
                     profiles = currentState.value.profiles,
                     onBack = viewModel::navigateBack,
+                    onOpen = { profile -> viewModel.navigate(AppRoute.ProfileDetails(profile.iccid)) },
                     onClear = { profile ->
                         viewModel.setProfileReminder(
                             profile.iccid,
@@ -280,7 +371,7 @@ fun HyperLpaApp(
     ) { _ ->
         Box(Modifier.fillMaxSize()) {
             NavDisplay(
-                backStack = state.backStack,
+                backStack = backStack,
                 onBack = viewModel::navigateBack,
                 entryProvider = entries,
                 transitionEffects = NavDisplayTransitionEffects(
@@ -292,6 +383,7 @@ fun HyperLpaApp(
             )
 
             OperationProgressDialog(operation = state.lpa.operation)
+            ProfileInstallProgressDialog(operation = state.lpa.operation)
             OperationFailureDialog(
                 failure = state.lpa.failure,
                 onDismiss = viewModel::clearFailure,
@@ -371,12 +463,19 @@ private fun MainShell(
             }
         }
     } else {
+        val profilesLoading = state.isProfilesLoading
+        val useStaticBackdrop = profilesLoading && mainPagerState.selectedPage == AppTab.PROFILES.ordinal
         val backdrop = rememberAppBackdrop()
         val blurActive = backdrop != null
         val showLabels = state.settings.navigationLabels == NavigationLabels.ICON_AND_TEXT
         val regularBarColor = if (blurActive) Color.Transparent else MiuixTheme.colorScheme.surface
         val floatingShape = RoundedCornerShape(50.dp)
-        val floatingColor = if (blurActive) Color.Transparent else MiuixTheme.colorScheme.surfaceContainer
+        val solidFloatingColor = if (profilesLoading) {
+            MiuixTheme.colorScheme.surface
+        } else {
+            MiuixTheme.colorScheme.surfaceContainer
+        }
+        val floatingColor = if (blurActive) Color.Transparent else solidFloatingColor
         val floatingHighlight = if (MiuixTheme.colorScheme.surface.luminance() < 0.5f) {
             Highlight.GlassStrokeMiddleDark
         } else {
@@ -396,6 +495,7 @@ private fun MainShell(
                             isBlurActive = blurActive,
                             isDark = MiuixTheme.colorScheme.surface.luminance() < 0.5f,
                             showLabels = showLabels,
+                            solidContainerColor = solidFloatingColor,
                         )
                     } else {
                         FloatingNavigationBar(
@@ -441,12 +541,23 @@ private fun MainShell(
                 }
             },
         ) { padding ->
-            pagerContent(
-                Modifier
-                    .fillMaxSize()
-                    .then(if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier),
-                padding,
-            )
+            Box(Modifier.fillMaxSize()) {
+                if (useStaticBackdrop && backdrop != null) {
+                    Spacer(Modifier.fillMaxSize().layerBackdrop(backdrop))
+                }
+                pagerContent(
+                    Modifier
+                        .fillMaxSize()
+                        .then(
+                            if (backdrop != null && !useStaticBackdrop) {
+                                Modifier.layerBackdrop(backdrop)
+                            } else {
+                                Modifier
+                            },
+                        ),
+                    padding,
+                )
+            }
         }
     }
 }
@@ -459,6 +570,8 @@ private fun MainTabPage(
     scrollBehavior: ScrollBehavior,
     outerPadding: PaddingValues,
 ) {
+    val profilesLoading = state.isProfilesLoading
+    val useStaticBackdrop = profilesLoading && tab == AppTab.PROFILES
     val backdrop = rememberAppBackdrop()
     val topBarColor = if (backdrop == null) MiuixTheme.colorScheme.surface else Color.Transparent
     Scaffold(
@@ -476,13 +589,8 @@ private fun MainTabPage(
                                 IconButton(onClick = { viewModel.navigate(AppRoute.DownloadProfile) }) {
                                     Icon(MiuixIcons.Download, contentDescription = "Download profile")
                                 }
-                                IconButton(onClick = viewModel::refreshProfiles) {
-                                    Icon(MiuixIcons.Refresh, contentDescription = "Refresh profiles")
-                                }
                             }
-                            AppTab.NOTIFICATIONS -> IconButton(onClick = viewModel::refreshProfiles) {
-                                Icon(MiuixIcons.Refresh, contentDescription = "Refresh notifications")
-                            }
+                            AppTab.NOTIFICATIONS -> Unit
                             AppTab.TOOLS,
                             AppTab.SETTINGS,
                             -> Unit
@@ -498,46 +606,64 @@ private fun MainTabPage(
         )
         val modifier = Modifier
             .fillMaxSize()
-            .then(if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier)
-        when (tab) {
-            AppTab.PROFILES -> ProfilesScreen(
-                state = state,
-                modifier = modifier,
-                contentPadding = contentPadding,
-                scrollBehavior = scrollBehavior,
-                onSearchChange = viewModel::updateSearchQuery,
-                onSelectReader = viewModel::connectReader,
-                onRefreshReaders = viewModel::refreshReaders,
-                onOpenEuiccDetails = { viewModel.navigate(AppRoute.EuiccDetails) },
-                onOpenProfile = { profile -> viewModel.navigate(AppRoute.ProfileDetails(profile.iccid)) },
-                onEnableChange = viewModel::setProfileEnabled,
-                onDownload = { viewModel.navigate(AppRoute.DownloadProfile) },
+            .then(
+                if (backdrop != null && !useStaticBackdrop) {
+                    Modifier.layerBackdrop(backdrop)
+                } else {
+                    Modifier
+                },
             )
-            AppTab.NOTIFICATIONS -> NotificationsScreen(
-                state = state,
-                modifier = modifier,
-                contentPadding = contentPadding,
-                scrollBehavior = scrollBehavior,
-                onProcess = viewModel::processNotification,
-                onDelete = viewModel::deleteNotification,
-            )
-            AppTab.TOOLS -> ToolsScreen(
-                state = state,
-                modifier = modifier,
-                contentPadding = contentPadding,
-                scrollBehavior = scrollBehavior,
-                onNavigate = viewModel::navigate,
-            )
-            AppTab.SETTINGS -> SettingsScreen(
-                state = state,
-                modifier = modifier,
-                contentPadding = contentPadding,
-                scrollBehavior = scrollBehavior,
-                onNavigate = viewModel::navigate,
-            )
+        Box(Modifier.fillMaxSize()) {
+            if (useStaticBackdrop && backdrop != null) {
+                Spacer(Modifier.fillMaxSize().layerBackdrop(backdrop))
+            }
+            when (tab) {
+                AppTab.PROFILES -> ProfilesScreen(
+                    state = state,
+                    modifier = modifier,
+                    contentPadding = contentPadding,
+                    scrollBehavior = scrollBehavior,
+                    onSearchChange = viewModel::updateSearchQuery,
+                    onSelectReader = viewModel::connectReader,
+                    onRefreshReaders = viewModel::refreshReaders,
+                    onOpenEuiccDetails = { viewModel.navigate(AppRoute.EuiccDetails) },
+                    onOpenProfile = { profile -> viewModel.navigate(AppRoute.ProfileDetails(profile.iccid)) },
+                    onEnableChange = viewModel::setProfileEnabled,
+                    onDownload = { viewModel.navigate(AppRoute.DownloadProfile) },
+                    onRefresh = viewModel::refreshProfiles,
+                )
+                AppTab.NOTIFICATIONS -> NotificationsScreen(
+                    state = state,
+                    modifier = modifier,
+                    contentPadding = contentPadding,
+                    scrollBehavior = scrollBehavior,
+                    onProcess = viewModel::processNotification,
+                    onDelete = viewModel::deleteNotification,
+                    onRefresh = viewModel::refreshProfiles,
+                )
+                AppTab.TOOLS -> ToolsScreen(
+                    state = state,
+                    modifier = modifier,
+                    contentPadding = contentPadding,
+                    scrollBehavior = scrollBehavior,
+                    onNavigate = viewModel::navigate,
+                )
+                AppTab.SETTINGS -> SettingsScreen(
+                    state = state,
+                    modifier = modifier,
+                    contentPadding = contentPadding,
+                    scrollBehavior = scrollBehavior,
+                    onNavigate = viewModel::navigate,
+                )
+            }
         }
     }
 }
+
+private val HyperLpaUiState.isProfilesLoading: Boolean
+    get() = !lpa.initialized ||
+        (lpa.operation is LpaOperation.DiscoveringReaders && lpa.profiles.isEmpty()) ||
+        (!profileEnrichmentReady && lpa.profiles.isNotEmpty())
 
 @Composable
 private fun FloatingTabItem(
@@ -623,7 +749,7 @@ private fun OperationProgressDialog(operation: LpaOperation) {
         is LpaOperation.Switching -> if (operation.enable) "Enabling profile" else "Disabling profile"
         is LpaOperation.Deleting -> "Deleting profile"
         is LpaOperation.Renaming -> "Renaming profile"
-        is LpaOperation.Downloading -> "Downloading profile"
+        is LpaOperation.Downloading -> null
         is LpaOperation.ProcessingNotification -> "Processing notification"
         is LpaOperation.Resetting -> "Resetting eUICC"
         LpaOperation.Idle,
@@ -644,6 +770,65 @@ private fun OperationProgressDialog(operation: LpaOperation) {
             contentAlignment = Alignment.Center,
         ) {
             CircularProgressIndicator(size = 30.dp)
+        }
+    }
+}
+
+@Composable
+private fun ProfileInstallProgressDialog(operation: LpaOperation) {
+    val download = operation as? LpaOperation.Downloading
+    val show = download?.stage == DownloadStage.DOWNLOADING ||
+        download?.stage == DownloadStage.FINALIZING ||
+        download?.stage == DownloadStage.INSTALLING
+    val sentBytes = download?.sentBytes
+    val totalBytes = download?.totalBytes
+    val progress = if (sentBytes != null && totalBytes != null && totalBytes > 0) {
+        (sentBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
+    } else {
+        null
+    }
+
+    OverlayDialog(
+        show = show,
+        title = "Installing profile",
+        summary = "Keep the eUICC connected until installation is complete.",
+        onDismissRequest = null,
+    ) {
+        if (progress != null && sentBytes != null && totalBytes != null) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                LinearProgressIndicator(
+                    progress = progress,
+                    modifier = Modifier.fillMaxWidth(),
+                    height = 6.dp,
+                )
+                Spacer(Modifier.size(14.dp))
+                Text(
+                    text = "${(progress * 100).roundToInt()}%",
+                    style = MiuixTheme.textStyles.title2,
+                )
+                Spacer(Modifier.size(6.dp))
+                Text(
+                    text = "Installing ($sentBytes / $totalBytes bytes)…",
+                    style = MiuixTheme.textStyles.body2,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+            }
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                CircularProgressIndicator(size = 26.dp)
+                Spacer(Modifier.size(12.dp))
+                Text(
+                    text = "Preparing secure installation…",
+                    style = MiuixTheme.textStyles.body1,
+                )
+            }
         }
     }
 }

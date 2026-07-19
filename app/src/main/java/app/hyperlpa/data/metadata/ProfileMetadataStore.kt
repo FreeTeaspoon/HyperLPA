@@ -14,6 +14,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.IOException
 import java.time.Instant
+import java.util.Locale
 
 private val Context.profileMetadataDataStore by preferencesDataStore(name = "profile_metadata")
 
@@ -59,12 +60,35 @@ class ProfileMetadataStore(context: Context) {
         }
 
     suspend fun setTags(iccid: String, tags: Set<String>) {
-        update(iccid) { copy(tags = tags.map(String::trim).filter(String::isNotEmpty).toSet()) }
+        update(iccid) { copy(tags = normalizeProfileTags(tags)) }
     }
 
-    suspend fun setReminder(iccid: String, label: String, reminderAt: Instant?) {
+    suspend fun setReminder(
+        iccid: String,
+        label: String,
+        reminderAt: Instant?,
+        enabled: Boolean = true,
+    ) {
         update(iccid) { copy(reminderEpochMillis = reminderAt?.toEpochMilli()) }
-        scheduleProfileReminder(appContext, iccid, label, reminderAt)
+        scheduleProfileReminder(appContext, iccid, label, reminderAt.takeIf { enabled })
+    }
+
+    suspend fun markReminderDelivered(iccid: String) {
+        update(iccid) { copy(reminderEpochMillis = null) }
+    }
+
+    fun syncReminders(
+        reminders: Map<String, Pair<String, Instant?>>,
+        enabled: Boolean,
+    ) {
+        reminders.forEach { (iccid, reminder) ->
+            scheduleProfileReminder(
+                context = appContext,
+                iccid = iccid,
+                label = reminder.first,
+                reminderAt = reminder.second.takeIf { enabled },
+            )
+        }
     }
 
     suspend fun setIconUri(iccid: String, iconUri: String?) {
@@ -165,3 +189,12 @@ class ProfileMetadataStore(context: Context) {
 
 fun providerIconKey(providerName: String?): String? =
     providerName?.trim()?.lowercase()?.takeIf(String::isNotEmpty)
+
+internal fun normalizeProfileTags(tags: Iterable<String>): Set<String> {
+    val normalized = linkedMapOf<String, String>()
+    tags.forEach { rawTag ->
+        val tag = rawTag.trim().take(32)
+        if (tag.isNotEmpty()) normalized.putIfAbsent(tag.lowercase(Locale.ROOT), tag)
+    }
+    return normalized.values.take(16).toCollection(linkedSetOf())
+}
