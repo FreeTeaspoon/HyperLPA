@@ -92,17 +92,17 @@ android {
         }
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.findByName("release")
+            signingConfig = signingConfigs.findByName("nineEsimRelease")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
         }
-        if (nineEsimKeystorePropertiesFile.isFile) {
-            create("nineEsimRelease") {
+        if (keystorePropertiesFile.isFile) {
+            create("hyperLpaRelease") {
                 initWith(getByName("release"))
-                signingConfig = signingConfigs.getByName("nineEsimRelease")
-                versionNameSuffix = "-9esim"
+                signingConfig = signingConfigs.getByName("release")
+                versionNameSuffix = "-hyperlpa"
                 matchingFallbacks += listOf("release")
             }
         }
