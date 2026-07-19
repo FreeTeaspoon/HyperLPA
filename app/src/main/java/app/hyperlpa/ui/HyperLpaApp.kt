@@ -291,11 +291,6 @@ private fun MainShell(
     val selectedTab by rememberUpdatedState(state.selectedTab)
     val scrollBehaviors = tabs.map { MiuixScrollBehavior() }
 
-    LaunchedEffect(state.selectedTab) {
-        if (mainPagerState.selectedPage != state.selectedTab.ordinal) {
-            mainPagerState.animateToPage(state.selectedTab.ordinal)
-        }
-    }
     LaunchedEffect(pagerState.currentPage) { mainPagerState.syncPage() }
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.settledPage }
