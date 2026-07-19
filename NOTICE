@@ -1,0 +1,26 @@
+HyperLPA third-party notices
+
+HyperLPA is licensed under GNU GPL version 3. See LICENSE.
+
+The LPA engine is derived from the lpac-jni module in OpenEUICC and the lpac
+project. Those components remain under their respective GPL-compatible terms;
+their license files are retained under libs/lpac-jni.
+
+The application architecture and feature behavior were informed by the source
+of NekokoLPA2 (MIT), compose-miuix-ui/miuix (Apache-2.0), Mishka (GPL-3.0),
+InstallerX-Revived (GPL-3.0), OpenEUICC (GPL-3.0), and NZB Direct. No Nekoko
+mascot artwork or branding is included.
+
+The Appearance & Theme screen and floating-navigation behavior are adapted
+from the user's NZB Direct project. Its Liquid Glass support files retain the
+Apache-2.0 notices from compose-miuix-ui contributors and AndroidLiquidGlass.
+
+The privileged telephony, RemoCard v2, ESTKme RED/RED 2, SimLink and BeeSIM
+reader implementations are Kotlin adaptations of protocol behavior published
+by NekokoLPA2 under the MIT License.
+
+Miuix libraries are consumed as Maven dependencies under Apache-2.0.
+
+The optional 9eSIM-compatible release variant uses the public 9eSIM Community
+Key distributed by 9eSIM under the MIT License. The key itself is not included
+in this source tree.
