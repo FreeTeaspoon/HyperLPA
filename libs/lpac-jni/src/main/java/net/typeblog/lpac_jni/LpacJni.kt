@@ -38,6 +38,7 @@ internal object LpacJni {
     ): Int
 
     external fun downloadErrCodeToString(code: Int): String
+    external fun downloadLastHttpError(handle: Long): String?
     external fun handleNotification(handle: Long, seqNumber: Long): Int
 
     // Cancel any ongoing es9p and/or es10b sessions

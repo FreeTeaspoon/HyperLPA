@@ -63,6 +63,10 @@ struct es10b_load_bound_profile_package_result {
     enum es10b_error_reason errorReason;
 };
 
+typedef int (*es10b_load_bound_profile_package_progress_callback)(uint64_t sent_bytes,
+                                                                  uint64_t total_bytes,
+                                                                  void *user_data);
+
 struct es10b_prepare_download_param {
     char *b64_profileMetadata;
     char *b64_smdpSigned2;
@@ -127,6 +131,10 @@ int es10b_prepare_download_r(struct euicc_ctx *ctx, char **b64_PrepareDownloadRe
                              struct es10b_prepare_download_param_user *param_user);
 int es10b_load_bound_profile_package_r(struct euicc_ctx *ctx, struct es10b_load_bound_profile_package_result *result,
                                        const char *b64_BoundProfilePackage);
+int es10b_load_bound_profile_package_r_progress(
+    struct euicc_ctx *ctx, struct es10b_load_bound_profile_package_result *result,
+    const char *b64_BoundProfilePackage, es10b_load_bound_profile_package_progress_callback progress_callback,
+    void *progress_user_data);
 int es10b_get_euicc_challenge_r(struct euicc_ctx *ctx, char **b64_euiccChallenge);
 int es10b_get_euicc_info_r(struct euicc_ctx *ctx, char **b64_EUICCInfo1);
 int es10b_authenticate_server_r(struct euicc_ctx *ctx, uint8_t **transaction_id, uint32_t *transaction_id_len,
@@ -140,6 +148,9 @@ void es10b_authenticate_server_param_free(struct es10b_authenticate_server_param
 
 int es10b_prepare_download(struct euicc_ctx *ctx, const char *confirmationCode);
 int es10b_load_bound_profile_package(struct euicc_ctx *ctx, struct es10b_load_bound_profile_package_result *result);
+int es10b_load_bound_profile_package_progress(
+    struct euicc_ctx *ctx, struct es10b_load_bound_profile_package_result *result,
+    es10b_load_bound_profile_package_progress_callback progress_callback, void *progress_user_data);
 int es10b_get_euicc_challenge_and_info(struct euicc_ctx *ctx);
 int es10b_authenticate_server(struct euicc_ctx *ctx, const char *matchingId, const char *imei);
 int es10b_cancel_session(struct euicc_ctx *ctx, enum es10b_cancel_session_reason reason);

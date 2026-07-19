@@ -1,13 +1,10 @@
 package app.hyperlpa.ui.screens
 
-import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -18,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -36,17 +32,15 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import app.hyperlpa.BuildConfig
 import app.hyperlpa.data.settings.AppSettings
 import app.hyperlpa.data.settings.DefaultIsdrAids
 import app.hyperlpa.data.settings.FloatingBottomBarStyle
 import app.hyperlpa.data.settings.NavigationLabels
 import app.hyperlpa.data.settings.NavigationStyle
+import app.hyperlpa.data.settings.PhoneFormatStrategy
 import app.hyperlpa.data.settings.ProfileLayout
 import app.hyperlpa.data.settings.ProfileSort
 import app.hyperlpa.data.settings.RedactionMode
@@ -55,6 +49,9 @@ import app.hyperlpa.data.settings.ThemeMode
 import app.hyperlpa.data.settings.ThemePalette
 import app.hyperlpa.ui.HyperLpaUiState
 import app.hyperlpa.ui.HyperLpaViewModel
+import app.hyperlpa.ui.adaptive.AdaptiveTopAppBar
+import app.hyperlpa.ui.adaptive.CenteredContent
+import app.hyperlpa.ui.adaptive.horizontalCutoutPadding
 import app.hyperlpa.ui.components.GroupedCard
 import app.hyperlpa.ui.components.SectionHeading
 import app.hyperlpa.ui.components.DetailLazyScaffold
@@ -62,18 +59,15 @@ import app.hyperlpa.ui.components.BlurredBar
 import app.hyperlpa.ui.components.rememberAppBackdrop
 import app.hyperlpa.ui.navigation.AppRoute
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
-import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Slider
 import top.yukonga.miuix.kmp.basic.SliderDefaults
-import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
-import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.blur.isRuntimeShaderSupported
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
@@ -133,7 +127,7 @@ fun AppearanceSettingsScreen(
         containerColor = MiuixTheme.colorScheme.surface,
         topBar = {
             BlurredBar(backdrop) {
-                TopAppBar(
+                AdaptiveTopAppBar(
                     title = "Appearance & Theme",
                     color = if (backdrop != null) Color.Transparent else MiuixTheme.colorScheme.surface,
                     scrollBehavior = scrollBehavior,
@@ -142,25 +136,29 @@ fun AppearanceSettingsScreen(
             }
         },
     ) { innerPadding ->
-        AppearanceResponsiveContent(
+        CenteredContent(
             modifier = Modifier
+                .fillMaxSize()
+                .horizontalCutoutPadding()
                 .then(if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier),
-        ) { contentModifier ->
+        ) { sidePadding ->
             LazyColumn(
-                modifier = contentModifier
+                modifier = Modifier
                     .fillMaxSize()
                     .scrollEndHaptic()
                     .overScrollVertical()
                     .nestedScroll(scrollBehavior.nestedScrollConnection),
                 contentPadding = PaddingValues(
+                    start = sidePadding,
+                    end = sidePadding,
                     top = innerPadding.calculateTopPadding(),
                     bottom = innerPadding.calculateBottomPadding() + 24.dp,
                 ),
                 overscrollEffect = null,
             ) {
-                item { SmallTitle("Color & Theme") }
+                item { SectionHeading("Color & Theme") }
                 item {
-                    AppearancePreferenceCard {
+                    GroupedCard {
                         OverlayDropdownPreference(
                             title = "Theme Mode",
                             summary = ThemeModeLabels[settings.themeMode.ordinal],
@@ -211,9 +209,9 @@ fun AppearanceSettingsScreen(
                     }
                 }
 
-                item { SmallTitle("Interface & Effects") }
+                item { SectionHeading("Interface & Effects") }
                 item {
-                    AppearancePreferenceCard {
+                    GroupedCard {
                         SwitchPreference(
                             title = "Blur Effects",
                             summary = "Enable blur effects for bars and layered surfaces",
@@ -261,9 +259,9 @@ fun AppearanceSettingsScreen(
                     }
                 }
 
-                item { SmallTitle("Bottom Navigation") }
+                item { SectionHeading("Bottom Navigation") }
                 item {
-                    AppearancePreferenceCard {
+                    GroupedCard {
                         SwitchPreference(
                             title = "Floating Bottom Bar",
                             summary = "Use a floating bottom navigation bar on phones",
@@ -375,6 +373,7 @@ fun ProfileDisplaySettingsScreen(
 ) {
     val profileLayouts = ProfileLayout.entries
     val profileSorts = ProfileSort.entries
+    val phoneFormatStrategies = PhoneFormatStrategy.entries
 
     DetailLazyScaffold(title = "Profile display", onBack = onBack) { _ ->
         item { SectionHeading("Layout") }
@@ -409,33 +408,86 @@ fun ProfileDisplaySettingsScreen(
                     title = "Profile search",
                     summary = "Show the search field below the eUICC selector",
                 )
+                OverlayDropdownPreference(
+                    items = phoneFormatStrategies.map(PhoneFormatStrategy::displayName),
+                    selectedIndex = phoneFormatStrategies.indexOf(settings.phoneFormatStrategy),
+                    title = "Phone number format",
+                    summary = "Detect and format phone numbers in profile names",
+                    onSelectedIndexChange = { viewModel.setPhoneFormatStrategy(phoneFormatStrategies[it]) },
+                )
+            }
+        }
+        item { SectionHeading("Homepage cards") }
+        item {
+            GroupedCard {
+                SwitchPreference(
+                    checked = settings.showProfileNameOnHome,
+                    onCheckedChange = viewModel::setShowProfileNameOnHome,
+                    title = "Profile name",
+                    summary = "Show the profile name on the homepage",
+                )
+                SwitchPreference(
+                    checked = settings.showProfileProviderOnHome,
+                    onCheckedChange = viewModel::setShowProfileProviderOnHome,
+                    title = "Provider",
+                    summary = "Show the provider on the homepage",
+                )
+                SwitchPreference(
+                    checked = settings.showProfileIccidOnHome,
+                    onCheckedChange = viewModel::setShowProfileIccidOnHome,
+                    title = "ICCID",
+                    summary = "Show the profile identifier on the homepage",
+                )
+                SwitchPreference(
+                    checked = settings.showProfileIconOnHome,
+                    onCheckedChange = viewModel::setShowProfileIconOnHome,
+                    title = "Profile icon",
+                    summary = "Show the profile icon on the homepage",
+                )
+                SwitchPreference(
+                    checked = settings.showProfileTagsOnHome,
+                    onCheckedChange = viewModel::setShowProfileTagsOnHome,
+                    title = "Tags",
+                    summary = "Show profile tags on the homepage",
+                )
+                SwitchPreference(
+                    checked = settings.showProfileRemindersOnHome,
+                    onCheckedChange = viewModel::setShowProfileRemindersOnHome,
+                    title = "Reminders",
+                    summary = "Show scheduled reminder dates on the homepage",
+                )
+                SwitchPreference(
+                    checked = settings.showProfileSizeOnHome,
+                    onCheckedChange = viewModel::setShowProfileSizeOnHome,
+                    title = "Profile size",
+                    summary = "Show estimated or measured storage on the homepage",
+                )
+                SwitchPreference(
+                    checked = settings.showProfileSwitchOnHome,
+                    onCheckedChange = viewModel::setShowProfileSwitchOnHome,
+                    title = "Enable switch",
+                    summary = "Show the profile enable switch on the homepage",
+                )
+            }
+        }
+        item { SectionHeading("Homepage reader") }
+        item {
+            GroupedCard {
+                SwitchPreference(
+                    checked = settings.showReaderSelectorOnHome,
+                    onCheckedChange = viewModel::setShowReaderSelectorOnHome,
+                    title = "Reader selector",
+                    summary = "Show the active reader control on the homepage",
+                )
+                SwitchPreference(
+                    checked = settings.showEidOnHome,
+                    onCheckedChange = viewModel::setShowEidOnHome,
+                    title = "EID",
+                    summary = "Show the eUICC identifier on the homepage",
+                )
             }
         }
     }
-}
-
-@Composable
-private fun AppearanceResponsiveContent(
-    modifier: Modifier = Modifier,
-    content: @Composable (Modifier) -> Unit,
-) {
-    Box(
-        modifier = modifier.fillMaxSize(),
-        contentAlignment = Alignment.TopCenter,
-    ) {
-        content(Modifier.fillMaxWidth().widthIn(max = 720.dp))
-    }
-}
-
-@Composable
-private fun AppearancePreferenceCard(content: @Composable ColumnScope.() -> Unit) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp)
-            .padding(bottom = 6.dp),
-        content = content,
-    )
 }
 
 @Composable
@@ -606,12 +658,6 @@ fun NotificationSettingsScreen(
                     summary = "Delete a notification from the eUICC only after successful delivery",
                     enabled = settings.notificationAutoSend,
                 )
-                SwitchPreference(
-                    checked = settings.scheduledReminders,
-                    onCheckedChange = viewModel::setScheduledReminders,
-                    title = "Profile reminders",
-                    summary = "Allow scheduled device notifications for tagged profiles",
-                )
             }
         }
     }
@@ -641,12 +687,6 @@ fun PrivacySettingsScreen(
                     title = "ICCID redaction",
                     summary = "Controls how profile identifiers are shown",
                     onSelectedIndexChange = { viewModel.setIccidRedaction(redactionModes[it]) },
-                )
-                SwitchPreference(
-                    checked = settings.revealSensitiveData,
-                    onCheckedChange = viewModel::setRevealSensitiveData,
-                    title = "Reveal identifiers",
-                    summary = "Temporarily override redaction throughout the app",
                 )
             }
         }
@@ -827,56 +867,6 @@ fun AidManagerScreen(
 }
 
 @Composable
-fun AboutScreen(onBack: () -> Unit) {
-    val uriHandler = LocalUriHandler.current
-    DetailLazyScaffold(title = "About HyperLPA", onBack = onBack) { _ ->
-        item {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 26.dp)) {
-                Text(
-                    text = "HyperLPA",
-                    style = MiuixTheme.textStyles.title1,
-                    fontWeight = FontWeight.Bold,
-                )
-                Spacer(Modifier.height(5.dp))
-                Text(
-                    text = "A native HyperOS-style local profile assistant",
-                    style = MiuixTheme.textStyles.body1,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                )
-            }
-        }
-        item { SectionHeading("Build") }
-        item {
-            GroupedCard {
-                ArrowPreference(title = "Version", summary = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})", enabled = false)
-                ArrowPreference(title = "Android", summary = "${Build.VERSION.RELEASE} · API ${Build.VERSION.SDK_INT}", enabled = false)
-                ArrowPreference(title = "Interface", summary = "Miuix Compose 0.9.3 · Jetpack Compose 1.11.4", enabled = false)
-            }
-        }
-        item { SectionHeading("Open source") }
-        item {
-            GroupedCard {
-                ArrowPreference(
-                    title = "Source code",
-                    summary = "GPL-3.0-or-later compatible implementation",
-                    onClick = { uriHandler.openUri("https://github.com/") },
-                )
-                ArrowPreference(
-                    title = "Miuix Compose",
-                    summary = "Apache-2.0 interface toolkit",
-                    onClick = { uriHandler.openUri("https://github.com/compose-miuix-ui/miuix") },
-                )
-                ArrowPreference(
-                    title = "lpac / OpenEUICC",
-                    summary = "eSIM protocol engine and compatible reader work",
-                    onClick = { uriHandler.openUri("https://github.com/estkme-group/openeuicc") },
-                )
-            }
-        }
-    }
-}
-
-@Composable
 private fun TextEditorDialog(
     show: Boolean,
     title: String,
@@ -961,3 +951,10 @@ private fun Enum<*>.displayName(): String = name
     .lowercase()
     .split('_')
     .joinToString(" ") { word -> word.replaceFirstChar(Char::uppercase) }
+
+private fun PhoneFormatStrategy.displayName(): String = when (this) {
+    PhoneFormatStrategy.INTERNATIONAL_ONLY -> "E.164 Int'l Only"
+    PhoneFormatStrategy.INTERNATIONAL_AND_MOBILE -> "Int'l & Mobile"
+    PhoneFormatStrategy.INTERNATIONAL_AND_ALL -> "Int'l & National"
+    PhoneFormatStrategy.OFF -> "Off"
+}

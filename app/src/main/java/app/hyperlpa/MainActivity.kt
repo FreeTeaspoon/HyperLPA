@@ -8,6 +8,7 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -23,6 +24,8 @@ import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.hyperlpa.data.settings.AppSettings
+import app.hyperlpa.reminders.hasProfileReminderPermission
+import app.hyperlpa.reminders.showTestProfileReminder
 import app.hyperlpa.ui.HyperLpaApp
 import app.hyperlpa.ui.HyperLpaViewModel
 import app.hyperlpa.ui.theme.HyperLpaTheme
@@ -47,7 +50,10 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var qrLauncher: ActivityResultLauncher<ScannerConfig>
     private lateinit var permissionLauncher: ActivityResultLauncher<Array<String>>
+    private lateinit var notificationPermissionLauncher: ActivityResultLauncher<String>
     private var qrCallback: ((String?) -> Unit)? = null
+    private var notificationPermissionCallback: ((Boolean) -> Unit)? = null
+    private var notificationPermissionGranted by mutableStateOf(true)
     private val requestedPermissions = mutableSetOf<String>()
     private var simStateReceiverRegistered = false
     private val simStateReceiver = object : BroadcastReceiver() {
@@ -58,12 +64,19 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        installSplashScreen()
+        val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
+        splashScreen.setKeepOnScreenCondition { !viewModel.state.value.settingsLoaded }
         enableEdgeToEdge()
 
         permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
             viewModel.refreshReaders()
+        }
+        notificationPermissionGranted = hasProfileReminderPermission(this)
+        notificationPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+            notificationPermissionGranted = it
+            notificationPermissionCallback?.invoke(it)
+            notificationPermissionCallback = null
         }
 
         qrLauncher = registerForActivityResult(ScanCustomCode()) { result ->
@@ -99,9 +112,6 @@ class MainActivity : ComponentActivity() {
                     viewModel.refreshReaders()
                 }
             }
-            LaunchedEffect(state.settings.scheduledReminders) {
-                requestRuntimePermissions(state.settings)
-            }
             LaunchedEffect(state.settings.predictiveBack) {
                 if (applicationGraph.isPredictiveBackEnabled() != state.settings.predictiveBack) {
                     applicationGraph.setPredictiveBackEnabled(state.settings.predictiveBack)
@@ -111,7 +121,12 @@ class MainActivity : ComponentActivity() {
             HyperLpaTheme(settings = state.settings) {
                 HyperLpaApp(
                     state = state,
+                    backStack = viewModel.navigationBackStack,
                     viewModel = viewModel,
+                    notificationPermissionGranted = notificationPermissionGranted,
+                    onRequestNotificationPermission = ::requestNotificationPermission,
+                    onOpenNotificationSettings = ::openNotificationSettings,
+                    onTestProfileReminder = { showTestProfileReminder(this) },
                     onScanQr = { callback ->
                         qrCallback = callback
                         qrLauncher.launch(
@@ -147,6 +162,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        notificationPermissionGranted = hasProfileReminderPermission(this)
+    }
+
     override fun onStop() {
         if (simStateReceiverRegistered) {
             unregisterReceiver(simStateReceiver)
@@ -172,9 +192,6 @@ class MainActivity : ComponentActivity() {
                 }
             }
             if (settings.enableTelephony) add(Manifest.permission.READ_PHONE_STATE)
-            if (settings.scheduledReminders && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                add(Manifest.permission.POST_NOTIFICATIONS)
-            }
         }
         val missing = candidates.filter { permission ->
             ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED &&
@@ -183,5 +200,27 @@ class MainActivity : ComponentActivity() {
         if (missing.isEmpty()) return false
         permissionLauncher.launch(missing.toTypedArray())
         return true
+    }
+
+    private fun requestNotificationPermission(onResult: (Boolean) -> Unit) {
+        val runtimePermissionGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        if (runtimePermissionGranted) {
+            notificationPermissionGranted = hasProfileReminderPermission(this)
+            if (!notificationPermissionGranted) openNotificationSettings()
+            onResult(notificationPermissionGranted)
+            return
+        }
+        notificationPermissionCallback = onResult
+        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    private fun openNotificationSettings() {
+        startActivity(
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            },
+        )
     }
 }
