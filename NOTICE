@@ -19,6 +19,11 @@ The privileged telephony, RemoCard v2, ESTKme RED/RED 2, SimLink and BeeSIM
 reader implementations are Kotlin adaptations of protocol behavior published
 by NekokoLPA2 under the MIT License.
 
+Operator-icon catalog resolution and profile-size prediction are Kotlin
+adaptations of NekokoLPA2 behavior under the MIT License. Public size-reference
+data is downloaded from the NekokoLPA2 repository when that feature is enabled.
+HyperLPA does not use NekokoLPA branding or submit Nekoko installation telemetry.
+
 Miuix libraries are consumed as Maven dependencies under Apache-2.0.
 
 The optional 9eSIM-compatible release variant uses the public 9eSIM Community

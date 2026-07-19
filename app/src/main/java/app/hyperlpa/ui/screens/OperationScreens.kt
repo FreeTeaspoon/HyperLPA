@@ -1,5 +1,7 @@
 package app.hyperlpa.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -25,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.hyperlpa.data.metadata.providerIconKey
 import app.hyperlpa.data.settings.AppSettings
 import app.hyperlpa.domain.model.ActivityLogEntry
 import app.hyperlpa.domain.model.DownloadRequest
@@ -36,6 +39,7 @@ import app.hyperlpa.domain.model.ProfileInfo
 import app.hyperlpa.domain.model.ProfileState
 import app.hyperlpa.ui.components.EmptyState
 import app.hyperlpa.ui.components.GroupedCard
+import app.hyperlpa.ui.components.ProfileArtwork
 import app.hyperlpa.ui.components.SectionHeading
 import app.hyperlpa.ui.components.DetailLazyScaffold
 import app.hyperlpa.ui.components.redactIdentifier
@@ -72,12 +76,17 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 fun ProfileDetailsScreen(
     profile: ProfileInfo?,
     settings: AppSettings,
+    operatorIcon: ByteArray?,
+    hasProfileIcon: Boolean,
+    hasProviderIcon: Boolean,
     onBack: () -> Unit,
     onEnableChange: (Boolean) -> Unit,
     onRename: (String) -> Unit,
     onDelete: () -> Unit,
     onSetTags: (Set<String>) -> Unit,
     onSetReminder: (String, Instant?) -> Unit,
+    onSetIcon: (uri: String?, applyToProvider: Boolean) -> Unit,
+    onApplyIconToProvider: () -> Unit,
 ) {
     var showRename by remember { mutableStateOf(false) }
     var nickname by remember(profile?.nickname) { mutableStateOf(profile?.nickname.orEmpty()) }
@@ -85,6 +94,13 @@ fun ProfileDetailsScreen(
     var showTags by remember { mutableStateOf(false) }
     var tagsText by remember(profile?.tags) { mutableStateOf(profile?.tags?.joinToString(", ").orEmpty()) }
     var showReminder by remember { mutableStateOf(false) }
+    var showIconOptions by remember { mutableStateOf(false) }
+    var pickForProvider by remember { mutableStateOf(false) }
+    val providerLabel = profile?.providerName?.trim().orEmpty().ifBlank { "this provider" }
+    val canShareByProvider = providerIconKey(profile?.providerName) != null
+    val pickIcon = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let { onSetIcon(it.toString(), pickForProvider) }
+    }
 
     DetailLazyScaffold(title = profile?.nickname?.ifBlank { profile.name }.orEmpty().ifBlank { "Profile" }, onBack = onBack) { _ ->
         if (profile == null) {
@@ -97,7 +113,11 @@ fun ProfileDetailsScreen(
             }
         } else {
             item {
-                ProfileHero(profile = profile, settings = settings)
+                ProfileHero(
+                    profile = profile,
+                    settings = settings,
+                    operatorIcon = operatorIcon,
+                )
             }
             item { SectionHeading("Profile") }
             item {
@@ -116,6 +136,15 @@ fun ProfileDetailsScreen(
                         title = "Display name",
                         summary = profile.nickname.ifBlank { "Use profile name" },
                         onClick = { showRename = true },
+                    )
+                    ArrowPreference(
+                        title = "Custom icon",
+                        summary = when {
+                            hasProfileIcon -> "Using a custom image for this profile"
+                            hasProviderIcon -> "Using a shared icon for $providerLabel"
+                            else -> "Choose a photo to replace the operator icon"
+                        },
+                        onClick = { showIconOptions = true },
                     )
                     ArrowPreference(
                         title = "Tags",
@@ -139,6 +168,12 @@ fun ProfileDetailsScreen(
                     ValuePreference(title = "ISD-P AID", value = profile.isdPAid.ifBlank { "Unavailable" })
                     ValuePreference(title = "Profile class", value = profile.profileClass.displayName())
                     ValuePreference(title = "Provider", value = profile.providerName.ifBlank { "Unknown" })
+                    profile.estimatedBytes?.takeIf { it > 0 }?.let { bytes ->
+                        ValuePreference(
+                            title = if (profile.sizeIsEstimated) "Estimated profile storage" else "Measured profile storage",
+                            value = "${if (profile.sizeIsEstimated) "~" else ""}${formatBytes(bytes.toInt())}",
+                        )
+                    }
                 }
             }
             item { SectionHeading("Danger zone") }
@@ -255,6 +290,60 @@ fun ProfileDetailsScreen(
             ReminderOption("Clear reminder", profile?.reminderAt?.formatDateTime() ?: "No reminder scheduled") {
                 onSetReminder(label, null)
                 showReminder = false
+            }
+        }
+    }
+
+    OverlayBottomSheet(
+        show = showIconOptions,
+        title = "Custom icon",
+        onDismissRequest = { showIconOptions = false },
+    ) {
+        Column {
+            ReminderOption(
+                "Choose photo for this profile",
+                "Only this profile uses the selected image",
+            ) {
+                pickForProvider = false
+                showIconOptions = false
+                pickIcon.launch("image/*")
+            }
+            if (canShareByProvider) {
+                ReminderOption(
+                    "Choose photo for all $providerLabel profiles",
+                    "Any profile with this provider name will use the same image",
+                ) {
+                    pickForProvider = true
+                    showIconOptions = false
+                    pickIcon.launch("image/*")
+                }
+            }
+            if (canShareByProvider && (hasProfileIcon || hasProviderIcon)) {
+                ReminderOption(
+                    "Use current icon for all $providerLabel profiles",
+                    "Share the artwork already shown on this profile",
+                ) {
+                    onApplyIconToProvider()
+                    showIconOptions = false
+                }
+            }
+            if (hasProfileIcon) {
+                ReminderOption(
+                    "Remove icon for this profile",
+                    "Restore the shared provider icon or operator artwork",
+                ) {
+                    onSetIcon(null, false)
+                    showIconOptions = false
+                }
+            }
+            if (hasProviderIcon) {
+                ReminderOption(
+                    "Remove shared $providerLabel icon",
+                    "Clear the icon used by every profile with this provider name",
+                ) {
+                    onSetIcon(null, true)
+                    showIconOptions = false
+                }
             }
         }
     }
@@ -667,18 +756,22 @@ fun LogsScreen(
 }
 
 @Composable
-private fun ProfileHero(profile: ProfileInfo, settings: AppSettings) {
+private fun ProfileHero(
+    profile: ProfileInfo,
+    settings: AppSettings,
+    operatorIcon: ByteArray?,
+) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Surface(
-            shape = CircleShape,
-            color = if (profile.state == ProfileState.ENABLED) MiuixTheme.colorScheme.primaryContainer else MiuixTheme.colorScheme.secondaryContainer,
-            contentColor = if (profile.state == ProfileState.ENABLED) MiuixTheme.colorScheme.onPrimaryContainer else MiuixTheme.colorScheme.onSecondaryContainer,
-        ) {
-            Icon(MiuixIcons.BankCards, contentDescription = null, modifier = Modifier.padding(20.dp).size(38.dp))
-        }
+        ProfileArtwork(
+            profile = profile,
+            cloudIcon = operatorIcon,
+            isEnabled = profile.state == ProfileState.ENABLED,
+            size = 78.dp,
+            cornerRadius = 20.dp,
+        )
         Spacer(Modifier.height(16.dp))
         Text(
             text = profile.nickname.ifBlank { profile.name.ifBlank { "eSIM profile" } },

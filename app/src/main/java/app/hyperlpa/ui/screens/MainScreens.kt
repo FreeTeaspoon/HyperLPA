@@ -47,6 +47,7 @@ import app.hyperlpa.ui.components.GroupedCard
 import app.hyperlpa.ui.components.LoadingState
 import app.hyperlpa.ui.components.PageStateHost
 import app.hyperlpa.ui.components.PageStateKind
+import app.hyperlpa.ui.components.ProfileArtwork
 import app.hyperlpa.ui.components.SectionHeading
 import app.hyperlpa.ui.components.redactIdentifier
 import app.hyperlpa.ui.navigation.AppRoute
@@ -279,25 +280,11 @@ private fun ProfileCard(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Surface(
-                shape = CircleShape,
-                color = if (isEnabled) {
-                    MiuixTheme.colorScheme.primaryContainer
-                } else {
-                    MiuixTheme.colorScheme.secondaryContainer
-                },
-                contentColor = if (isEnabled) {
-                    MiuixTheme.colorScheme.onPrimaryContainer
-                } else {
-                    MiuixTheme.colorScheme.onSecondaryContainer
-                },
-            ) {
-                Icon(
-                    imageVector = MiuixIcons.BankCards,
-                    contentDescription = null,
-                    modifier = Modifier.padding(10.dp).size(22.dp),
-                )
-            }
+            ProfileArtwork(
+                profile = profile,
+                cloudIcon = state.operatorIcons[profile.iccid],
+                isEnabled = isEnabled,
+            )
             Column(Modifier.weight(1f)) {
                 Text(
                     text = profile.nickname.ifBlank { profile.name.ifBlank { "eSIM profile" } },
@@ -313,15 +300,34 @@ private fun ProfileCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text(
-                    text = redactIdentifier(
-                        profile.iccid,
-                        state.settings.iccidRedaction,
-                        state.settings.revealSensitiveData,
-                    ),
-                    style = MiuixTheme.textStyles.footnote1,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = redactIdentifier(
+                            profile.iccid,
+                            state.settings.iccidRedaction,
+                            state.settings.revealSensitiveData,
+                        ),
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    profile.estimatedBytes?.takeIf { it > 0 }?.let { bytes ->
+                        Text(
+                            text = "${if (profile.sizeIsEstimated) "~" else ""}${formatProfileBytes(bytes)}",
+                            style = MiuixTheme.textStyles.footnote1,
+                            color = if (profile.sizeIsEstimated) {
+                                MiuixTheme.colorScheme.onSurfaceVariantSummary
+                            } else {
+                                MiuixTheme.colorScheme.primary
+                            },
+                            maxLines = 1,
+                        )
+                    }
+                }
             }
             Switch(
                 checked = isEnabled,
@@ -332,6 +338,12 @@ private fun ProfileCard(
             )
         }
     }
+}private fun formatProfileBytes(bytes: Long): String {
+    if (bytes < 1_024) return "$bytes B"
+    val kib = bytes / 1_024.0
+    if (kib < 1_024) return if (kib >= 100) "%.0f KiB".format(kib) else "%.1f KiB".format(kib)
+    val mib = kib / 1_024.0
+    return if (mib >= 100) "%.0f MiB".format(mib) else "%.1f MiB".format(mib)
 }
 
 @Composable
@@ -556,8 +568,8 @@ fun SettingsScreen(
         item {
             GroupedCard {
                 ArrowPreference(
-                    title = "Redaction and metadata",
-                    summary = "EID, ICCID, operator icons and size estimates",
+                    title = "Privacy & Nekoko Cloud",
+                    summary = "Redaction, operator icons and profile size predictions",
                     onClick = { onNavigate(AppRoute.PrivacySettings) },
                 )
             }

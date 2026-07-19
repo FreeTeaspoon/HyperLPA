@@ -97,8 +97,35 @@ int es8p_metadata_parse(struct es8p_metadata **stru_metadata, const char *b64_Me
                 break;
             }
             break;
+        case 0xB7: {
+            struct euicc_derutil_node owner;
+            owner.self.ptr = n_iter.value;
+            owner.self.length = 0;
+            while (euicc_derutil_unpack_next(&owner, &owner, n_iter.value, n_iter.length) == 0) {
+                char **target = NULL;
+                switch (owner.tag) {
+                case 0x80:
+                    target = &p->profileOwner.mccmnc;
+                    break;
+                case 0x81:
+                    target = &p->profileOwner.gid1;
+                    break;
+                case 0x82:
+                    target = &p->profileOwner.gid2;
+                    break;
+                default:
+                    break;
+                }
+                if (target != NULL && owner.length > 0) {
+                    *target = malloc((owner.length * 2) + 1);
+                    if (*target != NULL) {
+                        euicc_hexutil_bin2hex(*target, (owner.length * 2) + 1, owner.value, owner.length);
+                    }
+                }
+            }
+            break;
+        }
         case 0xB6:
-        case 0xB7:
         case 0x99:
             euicc_apdu_unhandled_tag_print(NULL, &n_iter); // Assuming logging is not needed here
             break;
@@ -132,6 +159,9 @@ void es8p_metadata_free(struct es8p_metadata **stru_metadata) {
     free(p->serviceProviderName);
     free(p->profileName);
     free(p->icon);
+    free(p->profileOwner.mccmnc);
+    free(p->profileOwner.gid1);
+    free(p->profileOwner.gid2);
     free(p);
 
     *stru_metadata = NULL;

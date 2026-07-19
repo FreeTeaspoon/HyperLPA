@@ -650,20 +650,30 @@ fun PrivacySettingsScreen(
                 )
             }
         }
-        item { SectionHeading("Network metadata") }
+        item { SectionHeading("Nekoko Cloud") }
         item {
             GroupedCard {
                 SwitchPreference(
                     checked = settings.loadOperatorIcons,
                     onCheckedChange = viewModel::setLoadOperatorIcons,
-                    title = "Operator artwork",
-                    summary = "Allow profile branding to be resolved when supported",
+                    title = "Operator icons",
+                    summary = "Resolve and cache profile artwork from operator-icons.pages.dev",
                 )
                 SwitchPreference(
                     checked = settings.estimateProfileSize,
                     onCheckedChange = viewModel::setEstimateProfileSize,
-                    title = "Estimate download size",
-                    summary = "Use profile metadata to estimate storage requirements",
+                    title = "Profile size predictions",
+                    summary = "Use NekokoLPA reference data when a measured size is unavailable",
+                )
+                ArrowPreference(
+                    title = "Clear icon cache",
+                    summary = "Remove downloaded operator artwork and fetch it again when needed",
+                    onClick = viewModel::clearOperatorIconCache,
+                )
+                ArrowPreference(
+                    title = "Cloud data use",
+                    summary = "Downloads public icon catalogs and size references; HyperLPA does not upload installation reports",
+                    enabled = false,
                 )
             }
         }

@@ -22,12 +22,18 @@ data class StoredProfileMetadata(
     val tags: Set<String> = emptySet(),
     val reminderEpochMillis: Long? = null,
     val iconUri: String? = null,
+    val smdpAddress: String? = null,
+    val installedBytes: Long? = null,
+    val installedEid: String? = null,
 )
 
 data class ProfileMetadata(
     val tags: Set<String> = emptySet(),
     val reminderAt: Instant? = null,
     val iconUri: String? = null,
+    val smdpAddress: String? = null,
+    val installedBytes: Long? = null,
+    val installedEid: String? = null,
 )
 
 class ProfileMetadataStore(context: Context) {
@@ -44,6 +50,14 @@ class ProfileMetadataStore(context: Context) {
                 .mapValues { (_, value) -> value.toDomain() }
         }
 
+    val providerIcons: Flow<Map<String, String>> = dataStore.data
+        .catch { error -> if (error is IOException) emit(emptyPreferences()) else throw error }
+        .map { preferences ->
+            preferences[ProviderIconsJson]
+                ?.let { raw -> runCatching { json.decodeFromString<Map<String, String>>(raw) }.getOrNull() }
+                .orEmpty()
+        }
+
     suspend fun setTags(iccid: String, tags: Set<String>) {
         update(iccid) { copy(tags = tags.map(String::trim).filter(String::isNotEmpty).toSet()) }
     }
@@ -55,6 +69,59 @@ class ProfileMetadataStore(context: Context) {
 
     suspend fun setIconUri(iccid: String, iconUri: String?) {
         update(iccid) { copy(iconUri = iconUri) }
+    }
+
+    suspend fun setProviderIconUri(providerName: String, iconUri: String?) {
+        val key = providerIconKey(providerName) ?: return
+        dataStore.edit { preferences ->
+            val current = preferences[ProviderIconsJson]
+                ?.let { raw -> runCatching { json.decodeFromString<Map<String, String>>(raw) }.getOrNull() }
+                .orEmpty()
+                .toMutableMap()
+            if (iconUri.isNullOrBlank()) {
+                current.remove(key)
+            } else {
+                current[key] = iconUri
+            }
+            preferences[ProviderIconsJson] = json.encodeToString(current)
+        }
+    }
+
+    /** Clears per-profile icon overrides so a shared provider icon can take effect. */
+    suspend fun clearProfileIconUris(iccids: Collection<String>): List<String> {
+        if (iccids.isEmpty()) return emptyList()
+        val removed = mutableListOf<String>()
+        dataStore.edit { preferences ->
+            val current = readStored(preferences[MetadataJson]).toMutableMap()
+            iccids.forEach { iccid ->
+                val existing = current[iccid] ?: return@forEach
+                existing.iconUri?.let(removed::add)
+                if (existing.iconUri != null) {
+                    current[iccid] = existing.copy(iconUri = null)
+                }
+            }
+            preferences[MetadataJson] = json.encodeToString(current)
+        }
+        return removed
+    }
+
+    suspend fun setCloudData(
+        iccid: String,
+        smdpAddress: String?,
+        installedBytes: Long?,
+        eid: String?,
+    ) {
+        update(iccid) {
+            copy(
+                smdpAddress = smdpAddress?.takeIf(String::isNotBlank) ?: this.smdpAddress,
+                installedBytes = installedBytes?.takeIf { it > 0 } ?: this.installedBytes,
+                installedEid = if (installedBytes != null && installedBytes > 0) {
+                    eid?.takeIf(String::isNotBlank)
+                } else {
+                    this.installedEid
+                },
+            )
+        }
     }
 
     suspend fun clear(iccid: String) {
@@ -85,9 +152,16 @@ class ProfileMetadataStore(context: Context) {
         tags = tags,
         reminderAt = reminderEpochMillis?.let(Instant::ofEpochMilli),
         iconUri = iconUri,
+        smdpAddress = smdpAddress,
+        installedBytes = installedBytes,
+        installedEid = installedEid,
     )
 
     private companion object {
         val MetadataJson = stringPreferencesKey("metadata_json")
+        val ProviderIconsJson = stringPreferencesKey("provider_icons_json")
     }
 }
+
+fun providerIconKey(providerName: String?): String? =
+    providerName?.trim()?.lowercase()?.takeIf(String::isNotEmpty)
