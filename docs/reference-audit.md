@@ -9,7 +9,7 @@ solely on screenshots or README files.
 | Mishka | `223b5aa1b03a456d7564563d944011ee93d9ac0d` | app theme, Navigation 3 shell, pager state, adaptive top bars, rail layout, grouped settings, blur and dialogs | GPL-compatible project; UI rewritten for this app |
 | InstallerX-Revived | `221af84834a1b481cb5fa7f9a1becad6a93fb610` | Miuix theme bridge, adaptive layout, backdrop, dialogs, cards, settings and predictive back | GPL-compatible project; patterns used selectively |
 | compose-miuix-ui/miuix | `b459d861561e0d9f117c87184db5330c05388f2f` | component implementations and example app for theme, app bars, navigation, preferences, blur, overlays, haptics and overscroll | Apache-2.0 dependency and implementation reference |
-| NekokoLPA2 | `7d5a426d8d836caf5e7d98d9428e58c036f03a6d` | reader adapters, profile manager, download flow, notifications, tags/reminders, settings, platform channels and responsive pages | MIT-compatible feature reference; artwork excluded |
+| NekokoLPA2 | `7d5a426d8d836caf5e7d98d9428e58c036f03a6d` | reader adapters, profile manager, download flow, notifications, tags/reminders, operator-icon catalog resolution, profile-size prediction, settings, platform channels and responsive pages | MIT-compatible feature and cloud-data reference; mascot artwork and installation telemetry excluded |
 | OpenEUICC | `d9c89d311f34325e1bd7e4b35d7e750e72faafac` | `lpac-jni`, channel abstractions, OMAPI, USB CCID, download wizard, notifications and diagnostics | GPL-3.0-compatible engine integration |
 | 9eSIM Community Key | `ddc15a8b8c873d42faa6dcda5db03f5dbc4124c4` | public Android signing certificate and published SHA-1/SHA-256 fingerprints | MIT-licensed optional signing input; key excluded from this source tree |
 

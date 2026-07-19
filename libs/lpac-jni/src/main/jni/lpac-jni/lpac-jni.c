@@ -190,6 +190,11 @@ LPAC_JNI_STRUCT_GETTER_STRING(struct es10c_profile_info_list, profile, isdpAid, 
 LPAC_JNI_STRUCT_GETTER_STRING(struct es10c_profile_info_list, profile, profileName, Name)
 LPAC_JNI_STRUCT_GETTER_STRING(struct es10c_profile_info_list, profile, profileNickname, Nickname)
 LPAC_JNI_STRUCT_GETTER_STRING(struct es10c_profile_info_list, profile, serviceProviderName, ServiceProvider)
+LPAC_JNI_STRUCT_GETTER_STRING(struct es10c_profile_info_list, profile, icon, Icon)
+LPAC_JNI_STRUCT_GETTER_STRING(struct es10c_profile_info_list, profile, notificationConfigurationInfo.notificationAddress, NotificationAddress)
+LPAC_JNI_STRUCT_GETTER_STRING(struct es10c_profile_info_list, profile, profileOwner.mccmnc, MccMnc)
+LPAC_JNI_STRUCT_GETTER_STRING(struct es10c_profile_info_list, profile, profileOwner.gid1, Gid1)
+LPAC_JNI_STRUCT_GETTER_STRING(struct es10c_profile_info_list, profile, profileOwner.gid2, Gid2)
 
 JNIEXPORT jint JNICALL
 Java_net_typeblog_lpac_1jni_LpacJni_es10cEnableProfile(JNIEnv *env, jobject thiz, jlong handle,
