@@ -11,8 +11,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -39,51 +39,80 @@ fun ProfileArtwork(
     size: Dp = 46.dp,
     cornerRadius: Dp = 12.dp,
 ) {
+    val bitmap = rememberProfileArtworkBitmap(profile, cloudIcon)
+    ResolvedProfileArtwork(
+        profile = profile,
+        bitmap = bitmap,
+        isEnabled = isEnabled,
+        modifier = modifier,
+        size = size,
+        cornerRadius = cornerRadius,
+    )
+}
+
+@Composable
+internal fun rememberProfileArtworkBitmap(
+    profile: ProfileInfo?,
+    cloudIcon: ByteArray?,
+): Bitmap? {
     val context = LocalContext.current
     val artworkKey = listOf(
-        profile.customIconUri.orEmpty(),
-        profile.iconBase64.orEmpty(),
+        profile?.customIconUri.orEmpty(),
+        profile?.iconBase64.orEmpty(),
         cloudIcon?.contentHashCode()?.toString().orEmpty(),
     )
-    key(artworkKey) {
-    val bitmap by produceState<Bitmap?>(
-        initialValue = null,
-        profile.customIconUri,
-        profile.iconBase64,
-        cloudIcon?.contentHashCode(),
-    ) {
-        value = withContext(Dispatchers.IO) {
-            val custom = profile.customIconUri
-                ?.let { uri -> runCatching { Uri.parse(uri) }.getOrNull() }
-                ?.let { uri ->
-                    runCatching {
-                        ImageDecoder.decodeBitmap(
-                            ImageDecoder.createSource(context.contentResolver, uri),
-                        ) { decoder, info, _ ->
-                            val longestEdge = maxOf(info.size.width, info.size.height)
-                            if (longestEdge > 192) {
-                                val scale = 192f / longestEdge
-                                decoder.setTargetSize(
-                                    (info.size.width * scale).toInt().coerceAtLeast(1),
-                                    (info.size.height * scale).toInt().coerceAtLeast(1),
-                                )
+    return key(artworkKey) {
+        val bitmap by produceState<Bitmap?>(
+            initialValue = null,
+            profile?.customIconUri,
+            profile?.iconBase64,
+            cloudIcon?.contentHashCode(),
+        ) {
+            value = withContext(Dispatchers.IO) {
+                val custom = profile?.customIconUri
+                    ?.let { uri -> runCatching { Uri.parse(uri) }.getOrNull() }
+                    ?.let { uri ->
+                        runCatching {
+                            ImageDecoder.decodeBitmap(
+                                ImageDecoder.createSource(context.contentResolver, uri),
+                            ) { decoder, info, _ ->
+                                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                                val longestEdge = maxOf(info.size.width, info.size.height)
+                                if (longestEdge > 192) {
+                                    val scale = 192f / longestEdge
+                                    decoder.setTargetSize(
+                                        (info.size.width * scale).toInt().coerceAtLeast(1),
+                                        (info.size.height * scale).toInt().coerceAtLeast(1),
+                                    )
+                                }
                             }
-                        }
-                    }.getOrNull()
-                }
-            if (custom != null) return@withContext custom
+                        }.getOrNull()
+                    }
+                if (custom != null) return@withContext custom
 
-            val embedded = profile.iconBase64
-                ?.let { encoded -> runCatching { Base64.decode(encoded, Base64.DEFAULT) }.getOrNull() }
-            val embeddedBitmap = embedded?.let(::decodeProfileBitmap)
-            when {
-                embedded != null && embedded.size >= 2_048 && embeddedBitmap != null -> embeddedBitmap
-                cloudIcon != null -> decodeProfileBitmap(cloudIcon) ?: embeddedBitmap
-                else -> embeddedBitmap
+                val embedded = profile?.iconBase64
+                    ?.let { encoded -> runCatching { Base64.decode(encoded, Base64.DEFAULT) }.getOrNull() }
+                val embeddedBitmap = embedded?.let(::decodeProfileBitmap)
+                when {
+                    embedded != null && embedded.size >= 2_048 && embeddedBitmap != null -> embeddedBitmap
+                    cloudIcon != null -> decodeProfileBitmap(cloudIcon) ?: embeddedBitmap
+                    else -> embeddedBitmap
+                }
             }
         }
+        bitmap
     }
+}
 
+@Composable
+internal fun ResolvedProfileArtwork(
+    profile: ProfileInfo,
+    bitmap: Bitmap?,
+    isEnabled: Boolean,
+    modifier: Modifier = Modifier,
+    size: Dp = 46.dp,
+    cornerRadius: Dp = 12.dp,
+) {
     val shape = RoundedCornerShape(cornerRadius)
     if (bitmap != null) {
         Surface(
@@ -92,7 +121,7 @@ fun ProfileArtwork(
             color = MiuixTheme.colorScheme.secondaryContainer,
         ) {
             Image(
-                bitmap = bitmap!!.asImageBitmap(),
+                bitmap = bitmap.asImageBitmap(),
                 contentDescription = "${profile.providerName.ifBlank { "Profile" }} icon",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize().clip(shape),
@@ -121,7 +150,6 @@ fun ProfileArtwork(
                     .size(size * 0.52f),
             )
         }
-    }
     }
 }
 

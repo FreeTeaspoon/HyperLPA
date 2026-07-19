@@ -116,6 +116,20 @@ data class DownloadRequest(
     }
 }
 
+@Immutable
+data class ProfileDownloadPreview(
+    val profile: ProfileInfo,
+    val request: DownloadRequest,
+    val freeNonVolatileMemory: Int? = null,
+)
+
+@Immutable
+data class ProfileDownloadResult(
+    val profile: ProfileInfo,
+    val installedBytes: Long? = null,
+    val freeNonVolatileMemory: Int? = null,
+)
+
 sealed interface LpaOperation {
     data object Idle : LpaOperation
     data class DiscoveringReaders(val message: String = "Looking for eUICC readers") : LpaOperation
@@ -124,7 +138,12 @@ sealed interface LpaOperation {
     data class Switching(val iccid: String, val enable: Boolean) : LpaOperation
     data class Deleting(val iccid: String) : LpaOperation
     data class Renaming(val iccid: String) : LpaOperation
-    data class Downloading(val stage: DownloadStage, val profileName: String? = null) : LpaOperation
+    data class Downloading(
+        val stage: DownloadStage,
+        val profileName: String? = null,
+        val sentBytes: Long? = null,
+        val totalBytes: Long? = null,
+    ) : LpaOperation
     data class ProcessingNotification(val sequenceNumber: Long) : LpaOperation
     data class Resetting(val message: String = "Resetting eUICC memory") : LpaOperation
 }
@@ -136,6 +155,7 @@ enum class DownloadStage {
     CONFIRMING,
     DOWNLOADING,
     FINALIZING,
+    INSTALLING,
 }
 
 @Immutable
