@@ -20,7 +20,6 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -56,6 +55,7 @@ import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Surface
+import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
@@ -261,26 +261,32 @@ private fun ProfileCard(
     onOpen: () -> Unit,
     onEnableChange: (Boolean) -> Unit,
 ) {
+    val isEnabled = profile.state == ProfileState.ENABLED
+    val operatorAndTags = buildList {
+        add(profile.providerName.ifBlank { "Unknown operator" })
+        addAll(profile.tags.filter(String::isNotBlank))
+    }.joinToString(" · ")
+
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(bottom = 8.dp),
         cornerRadius = 16.dp,
-        insideMargin = PaddingValues(16.dp),
+        insideMargin = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
         pressFeedbackType = PressFeedbackType.Sink,
         onClick = onOpen,
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Surface(
                 shape = CircleShape,
-                color = if (profile.state == ProfileState.ENABLED) {
+                color = if (isEnabled) {
                     MiuixTheme.colorScheme.primaryContainer
                 } else {
                     MiuixTheme.colorScheme.secondaryContainer
                 },
-                contentColor = if (profile.state == ProfileState.ENABLED) {
+                contentColor = if (isEnabled) {
                     MiuixTheme.colorScheme.onPrimaryContainer
                 } else {
                     MiuixTheme.colorScheme.onSecondaryContainer
@@ -289,7 +295,7 @@ private fun ProfileCard(
                 Icon(
                     imageVector = MiuixIcons.BankCards,
                     contentDescription = null,
-                    modifier = Modifier.padding(13.dp).size(25.dp),
+                    modifier = Modifier.padding(10.dp).size(22.dp),
                 )
             }
             Column(Modifier.weight(1f)) {
@@ -301,7 +307,7 @@ private fun ProfileCard(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = profile.providerName.ifBlank { "Unknown operator" },
+                    text = operatorAndTags,
                     style = MiuixTheme.textStyles.body2,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     maxLines = 1,
@@ -317,53 +323,14 @@ private fun ProfileCard(
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 )
             }
-            ProfileStatePill(profile.state)
-        }
-        if (profile.tags.isNotEmpty()) {
-            Spacer(Modifier.height(10.dp))
-            Text(
-                text = profile.tags.joinToString(" · "),
-                style = MiuixTheme.textStyles.footnote1,
-                color = MiuixTheme.colorScheme.primary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            Switch(
+                checked = isEnabled,
+                onCheckedChange = onEnableChange,
+                modifier = Modifier.semantics {
+                    contentDescription = if (isEnabled) "Disable profile" else "Enable profile"
+                },
             )
         }
-        Spacer(Modifier.height(12.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
-        ) {
-            TextButton(
-                text = if (profile.state == ProfileState.ENABLED) "Disable" else "Enable",
-                onClick = { onEnableChange(profile.state != ProfileState.ENABLED) },
-                colors = ButtonDefaults.textButtonColorsPrimary(),
-            )
-        }
-    }
-}
-
-@Composable
-private fun ProfileStatePill(state: ProfileState) {
-    Surface(
-        shape = RoundedCornerShape(50.dp),
-        color = if (state == ProfileState.ENABLED) {
-            MiuixTheme.colorScheme.primaryContainer
-        } else {
-            MiuixTheme.colorScheme.secondaryContainer
-        },
-        contentColor = if (state == ProfileState.ENABLED) {
-            MiuixTheme.colorScheme.onPrimaryContainer
-        } else {
-            MiuixTheme.colorScheme.onSecondaryContainer
-        },
-    ) {
-        Text(
-            text = if (state == ProfileState.ENABLED) "Active" else "Inactive",
-            style = MiuixTheme.textStyles.footnote1,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-        )
     }
 }
 
