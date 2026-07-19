@@ -6,4 +6,8 @@ data class RemoteProfileInfo(
     val name: String,
     val providerName: String,
     val profileClass: ProfileClass,
+    val iconBase64: String?,
+    val mccMnc: String?,
+    val gid1: String?,
+    val gid2: String?,
 )

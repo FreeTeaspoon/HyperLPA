@@ -41,6 +41,7 @@ class MainActivity : ComponentActivity() {
             settingsStore = applicationGraph.settingsStore,
             metadataStore = applicationGraph.metadataStore,
             repository = applicationGraph.lpaRepository,
+            cloudService = applicationGraph.cloudService,
         )
     }
 
