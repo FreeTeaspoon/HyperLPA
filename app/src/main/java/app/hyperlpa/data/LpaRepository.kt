@@ -2,6 +2,8 @@ package app.hyperlpa.data
 
 import android.content.Context
 import androidx.compose.runtime.Immutable
+import app.hyperlpa.data.cloud.decodeMccMnc
+import app.hyperlpa.data.metadata.ProfileMetadataStore
 import app.hyperlpa.data.settings.AppSettings
 import app.hyperlpa.domain.model.ActivityLogEntry
 import app.hyperlpa.domain.model.DownloadRequest
@@ -42,6 +44,7 @@ import net.typeblog.lpac_jni.LocalProfileInfo
 import net.typeblog.lpac_jni.LocalProfileNotification
 import net.typeblog.lpac_jni.ProfileDownloadInput
 import net.typeblog.lpac_jni.ProfileDownloadState
+import net.typeblog.lpac_jni.RemoteProfileInfo
 import java.time.Instant
 
 @Immutable
@@ -62,6 +65,7 @@ data class LpaRepositoryState(
 
 class LpaRepository(
     context: Context,
+    private val metadataStore: ProfileMetadataStore,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : AutoCloseable {
     private val providers = listOf<Pair<ReaderKind, ReaderProvider>>(
@@ -242,7 +246,16 @@ class LpaRepository(
         withOperation(LpaOperation.Downloading(DownloadStage.PREPARING)) {
             prepareOperationSession()
             if (settings.notificationBeforeDownload) processNotificationsSafely("profile download preparation")
-            requireSession().assistant.downloadProfile(
+            val assistant = requireSession().assistant
+            val profilesBeforeDownload = mutableState.value.profiles.map(ProfileInfo::iccid).toSet()
+            val initialFreeMemory = try {
+                assistant.euiccInfo2?.freeNvram
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                mutableState.value.euiccInfo?.freeNonVolatileMemory
+            }
+            var remoteProfile: RemoteProfileInfo? = null
+            assistant.downloadProfile(
                 ProfileDownloadInput(
                     address = request.smdpAddress,
                     matchingId = request.matchingId,
@@ -258,14 +271,51 @@ class LpaRepository(
                     is ProfileDownloadState.Downloading -> DownloadStage.DOWNLOADING
                     is ProfileDownloadState.Finalizing -> DownloadStage.FINALIZING
                 }
-                val name = (stage as? ProfileDownloadState.ConfirmingDownload)?.metadata?.name
+                val metadata = (stage as? ProfileDownloadState.ConfirmingDownload)?.metadata
+                if (metadata != null) remoteProfile = metadata
                 mutableState.value = mutableState.value.copy(
-                    operation = LpaOperation.Downloading(mapped, name),
+                    operation = LpaOperation.Downloading(mapped, metadata?.name),
                 )
                 true
             }
+            val postInstallFreeMemory = try {
+                assistant.euiccInfo2?.freeNvram
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                null
+            }
             if (settings.notificationAfterDownload) processNotificationsSafely("profile download")
             refreshAfterMutation("Profile download")
+            val installedIccid = remoteProfile
+                ?.iccid
+                ?.takeIf(String::isNotBlank)
+                ?: mutableState.value.profiles
+                    .firstOrNull { it.iccid !in profilesBeforeDownload }
+                    ?.iccid
+            if (installedIccid != null) {
+                val finalFreeMemory =
+                    postInstallFreeMemory ?: mutableState.value.euiccInfo?.freeNonVolatileMemory
+                val installedBytes = if (initialFreeMemory != null && finalFreeMemory != null) {
+                    (initialFreeMemory - finalFreeMemory).toLong().takeIf { it > 0 }
+                } else {
+                    null
+                }
+                try {
+                    metadataStore.setCloudData(
+                        iccid = installedIccid,
+                        smdpAddress = request.smdpAddress,
+                        installedBytes = installedBytes,
+                        eid = mutableState.value.euiccInfo?.eid,
+                    )
+                } catch (error: Throwable) {
+                    if (error is CancellationException) throw error
+                    log(
+                        LogLevel.WARNING,
+                        "Nekoko Cloud",
+                        "The profile was installed, but its measured size could not be saved",
+                    )
+                }
+            }
         }
     }
 
@@ -517,22 +567,31 @@ private fun ReaderKind.enabledBy(settings: AppSettings): Boolean = when (this) {
     ReaderKind.REMOTE -> settings.enableRemote
 }
 
-private fun mapProfile(profile: LocalProfileInfo): ProfileInfo = ProfileInfo(
-    iccid = profile.iccid,
-    state = when (profile.state) {
-        LocalProfileInfo.State.Enabled -> ProfileState.ENABLED
-        LocalProfileInfo.State.Disabled -> ProfileState.DISABLED
-    },
-    name = profile.name,
-    nickname = profile.nickName,
-    providerName = profile.providerName,
-    isdPAid = profile.isdpAID,
-    profileClass = when (profile.profileClass) {
-        net.typeblog.lpac_jni.ProfileClass.Operational -> ProfileClass.OPERATIONAL
-        net.typeblog.lpac_jni.ProfileClass.Testing -> ProfileClass.TESTING
-        net.typeblog.lpac_jni.ProfileClass.Provisioning -> ProfileClass.PROVISIONING
-    },
-)
+private fun mapProfile(profile: LocalProfileInfo): ProfileInfo {
+    val network = decodeMccMnc(profile.mccMnc)
+    return ProfileInfo(
+        iccid = profile.iccid,
+        state = when (profile.state) {
+            LocalProfileInfo.State.Enabled -> ProfileState.ENABLED
+            LocalProfileInfo.State.Disabled -> ProfileState.DISABLED
+        },
+        name = profile.name,
+        nickname = profile.nickName,
+        providerName = profile.providerName,
+        isdPAid = profile.isdpAID,
+        profileClass = when (profile.profileClass) {
+            net.typeblog.lpac_jni.ProfileClass.Operational -> ProfileClass.OPERATIONAL
+            net.typeblog.lpac_jni.ProfileClass.Testing -> ProfileClass.TESTING
+            net.typeblog.lpac_jni.ProfileClass.Provisioning -> ProfileClass.PROVISIONING
+        },
+        iconBase64 = profile.iconBase64,
+        mcc = network?.mcc,
+        mnc = network?.mnc,
+        gid1 = profile.gid1,
+        gid2 = profile.gid2,
+        smdpAddress = profile.notificationAddress,
+    )
+}
 
 private fun mapNotification(notification: LocalProfileNotification): LpaNotification = LpaNotification(
     sequenceNumber = notification.seqNumber,

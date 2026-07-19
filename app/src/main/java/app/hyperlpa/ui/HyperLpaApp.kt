@@ -132,15 +132,35 @@ fun HyperLpaApp(
                 )
             }
             entry<AppRoute.ProfileDetails> { route ->
+                val profile = currentState.value.profiles.firstOrNull { it.iccid == route.iccid }
+                val providerKey = profile?.providerName
+                    ?.trim()
+                    ?.lowercase()
+                    ?.takeIf(String::isNotEmpty)
                 ProfileDetailsScreen(
-                    profile = currentState.value.profiles.firstOrNull { it.iccid == route.iccid },
+                    profile = profile,
                     settings = currentState.value.settings,
+                    operatorIcon = currentState.value.operatorIcons[route.iccid],
+                    hasProfileIcon = currentState.value.metadata[route.iccid]?.iconUri != null,
+                    hasProviderIcon = providerKey != null &&
+                        currentState.value.providerIcons.containsKey(providerKey),
                     onBack = viewModel::navigateBack,
                     onEnableChange = { enabled -> viewModel.setProfileEnabled(route.iccid, enabled) },
                     onRename = { nickname -> viewModel.renameProfile(route.iccid, nickname) },
                     onDelete = { viewModel.deleteProfile(route.iccid) },
                     onSetTags = { tags -> viewModel.setProfileTags(route.iccid, tags) },
                     onSetReminder = { label, instant -> viewModel.setProfileReminder(route.iccid, label, instant) },
+                    onSetIcon = { uri, applyToProvider ->
+                        viewModel.setProfileIcon(
+                            iccid = route.iccid,
+                            uri = uri,
+                            applyToProvider = applyToProvider,
+                            providerName = profile?.providerName,
+                        )
+                    },
+                    onApplyIconToProvider = {
+                        viewModel.applyProfileIconToProvider(route.iccid, profile?.providerName)
+                    },
                 )
             }
             entry<AppRoute.DownloadProfile> {

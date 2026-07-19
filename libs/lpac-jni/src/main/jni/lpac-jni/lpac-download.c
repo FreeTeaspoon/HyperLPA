@@ -111,7 +111,7 @@ void lpac_download_init() {
                                                           "net/typeblog/lpac_jni/RemoteProfileInfo");
     remote_profile_info_class = (*env)->NewGlobalRef(env, _remote_profile_info_class);
     remote_profile_info_constructor = (*env)->GetMethodID(env, remote_profile_info_class, "<init>",
-                                                          "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Lnet/typeblog/lpac_jni/ProfileClass;)V");
+                                                          "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Lnet/typeblog/lpac_jni/ProfileClass;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
 }
 
 static jobject profile_class_from_es10c_profile_class(enum es10c_profile_class profile_class) {
@@ -133,11 +133,19 @@ static jobject create_remote_profile_info(JNIEnv *env,
     jstring metadata_iccid = NULL;
     jstring metadata_profile_name = NULL;
     jstring metadata_provider_name = NULL;
+    jstring metadata_icon = NULL;
+    jstring metadata_mcc_mnc = NULL;
+    jstring metadata_gid1 = NULL;
+    jstring metadata_gid2 = NULL;
     jobject remote_profile_info = NULL;
 
     metadata_iccid = toJString(env, profile_metadata->iccid);
     metadata_profile_name = toJString(env, profile_metadata->profileName);
     metadata_provider_name = toJString(env, profile_metadata->serviceProviderName);
+    metadata_icon = toJString(env, profile_metadata->icon);
+    metadata_mcc_mnc = toJString(env, profile_metadata->profileOwner.mccmnc);
+    metadata_gid1 = toJString(env, profile_metadata->profileOwner.gid1);
+    metadata_gid2 = toJString(env, profile_metadata->profileOwner.gid2);
     profile_class = profile_class_from_es10c_profile_class(profile_metadata->profileClass);
 
     remote_profile_info = (*env)->NewObject(env, remote_profile_info_class,
@@ -145,7 +153,11 @@ static jobject create_remote_profile_info(JNIEnv *env,
                                             metadata_iccid,
                                             metadata_profile_name,
                                             metadata_provider_name,
-                                            profile_class);
+                                            profile_class,
+                                            metadata_icon,
+                                            metadata_mcc_mnc,
+                                            metadata_gid1,
+                                            metadata_gid2);
 
     if (metadata_iccid != NULL)
         (*env)->DeleteLocalRef(env, metadata_iccid);
@@ -153,6 +165,14 @@ static jobject create_remote_profile_info(JNIEnv *env,
         (*env)->DeleteLocalRef(env, metadata_profile_name);
     if (metadata_provider_name != NULL)
         (*env)->DeleteLocalRef(env, metadata_provider_name);
+    if (metadata_icon != NULL)
+        (*env)->DeleteLocalRef(env, metadata_icon);
+    if (metadata_mcc_mnc != NULL)
+        (*env)->DeleteLocalRef(env, metadata_mcc_mnc);
+    if (metadata_gid1 != NULL)
+        (*env)->DeleteLocalRef(env, metadata_gid1);
+    if (metadata_gid2 != NULL)
+        (*env)->DeleteLocalRef(env, metadata_gid2);
 
     return remote_profile_info;
 }

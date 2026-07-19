@@ -43,10 +43,17 @@ data class ProfileInfo(
     val providerName: String,
     val isdPAid: String,
     val profileClass: ProfileClass,
+    val iconBase64: String? = null,
+    val mcc: String? = null,
+    val mnc: String? = null,
+    val gid1: String? = null,
+    val gid2: String? = null,
+    val smdpAddress: String? = null,
     val tags: Set<String> = emptySet(),
     val reminderAt: Instant? = null,
     val customIconUri: String? = null,
     val estimatedBytes: Long? = null,
+    val sizeIsEstimated: Boolean = false,
 )
 
 enum class NotificationOperation {

@@ -128,13 +128,18 @@ class LocalProfileAssistantImpl(
                         LpacJni.profileGetNickname(curr),
                         LpacJni.profileGetServiceProvider(curr),
                         LpacJni.profileGetIsdpAid(curr),
-                        clazz
+                        clazz,
+                        LpacJni.profileGetIcon(curr).takeIf(String::isNotEmpty),
+                        LpacJni.profileGetNotificationAddress(curr).takeIf(String::isNotEmpty),
+                        LpacJni.profileGetMccMnc(curr).takeIf(String::isNotEmpty),
+                        LpacJni.profileGetGid1(curr).takeIf(String::isNotEmpty),
+                        LpacJni.profileGetGid2(curr).takeIf(String::isNotEmpty),
                     )
                 )
                 curr = LpacJni.profilesNext(curr)
             }
 
-            LpacJni.profilesFree(curr)
+            LpacJni.profilesFree(head)
             return ret
         }
 

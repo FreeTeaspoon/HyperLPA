@@ -12,6 +12,7 @@ Material-themed compatibility layer.
 - NBridge, OMAPI, privileged telephony, USB CCID, RemoCard v2 and native BLE readers
 - ESTKme RED/RED 2, SimLink and BeeSIM BLE transport protocols
 - Profile tags, scheduled reminders, statistics, redaction, custom AIDs, MSS and IMEI
+- Nekoko-compatible operator artwork plus measured and predicted profile storage sizes
 - Typed Navigation 3, predictive back, swipeable main pager and adaptive navigation rail
 - Miuix theme controller with system/light/dark, Monet, accent palettes and pure black
 - Miuix blur fallback, grouped preferences and DataStore-backed settings

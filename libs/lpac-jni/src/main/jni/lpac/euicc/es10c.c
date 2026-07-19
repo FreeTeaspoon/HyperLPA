@@ -12,8 +12,20 @@
 
 int es10c_get_profiles_info(struct euicc_ctx *ctx, struct es10c_profile_info_list **profileInfoList) {
     int fret = 0;
+    static const uint8_t profile_info_tags[] = {
+        0x5A, 0x4F, 0x9F, 0x70, 0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0xB6, 0xB7,
+    };
+    struct euicc_derutil_node n_tag_list = {
+        .tag = 0x5C, // tagList
+        .length = sizeof(profile_info_tags),
+        .value = profile_info_tags,
+    };
     struct euicc_derutil_node n_request = {
         .tag = 0xBF2D, // ProfileInfoListRequest
+        .pack =
+            {
+                .child = &n_tag_list,
+            },
     };
     uint32_t reqlen;
     uint8_t *respbuf = NULL;
@@ -142,8 +154,58 @@ int es10c_get_profiles_info(struct euicc_ctx *ctx, struct es10c_profile_info_lis
                     break;
                 }
                 break;
-            case 0xB6:
-            case 0xB7:
+            case 0xB6: {
+                struct euicc_derutil_node configuration, field;
+                configuration.self.ptr = tmpnode.value;
+                configuration.self.length = 0;
+                while (p->notificationConfigurationInfo.notificationAddress == NULL &&
+                       euicc_derutil_unpack_next(&configuration, &configuration, tmpnode.value, tmpnode.length) == 0) {
+                    if (configuration.tag != 0x30) {
+                        continue;
+                    }
+                    field.self.ptr = configuration.value;
+                    field.self.length = 0;
+                    while (euicc_derutil_unpack_next(&field, &field, configuration.value, configuration.length) == 0) {
+                        if (field.tag == 0x81 && field.length > 0) {
+                            p->notificationConfigurationInfo.notificationAddress = malloc(field.length + 1);
+                            if (p->notificationConfigurationInfo.notificationAddress != NULL) {
+                                memcpy(p->notificationConfigurationInfo.notificationAddress, field.value, field.length);
+                                p->notificationConfigurationInfo.notificationAddress[field.length] = '\0';
+                            }
+                            break;
+                        }
+                    }
+                }
+                break;
+            }
+            case 0xB7: {
+                struct euicc_derutil_node owner;
+                owner.self.ptr = tmpnode.value;
+                owner.self.length = 0;
+                while (euicc_derutil_unpack_next(&owner, &owner, tmpnode.value, tmpnode.length) == 0) {
+                    char **target = NULL;
+                    switch (owner.tag) {
+                    case 0x80:
+                        target = &p->profileOwner.mccmnc;
+                        break;
+                    case 0x81:
+                        target = &p->profileOwner.gid1;
+                        break;
+                    case 0x82:
+                        target = &p->profileOwner.gid2;
+                        break;
+                    default:
+                        break;
+                    }
+                    if (target != NULL && owner.length > 0) {
+                        *target = malloc((owner.length * 2) + 1);
+                        if (*target != NULL) {
+                            euicc_hexutil_bin2hex(*target, (owner.length * 2) + 1, owner.value, owner.length);
+                        }
+                    }
+                }
+                break;
+            }
             case 0xB8:
             case 0x99:
                 euicc_apdu_unhandled_tag_print(ctx->apdu.log_fp, &tmpnode);
@@ -445,6 +507,10 @@ void es10c_profile_info_list_free_all(struct es10c_profile_info_list *profileInf
         free(profileInfoList->serviceProviderName);
         free(profileInfoList->profileName);
         free(profileInfoList->icon);
+        free(profileInfoList->notificationConfigurationInfo.notificationAddress);
+        free(profileInfoList->profileOwner.mccmnc);
+        free(profileInfoList->profileOwner.gid1);
+        free(profileInfoList->profileOwner.gid2);
         free(profileInfoList);
         profileInfoList = next;
     }

@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.pm.ApplicationInfo
 import androidx.core.content.edit
 import app.hyperlpa.data.LpaRepository
+import app.hyperlpa.data.cloud.NekokoCloudService
 import app.hyperlpa.data.metadata.ProfileMetadataStore
 import app.hyperlpa.data.settings.AppSettingsStore
 import org.lsposed.hiddenapibypass.HiddenApiBypass
@@ -11,7 +12,8 @@ import org.lsposed.hiddenapibypass.HiddenApiBypass
 class HyperLpaApplication : Application() {
     val settingsStore by lazy { AppSettingsStore(this) }
     val metadataStore by lazy { ProfileMetadataStore(this) }
-    val lpaRepository by lazy { LpaRepository(this) }
+    val cloudService by lazy { NekokoCloudService(this) }
+    val lpaRepository by lazy { LpaRepository(this, metadataStore = metadataStore) }
 
     override fun onCreate() {
         super.onCreate()
