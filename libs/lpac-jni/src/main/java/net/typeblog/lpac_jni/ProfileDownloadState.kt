@@ -7,4 +7,5 @@ sealed class ProfileDownloadState {
     class ConfirmingDownload(val metadata: RemoteProfileInfo?) : ProfileDownloadState()
     class Downloading : ProfileDownloadState()
     class Finalizing : ProfileDownloadState()
+    class Installing(val sentBytes: Long, val totalBytes: Long) : ProfileDownloadState()
 }

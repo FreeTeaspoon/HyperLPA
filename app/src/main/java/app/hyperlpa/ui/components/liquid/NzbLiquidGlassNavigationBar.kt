@@ -189,6 +189,7 @@ fun NzbLiquidGlassNavigationBar(
     isBlurActive: Boolean,
     isDark: Boolean,
     showLabels: Boolean,
+    solidContainerColor: Color = MiuixTheme.colorScheme.surfaceContainer,
     modifier: Modifier = Modifier,
     badge: (Int) -> (@Composable () -> Unit)? = { null },
 ) {
@@ -196,7 +197,7 @@ fun NzbLiquidGlassNavigationBar(
     val accentColor = MiuixTheme.colorScheme.primary
     val tabContentColor = MiuixTheme.colorScheme.onSurface
     val surfaceContainer = MiuixTheme.colorScheme.surfaceContainer
-    val containerColor = if (isBlurActive) surfaceContainer.copy(alpha = 0.4f) else surfaceContainer
+    val containerColor = if (isBlurActive) surfaceContainer.copy(alpha = 0.4f) else solidContainerColor
 
     val tabsBackdrop = rememberLayerBackdrop()
     val density = LocalDensity.current
@@ -563,4 +564,3 @@ fun NzbLiquidGlassNavigationBar(
         }
     }
 }
-

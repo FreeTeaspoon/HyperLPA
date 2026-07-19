@@ -12,7 +12,9 @@ import net.typeblog.lpac_jni.LocalProfileNotification
 import net.typeblog.lpac_jni.LpacJni
 import net.typeblog.lpac_jni.ProfileClass
 import net.typeblog.lpac_jni.ProfileDownloadCallback
+import net.typeblog.lpac_jni.ProfileDownloadState
 import net.typeblog.lpac_jni.Version
+import kotlinx.coroutines.CancellationException
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -222,19 +224,33 @@ class LocalProfileAssistantImpl(
     }
 
     override fun downloadProfile(input: ProfileDownloadInput, callback: ProfileDownloadCallback) = lock.withLock {
+        var lastState: ProfileDownloadState? = null
+        var cancelledByCallback = false
         val res = LpacJni.downloadProfile(
             contextHandle,
             input.address,
             input.matchingId,
             input.imei,
             input.confirmationCode,
-            callback
+            ProfileDownloadCallback { state ->
+                lastState = state
+                callback.onStatusUpdate(state).also { accepted ->
+                    if (!accepted) cancelledByCallback = true
+                }
+            }
         )
 
         if (res != 0) {
+            if (cancelledByCallback) {
+                LpacJni.cancelSessions(contextHandle)
+                throw CancellationException("Profile download cancelled")
+            }
             // Construct the error now to store any error information we _can_ access
+            val nativeReason = LpacJni.downloadErrCodeToString(-res)
             val err = LocalProfileAssistant.ProfileDownloadException(
-                lpaErrorReason = LpacJni.downloadErrCodeToString(-res),
+                lpaErrorReason = LpacJni.downloadLastHttpError(contextHandle)
+                    ?: nativeReason.takeUnless { it == "ES10B_ERROR_REASON_UNDEFINED" }
+                    ?: lastState.profileDownloadFailureMessage(),
                 httpInterface.lastHttpResponse,
                 httpInterface.lastHttpException,
                 apduInterface.lastApduResponse,
@@ -289,4 +305,22 @@ class LocalProfileAssistantImpl(
             finalized = true
         }
     }
+}
+
+private fun ProfileDownloadState?.profileDownloadFailureMessage(): String = when (this) {
+    is ProfileDownloadState.Preparing ->
+        "The eUICC could not provide the information required to start the download"
+    is ProfileDownloadState.Connecting ->
+        "The SM-DP+ server could not start the download session"
+    is ProfileDownloadState.Authenticating ->
+        "The eUICC or SM-DP+ server rejected the authentication session"
+    is ProfileDownloadState.ConfirmingDownload ->
+        "The profile download was not confirmed"
+    is ProfileDownloadState.Downloading ->
+        "The SM-DP+ server could not prepare or provide the profile package"
+    is ProfileDownloadState.Finalizing ->
+        "The eUICC could not install the profile package"
+    is ProfileDownloadState.Installing ->
+        "The eUICC could not install the profile package"
+    null -> "The profile download failed before a provisioning session could start"
 }

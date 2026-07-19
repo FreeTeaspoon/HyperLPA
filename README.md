@@ -25,7 +25,7 @@ See `docs/reference-audit.md` for the source review and licensing decisions.
 ./gradlew :app:assembleDebug
 ```
 
-The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
+ABI-specific APKs are written to `app/build/outputs/apk/debug/`.
 
 Bluetooth readers are opt-in because Android requires nearby-device runtime
 permissions. Privileged telephony additionally requires a compatible system
@@ -47,9 +47,8 @@ For 9eSIM cards, an optional release-like build can use the public MIT-licensed
 ./gradlew :app:assembleNineEsimRelease
 ```
 
-The APK is written to
-`app/build/outputs/apk/nineEsimRelease/app-nineEsimRelease.apk`. Its expected
-signing certificate SHA-1 is
+The ABI-specific APKs are written to `app/build/outputs/apk/nineEsimRelease/`.
+Their expected signing certificate SHA-1 is
 `D1:C0:F4:8B:37:0E:74:D4:EA:47:70:ED:4C:3C:D7:0A:31:98:D3:1F`.
 Because this community key is public and differs from HyperLPA's private release
 key, this variant is not suitable for Play distribution and cannot update a
@@ -58,12 +57,16 @@ private-key build in place; uninstall the other signature first.
 ## Release signing
 
 Local release builds load signing credentials from the ignored
-`keystore.properties` file. Build both Play Store and directly installable
-artifacts with:
+`keystore.properties` file. Build directly installable, ABI-specific APKs with:
 
 ```shell
-./gradlew :app:assembleRelease :app:bundleRelease
+./gradlew :app:assembleRelease
 ```
+
+The APKs are written to `app/build/outputs/apk/release/`. Build the Play Store
+app bundle separately with `./gradlew :app:bundleRelease`; the AAB is written to
+`app/build/outputs/bundle/release/app-release.aab` and lets the store select the
+device ABI automatically.
 
 The signing key and `keystore.properties` are irreplaceable. Back them up in a
 password manager or encrypted offline archive; losing the key prevents future

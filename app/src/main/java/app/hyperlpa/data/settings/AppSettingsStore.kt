@@ -74,6 +74,13 @@ enum class ProfileSort {
     STATE,
 }
 
+enum class PhoneFormatStrategy {
+    INTERNATIONAL_ONLY,
+    INTERNATIONAL_AND_MOBILE,
+    INTERNATIONAL_AND_ALL,
+    OFF,
+}
+
 enum class RedactionMode {
     NONE,
     MIDDLE,
@@ -87,7 +94,7 @@ data class AppSettings(
     val accent: ThemeAccent = ThemeAccent.SYSTEM,
     val palette: ThemePalette = ThemePalette.TONAL_SPOT,
     val blurEnabled: Boolean = true,
-    val predictiveBack: Boolean = false,
+    val predictiveBack: Boolean = true,
     val densityScale: Float = 1f,
     val navigationStyle: NavigationStyle = NavigationStyle.STANDARD,
     val floatingBottomBarStyle: FloatingBottomBarStyle = FloatingBottomBarStyle.MIUIX,
@@ -95,7 +102,18 @@ data class AppSettings(
     val profileLayout: ProfileLayout = ProfileLayout.LIST,
     val profileSort: ProfileSort = ProfileSort.SLOT_ORDER,
     val sortAscending: Boolean = true,
-    val showProfileSearch: Boolean = true,
+    val showProfileSearch: Boolean = false,
+    val phoneFormatStrategy: PhoneFormatStrategy = PhoneFormatStrategy.INTERNATIONAL_AND_MOBILE,
+    val showProfileNameOnHome: Boolean = true,
+    val showProfileProviderOnHome: Boolean = true,
+    val showProfileIccidOnHome: Boolean = true,
+    val showProfileIconOnHome: Boolean = true,
+    val showProfileTagsOnHome: Boolean = true,
+    val showProfileRemindersOnHome: Boolean = true,
+    val showProfileSizeOnHome: Boolean = true,
+    val showProfileSwitchOnHome: Boolean = true,
+    val showReaderSelectorOnHome: Boolean = true,
+    val showEidOnHome: Boolean = true,
     val autoLoadProfiles: Boolean = true,
     val autoLoadRemoteReaders: Boolean = false,
     val enableNBridge: Boolean = true,
@@ -112,9 +130,8 @@ data class AppSettings(
     val notificationAutoSend: Boolean = true,
     val notificationAutoRemove: Boolean = true,
     val scheduledReminders: Boolean = true,
-    val eidRedaction: RedactionMode = RedactionMode.MIDDLE,
-    val iccidRedaction: RedactionMode = RedactionMode.MIDDLE,
-    val revealSensitiveData: Boolean = false,
+    val eidRedaction: RedactionMode = RedactionMode.NONE,
+    val iccidRedaction: RedactionMode = RedactionMode.NONE,
     val loadOperatorIcons: Boolean = true,
     val estimateProfileSize: Boolean = true,
     val hideEuiccMemoryReset: Boolean = false,
@@ -159,6 +176,17 @@ class AppSettingsStore(context: Context) {
     suspend fun setProfileSort(value: ProfileSort) = set(Keys.ProfileSort, value.name)
     suspend fun setSortAscending(value: Boolean) = set(Keys.SortAscending, value)
     suspend fun setShowProfileSearch(value: Boolean) = set(Keys.ShowProfileSearch, value)
+    suspend fun setPhoneFormatStrategy(value: PhoneFormatStrategy) = set(Keys.PhoneFormatStrategy, value.name)
+    suspend fun setShowProfileNameOnHome(value: Boolean) = set(Keys.ShowProfileNameOnHome, value)
+    suspend fun setShowProfileProviderOnHome(value: Boolean) = set(Keys.ShowProfileProviderOnHome, value)
+    suspend fun setShowProfileIccidOnHome(value: Boolean) = set(Keys.ShowProfileIccidOnHome, value)
+    suspend fun setShowProfileIconOnHome(value: Boolean) = set(Keys.ShowProfileIconOnHome, value)
+    suspend fun setShowProfileTagsOnHome(value: Boolean) = set(Keys.ShowProfileTagsOnHome, value)
+    suspend fun setShowProfileRemindersOnHome(value: Boolean) = set(Keys.ShowProfileRemindersOnHome, value)
+    suspend fun setShowProfileSizeOnHome(value: Boolean) = set(Keys.ShowProfileSizeOnHome, value)
+    suspend fun setShowProfileSwitchOnHome(value: Boolean) = set(Keys.ShowProfileSwitchOnHome, value)
+    suspend fun setShowReaderSelectorOnHome(value: Boolean) = set(Keys.ShowReaderSelectorOnHome, value)
+    suspend fun setShowEidOnHome(value: Boolean) = set(Keys.ShowEidOnHome, value)
     suspend fun setAutoLoadProfiles(value: Boolean) = set(Keys.AutoLoadProfiles, value)
     suspend fun setAutoLoadRemoteReaders(value: Boolean) = set(Keys.AutoLoadRemoteReaders, value)
     suspend fun setEnableNBridge(value: Boolean) = set(Keys.EnableNBridge, value)
@@ -177,7 +205,6 @@ class AppSettingsStore(context: Context) {
     suspend fun setScheduledReminders(value: Boolean) = set(Keys.ScheduledReminders, value)
     suspend fun setEidRedaction(value: RedactionMode) = set(Keys.EidRedaction, value.name)
     suspend fun setIccidRedaction(value: RedactionMode) = set(Keys.IccidRedaction, value.name)
-    suspend fun setRevealSensitiveData(value: Boolean) = set(Keys.RevealSensitiveData, value)
     suspend fun setLoadOperatorIcons(value: Boolean) = set(Keys.LoadOperatorIcons, value)
     suspend fun setEstimateProfileSize(value: Boolean) = set(Keys.EstimateProfileSize, value)
     suspend fun setHideEuiccMemoryReset(value: Boolean) = set(Keys.HideEuiccMemoryReset, value)
@@ -212,7 +239,7 @@ class AppSettingsStore(context: Context) {
         accent = preferences.enum(Keys.Accent, ThemeAccent.SYSTEM),
         palette = preferences.enum(Keys.Palette, ThemePalette.TONAL_SPOT),
         blurEnabled = preferences[Keys.BlurEnabled] ?: true,
-        predictiveBack = preferences[Keys.PredictiveBack] ?: false,
+        predictiveBack = preferences[Keys.PredictiveBack] ?: true,
         densityScale = (preferences[Keys.DensityScale] ?: 1f).coerceIn(0.8f, 1.1f),
         navigationStyle = preferences.enum(Keys.NavigationStyle, NavigationStyle.STANDARD),
         floatingBottomBarStyle = preferences.enum(
@@ -223,7 +250,21 @@ class AppSettingsStore(context: Context) {
         profileLayout = preferences.enum(Keys.ProfileLayout, ProfileLayout.LIST),
         profileSort = preferences.enum(Keys.ProfileSort, ProfileSort.SLOT_ORDER),
         sortAscending = preferences[Keys.SortAscending] ?: true,
-        showProfileSearch = preferences[Keys.ShowProfileSearch] ?: true,
+        showProfileSearch = preferences[Keys.ShowProfileSearch] ?: false,
+        phoneFormatStrategy = preferences.enum(
+            Keys.PhoneFormatStrategy,
+            PhoneFormatStrategy.INTERNATIONAL_AND_MOBILE,
+        ),
+        showProfileNameOnHome = preferences[Keys.ShowProfileNameOnHome] ?: true,
+        showProfileProviderOnHome = preferences[Keys.ShowProfileProviderOnHome] ?: true,
+        showProfileIccidOnHome = preferences[Keys.ShowProfileIccidOnHome] ?: true,
+        showProfileIconOnHome = preferences[Keys.ShowProfileIconOnHome] ?: true,
+        showProfileTagsOnHome = preferences[Keys.ShowProfileTagsOnHome] ?: true,
+        showProfileRemindersOnHome = preferences[Keys.ShowProfileRemindersOnHome] ?: true,
+        showProfileSizeOnHome = preferences[Keys.ShowProfileSizeOnHome] ?: true,
+        showProfileSwitchOnHome = preferences[Keys.ShowProfileSwitchOnHome] ?: true,
+        showReaderSelectorOnHome = preferences[Keys.ShowReaderSelectorOnHome] ?: true,
+        showEidOnHome = preferences[Keys.ShowEidOnHome] ?: true,
         autoLoadProfiles = preferences[Keys.AutoLoadProfiles] ?: true,
         autoLoadRemoteReaders = preferences[Keys.AutoLoadRemoteReaders] ?: false,
         enableNBridge = preferences[Keys.EnableNBridge] ?: true,
@@ -240,9 +281,8 @@ class AppSettingsStore(context: Context) {
         notificationAutoSend = preferences[Keys.NotificationAutoSend] ?: true,
         notificationAutoRemove = preferences[Keys.NotificationAutoRemove] ?: true,
         scheduledReminders = preferences[Keys.ScheduledReminders] ?: true,
-        eidRedaction = preferences.enum(Keys.EidRedaction, RedactionMode.MIDDLE),
-        iccidRedaction = preferences.enum(Keys.IccidRedaction, RedactionMode.MIDDLE),
-        revealSensitiveData = preferences[Keys.RevealSensitiveData] ?: false,
+        eidRedaction = preferences.enum(Keys.EidRedaction, RedactionMode.NONE),
+        iccidRedaction = preferences.enum(Keys.IccidRedaction, RedactionMode.NONE),
         loadOperatorIcons = preferences[Keys.LoadOperatorIcons] ?: true,
         estimateProfileSize = preferences[Keys.EstimateProfileSize] ?: true,
         hideEuiccMemoryReset = preferences[Keys.HideEuiccMemoryReset] ?: false,
@@ -289,6 +329,17 @@ class AppSettingsStore(context: Context) {
         val ProfileSort = stringPreferencesKey("profile_sort")
         val SortAscending = booleanPreferencesKey("sort_ascending")
         val ShowProfileSearch = booleanPreferencesKey("show_profile_search")
+        val PhoneFormatStrategy = stringPreferencesKey("phone_format_strategy")
+        val ShowProfileNameOnHome = booleanPreferencesKey("show_profile_name_on_home")
+        val ShowProfileProviderOnHome = booleanPreferencesKey("show_profile_provider_on_home")
+        val ShowProfileIccidOnHome = booleanPreferencesKey("show_profile_iccid_on_home")
+        val ShowProfileIconOnHome = booleanPreferencesKey("show_profile_icon_on_home")
+        val ShowProfileTagsOnHome = booleanPreferencesKey("show_profile_tags_on_home")
+        val ShowProfileRemindersOnHome = booleanPreferencesKey("show_profile_reminders_on_home")
+        val ShowProfileSizeOnHome = booleanPreferencesKey("show_profile_size_on_home")
+        val ShowProfileSwitchOnHome = booleanPreferencesKey("show_profile_switch_on_home")
+        val ShowReaderSelectorOnHome = booleanPreferencesKey("show_reader_selector_on_home")
+        val ShowEidOnHome = booleanPreferencesKey("show_eid_on_home")
         val AutoLoadProfiles = booleanPreferencesKey("auto_load_profiles")
         val AutoLoadRemoteReaders = booleanPreferencesKey("auto_load_remote_readers")
         val EnableNBridge = booleanPreferencesKey("reader_nbridge")
@@ -307,7 +358,6 @@ class AppSettingsStore(context: Context) {
         val ScheduledReminders = booleanPreferencesKey("scheduled_reminders")
         val EidRedaction = stringPreferencesKey("eid_redaction")
         val IccidRedaction = stringPreferencesKey("iccid_redaction")
-        val RevealSensitiveData = booleanPreferencesKey("reveal_sensitive_data")
         val LoadOperatorIcons = booleanPreferencesKey("load_operator_icons")
         val EstimateProfileSize = booleanPreferencesKey("estimate_profile_size")
         val HideEuiccMemoryReset = booleanPreferencesKey("hide_euicc_memory_reset")

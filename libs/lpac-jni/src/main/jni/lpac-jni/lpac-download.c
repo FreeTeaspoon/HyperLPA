@@ -1,6 +1,8 @@
 #include <euicc/es9p.h>
+#include <euicc/es9p_errors.h>
 #include <euicc/es10b.h>
 #include <euicc/es8p.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
@@ -15,6 +17,8 @@ jobject download_state_finalizing;
 jmethodID on_state_update;
 jclass confirming_download_class;
 jmethodID confirming_download_constructor;
+jclass installing_download_class;
+jmethodID installing_download_constructor;
 jclass remote_profile_info_class;
 jmethodID remote_profile_info_constructor;
 jobject profile_class_testing;
@@ -86,6 +90,14 @@ void lpac_download_init() {
                                                           confirming_download_class,
                                                           "<init>",
                                                           "(Lnet/typeblog/lpac_jni/RemoteProfileInfo;)V");
+
+    jclass _installing_download_class = (*env)->FindClass(env,
+                                                          "net/typeblog/lpac_jni/ProfileDownloadState$Installing");
+    installing_download_class = (*env)->NewGlobalRef(env, _installing_download_class);
+    installing_download_constructor = (*env)->GetMethodID(env,
+                                                          installing_download_class,
+                                                          "<init>",
+                                                          "(JJ)V");
 
     jclass profile_class_class = (*env)->FindClass(env, "net/typeblog/lpac_jni/ProfileClass");
     jfieldID profile_class_testing_field = (*env)->GetStaticFieldID(env, profile_class_class,
@@ -177,6 +189,30 @@ static jobject create_remote_profile_info(JNIEnv *env,
     return remote_profile_info;
 }
 
+struct lpac_download_progress_context {
+    JNIEnv *env;
+    jobject callback;
+};
+
+static int lpac_download_install_progress(uint64_t sent_bytes, uint64_t total_bytes, void *user_data) {
+    struct lpac_download_progress_context *progress = user_data;
+    jobject state = (*progress->env)->NewObject(progress->env,
+                                                installing_download_class,
+                                                installing_download_constructor,
+                                                (jlong)sent_bytes,
+                                                (jlong)total_bytes);
+    if (state == NULL) {
+        return -1;
+    }
+
+    jboolean accepted = (*progress->env)->CallBooleanMethod(progress->env,
+                                                            progress->callback,
+                                                            on_state_update,
+                                                            state);
+    (*progress->env)->DeleteLocalRef(progress->env, state);
+    return accepted ? 0 : -1;
+}
+
 JNIEXPORT jint JNICALL
 Java_net_typeblog_lpac_1jni_LpacJni_downloadProfile(JNIEnv *env, jobject thiz, jlong handle,
                                                     jstring smdp, jstring matching_id,
@@ -191,6 +227,10 @@ Java_net_typeblog_lpac_1jni_LpacJni_downloadProfile(JNIEnv *env, jobject thiz, j
     const char *_imei = NULL;
     jobject remote_profile_info = NULL;
     jobject confirming_download_state = NULL;
+    struct lpac_download_progress_context install_progress = {
+        .env = env,
+        .callback = callback,
+    };
     jboolean confirmed = JNI_TRUE;
     int ret;
 
@@ -313,7 +353,10 @@ Java_net_typeblog_lpac_1jni_LpacJni_downloadProfile(JNIEnv *env, jobject thiz, j
         goto out;
     }
 
-    ret = es10b_load_bound_profile_package(ctx, &es10b_load_bound_profile_package_result);
+    ret = es10b_load_bound_profile_package_progress(ctx,
+                                                    &es10b_load_bound_profile_package_result,
+                                                    lpac_download_install_progress,
+                                                    &install_progress);
     syslog(LOG_INFO, "es10b_load_bound_profile_package %d, reason %d", ret, es10b_load_bound_profile_package_result.errorReason);
     if (ret < 0) {
         ret = - (int) es10b_load_bound_profile_package_result.errorReason;
@@ -378,4 +421,35 @@ Java_net_typeblog_lpac_1jni_LpacJni_downloadErrCodeToString(JNIEnv *env, jobject
         default:
             return toJString(env, "ES10B_ERROR_REASON_UNDEFINED");
     }
+}
+
+JNIEXPORT jstring JNICALL
+Java_net_typeblog_lpac_1jni_LpacJni_downloadLastHttpError(JNIEnv *env, jobject thiz, jlong handle) {
+    struct euicc_ctx *ctx = (struct euicc_ctx *) handle;
+    const char *message;
+    const char *standard_message;
+    char detail[256];
+
+    if (ctx == NULL) {
+        return NULL;
+    }
+
+    message = ctx->http.status.message;
+    if (message[0] == '\0' || strcmp(message, "unknown") == 0) {
+        return NULL;
+    }
+
+    standard_message = es9p_error_message(ctx->http.status.subjectCode, ctx->http.status.reasonCode);
+    if (standard_message != NULL) {
+        message = standard_message;
+    }
+
+    if (strcmp(ctx->http.status.subjectCode, "0.0.0") != 0 ||
+        strcmp(ctx->http.status.reasonCode, "0.0.0") != 0) {
+        snprintf(detail, sizeof(detail), "%s (subject %s, reason %s)", message,
+                 ctx->http.status.subjectCode, ctx->http.status.reasonCode);
+        return toJString(env, detail);
+    }
+
+    return toJString(env, message);
 }

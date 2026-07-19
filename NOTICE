@@ -11,6 +11,9 @@ of NekokoLPA2 (MIT), compose-miuix-ui/miuix (Apache-2.0), Mishka (GPL-3.0),
 InstallerX-Revived (GPL-3.0), OpenEUICC (GPL-3.0), and NZB Direct. No Nekoko
 mascot artwork or branding is included.
 
+The About screen layout and animated background effect are adapted from Mishka
+under GPL-3.0.
+
 The Appearance & Theme screen and floating-navigation behavior are adapted
 from the user's NZB Direct project. Its Liquid Glass support files retain the
 Apache-2.0 notices from compose-miuix-ui contributors and AndroidLiquidGlass.
@@ -25,6 +28,9 @@ data is downloaded from the NekokoLPA2 repository when that feature is enabled.
 HyperLPA does not use NekokoLPA branding or submit Nekoko installation telemetry.
 
 Miuix libraries are consumed as Maven dependencies under Apache-2.0.
+
+Phone-number detection and international formatting use Google's
+libphonenumber under Apache-2.0.
 
 The optional 9eSIM-compatible release variant uses the public 9eSIM Community
 Key distributed by 9eSIM under the MIT License. The key itself is not included

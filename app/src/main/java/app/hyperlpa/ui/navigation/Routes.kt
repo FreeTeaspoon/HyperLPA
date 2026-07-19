@@ -14,6 +14,10 @@ sealed interface AppRoute {
     data object Shell : AppRoute
     data class ProfileDetails(val iccid: String) : AppRoute
     data object DownloadProfile : AppRoute
+    data object ConfirmProfileDownload : AppRoute
+    data class ProfileDownloadResult(
+        val result: app.hyperlpa.domain.model.ProfileDownloadResult,
+    ) : AppRoute
     data object BatchDownload : AppRoute
     data object EuiccDetails : AppRoute
     data object ReaderSettings : AppRoute
@@ -23,6 +27,7 @@ sealed interface AppRoute {
     data object PrivacySettings : AppRoute
     data object AdvancedSettings : AppRoute
     data object AidManager : AppRoute
+    data object TagsAndReminders : AppRoute
     data object TagManager : AppRoute
     data object ScheduledReminders : AppRoute
     data object Statistics : AppRoute

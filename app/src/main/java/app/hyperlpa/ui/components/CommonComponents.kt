@@ -1,8 +1,6 @@
 package app.hyperlpa.ui.components
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -61,8 +59,7 @@ fun GroupedCard(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp)
-            .padding(bottom = 8.dp)
-            .animateContentSize(animationSpec = spring()),
+            .padding(bottom = 12.dp),
         cornerRadius = 16.dp,
         insideMargin = PaddingValues(0.dp),
         pressFeedbackType = if (onClick != null || onLongPress != null) {
