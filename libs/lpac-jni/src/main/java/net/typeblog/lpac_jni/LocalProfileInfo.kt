@@ -13,6 +13,9 @@ data class LocalProfileInfo(
     val mccMnc: String?,
     val gid1: String?,
     val gid2: String?,
+    val notificationOperations: Set<String> = emptySet(),
+    val dpOid: String? = null,
+    val profilePolicyRules: Set<String> = emptySet(),
 ) {
     enum class State {
         Enabled,

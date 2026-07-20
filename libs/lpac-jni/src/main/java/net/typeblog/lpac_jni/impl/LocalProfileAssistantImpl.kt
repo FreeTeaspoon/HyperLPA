@@ -3,6 +3,7 @@ package net.typeblog.lpac_jni.impl
 import android.util.Log
 import net.typeblog.lpac_jni.ProfileDownloadInput
 import net.typeblog.lpac_jni.ApduInterface
+import net.typeblog.lpac_jni.EuiccConfiguredAddresses
 import net.typeblog.lpac_jni.EuiccInfo2
 import net.typeblog.lpac_jni.HttpInterface
 import net.typeblog.lpac_jni.HttpInterface.HttpResponse
@@ -136,6 +137,9 @@ class LocalProfileAssistantImpl(
                         LpacJni.profileGetMccMnc(curr).takeIf(String::isNotEmpty),
                         LpacJni.profileGetGid1(curr).takeIf(String::isNotEmpty),
                         LpacJni.profileGetGid2(curr).takeIf(String::isNotEmpty),
+                        readStringSet(LpacJni.profileGetNotificationOperations(curr)),
+                        LpacJni.profileGetDpOid(curr).takeIf(String::isNotEmpty),
+                        readStringSet(LpacJni.profileGetPolicyRules(curr)),
                     )
                 )
                 curr = LpacJni.profilesNext(curr)
@@ -183,31 +187,45 @@ class LocalProfileAssistantImpl(
 
             try {
                 return EuiccInfo2(
-                    Version(LpacJni.euiccInfo2GetSGP22Version(cInfo)),
-                    Version(LpacJni.euiccInfo2GetProfileVersion(cInfo)),
-                    Version(LpacJni.euiccInfo2GetEuiccFirmwareVersion(cInfo)),
-                    Version(LpacJni.euiccInfo2GetGlobalPlatformVersion(cInfo)),
-                    LpacJni.euiccInfo2GetSasAcreditationNumber(cInfo),
-                    Version(LpacJni.euiccInfo2GetPpVersion(cInfo)),
-                    LpacJni.euiccInfo2GetFreeNonVolatileMemory(cInfo).toInt(),
-                    LpacJni.euiccInfo2GetFreeVolatileMemory(cInfo).toInt(),
-                    buildSet {
-                        var cursor = LpacJni.euiccInfo2GetEuiccCiPKIdListForSigning(cInfo)
-                        while (cursor != 0L) {
-                            add(LpacJni.stringDeref(cursor))
-                            cursor = LpacJni.stringArrNext(cursor)
-                        }
-                    },
-                    buildSet {
-                        var cursor = LpacJni.euiccInfo2GetEuiccCiPKIdListForVerification(cInfo)
-                        while (cursor != 0L) {
-                            add(LpacJni.stringDeref(cursor))
-                            cursor = LpacJni.stringArrNext(cursor)
-                        }
-                    },
+                    sgp22Version = Version(LpacJni.euiccInfo2GetSGP22Version(cInfo)),
+                    profileVersion = Version(LpacJni.euiccInfo2GetProfileVersion(cInfo)),
+                    euiccFirmwareVersion = Version(LpacJni.euiccInfo2GetEuiccFirmwareVersion(cInfo)),
+                    globalPlatformVersion = Version(LpacJni.euiccInfo2GetGlobalPlatformVersion(cInfo)),
+                    sasAccreditationNumber = LpacJni.euiccInfo2GetSasAcreditationNumber(cInfo),
+                    ppVersion = Version(LpacJni.euiccInfo2GetPpVersion(cInfo)),
+                    freeNvram = LpacJni.euiccInfo2GetFreeNonVolatileMemory(cInfo).toInt(),
+                    freeRam = LpacJni.euiccInfo2GetFreeVolatileMemory(cInfo).toInt(),
+                    euiccCiPKIdListForSigning =
+                        readStringSet(LpacJni.euiccInfo2GetEuiccCiPKIdListForSigning(cInfo)),
+                    euiccCiPKIdListForVerification =
+                        readStringSet(LpacJni.euiccInfo2GetEuiccCiPKIdListForVerification(cInfo)),
+                    installedApplicationCount = LpacJni.euiccInfo2GetInstalledApplication(cInfo).toInt(),
+                    uiccCapabilities = readStringSet(LpacJni.euiccInfo2GetUiccCapability(cInfo)),
+                    ts102241Version = LpacJni.euiccInfo2GetTs102241Version(cInfo),
+                    rspCapabilities = readStringSet(LpacJni.euiccInfo2GetRspCapability(cInfo)),
+                    euiccCategory = LpacJni.euiccInfo2GetEuiccCategory(cInfo),
+                    forbiddenProfilePolicyRules =
+                        readStringSet(LpacJni.euiccInfo2GetForbiddenProfilePolicyRules(cInfo)),
+                    platformLabel = LpacJni.euiccInfo2GetPlatformLabel(cInfo),
+                    discoveryBaseUrl = LpacJni.euiccInfo2GetDiscoveryBaseUrl(cInfo),
                 )
             } finally {
                 LpacJni.euiccInfo2Free(cInfo)
+            }
+        }
+
+    override val euiccConfiguredAddresses: EuiccConfiguredAddresses?
+        get() = lock.withLock {
+            val cAddresses = LpacJni.es10aGetEuiccConfiguredAddresses(contextHandle)
+            if (cAddresses == 0L) return null
+
+            try {
+                EuiccConfiguredAddresses(
+                    defaultDpAddress = LpacJni.euiccConfiguredAddressesGetDefaultDpAddress(cAddresses),
+                    rootDsAddress = LpacJni.euiccConfiguredAddressesGetRootDsAddress(cAddresses),
+                )
+            } finally {
+                LpacJni.euiccConfiguredAddressesFree(cAddresses)
             }
         }
 
@@ -303,6 +321,14 @@ class LocalProfileAssistantImpl(
             LpacJni.euiccFini(contextHandle)
             LpacJni.destroyContext(contextHandle)
             finalized = true
+        }
+    }
+
+    private fun readStringSet(head: Long): Set<String> = buildSet {
+        var cursor = head
+        while (cursor != 0L) {
+            add(LpacJni.stringDeref(cursor))
+            cursor = LpacJni.stringArrNext(cursor)
         }
     }
 }

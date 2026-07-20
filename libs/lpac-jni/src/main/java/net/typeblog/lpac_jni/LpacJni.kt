@@ -26,6 +26,9 @@ internal object LpacJni {
     external fun es10cDeleteProfile(handle: Long, iccid: String): Int
     external fun es10cSetNickname(handle: Long, iccid: String, nickNullTerminated: ByteArray): Int
 
+    // es10a
+    external fun es10aGetEuiccConfiguredAddresses(handle: Long): Long
+
     // es10b
     external fun es10bListNotification(handle: Long): Long // A native pointer to a linked list. Handle with linked list-related methods below. May be 0 (null)
     external fun es10bDeleteNotification(handle: Long, seqNumber: Long): Int
@@ -70,6 +73,9 @@ internal object LpacJni {
     external fun profileGetMccMnc(curr: Long): String
     external fun profileGetGid1(curr: Long): String
     external fun profileGetGid2(curr: Long): String
+    external fun profileGetNotificationOperations(curr: Long): Long
+    external fun profileGetDpOid(curr: Long): String
+    external fun profileGetPolicyRules(curr: Long): Long
 
     // Notifications
     external fun notificationsNext(curr: Long): Long
@@ -89,8 +95,21 @@ internal object LpacJni {
     external fun euiccInfo2GetPpVersion(info: Long): String
     external fun euiccInfo2GetFreeNonVolatileMemory(info: Long): Long
     external fun euiccInfo2GetFreeVolatileMemory(info: Long): Long
+    external fun euiccInfo2GetInstalledApplication(info: Long): Long
+    external fun euiccInfo2GetUiccCapability(info: Long): Long
+    external fun euiccInfo2GetTs102241Version(info: Long): String
+    external fun euiccInfo2GetRspCapability(info: Long): Long
+    external fun euiccInfo2GetEuiccCategory(info: Long): String
+    external fun euiccInfo2GetForbiddenProfilePolicyRules(info: Long): Long
+    external fun euiccInfo2GetPlatformLabel(info: Long): String
+    external fun euiccInfo2GetDiscoveryBaseUrl(info: Long): String
 
     // C String Arrays
     external fun euiccInfo2GetEuiccCiPKIdListForSigning(info: Long): Long
     external fun euiccInfo2GetEuiccCiPKIdListForVerification(info: Long): Long
+
+    // Configured eUICC addresses
+    external fun euiccConfiguredAddressesFree(addresses: Long)
+    external fun euiccConfiguredAddressesGetDefaultDpAddress(addresses: Long): String
+    external fun euiccConfiguredAddressesGetRootDsAddress(addresses: Long): String
 }

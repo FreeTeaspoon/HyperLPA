@@ -157,6 +157,17 @@ class ProfileMetadataStore(context: Context) {
         scheduleProfileReminder(appContext, iccid, iccid, null)
     }
 
+    suspend fun replaceAll(
+        metadata: Map<String, ProfileMetadata>,
+        providerIcons: Map<String, String>,
+    ) {
+        val storedMetadata = metadata.mapValues { (_, value) -> value.toStored() }
+        dataStore.edit { preferences ->
+            preferences[MetadataJson] = json.encodeToString(storedMetadata)
+            preferences[ProviderIconsJson] = json.encodeToString(providerIcons)
+        }
+    }
+
     private suspend fun update(
         iccid: String,
         transform: StoredProfileMetadata.() -> StoredProfileMetadata,
@@ -178,6 +189,15 @@ class ProfileMetadataStore(context: Context) {
         iconUri = iconUri,
         smdpAddress = smdpAddress,
         installedBytes = installedBytes,
+        installedEid = installedEid,
+    )
+
+    private fun ProfileMetadata.toStored(): StoredProfileMetadata = StoredProfileMetadata(
+        tags = normalizeProfileTags(tags),
+        reminderEpochMillis = reminderAt?.toEpochMilli(),
+        iconUri = iconUri,
+        smdpAddress = smdpAddress,
+        installedBytes = installedBytes?.takeIf { it > 0 },
         installedEid = installedEid,
     )
 

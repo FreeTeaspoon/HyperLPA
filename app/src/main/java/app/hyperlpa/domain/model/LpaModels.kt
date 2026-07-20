@@ -49,6 +49,9 @@ data class ProfileInfo(
     val gid1: String? = null,
     val gid2: String? = null,
     val smdpAddress: String? = null,
+    val notificationOperations: Set<String> = emptySet(),
+    val dpOid: String? = null,
+    val profilePolicyRules: Set<String> = emptySet(),
     val tags: Set<String> = emptySet(),
     val reminderAt: Instant? = null,
     val customIconUri: String? = null,
@@ -86,6 +89,17 @@ data class EuiccInfo(
     val freeVolatileMemory: Int? = null,
     val signingKeyIds: Set<String> = emptySet(),
     val verificationKeyIds: Set<String> = emptySet(),
+    val installedApplicationCount: Int? = null,
+    val uiccCapabilities: Set<String> = emptySet(),
+    val ts102241Version: String = "",
+    val rspCapabilities: Set<String> = emptySet(),
+    val euiccCategory: String = "",
+    val forbiddenProfilePolicyRules: Set<String> = emptySet(),
+    val platformLabel: String = "",
+    val discoveryBaseUrl: String = "",
+    val defaultSmdpAddress: String = "",
+    val rootSmdsAddress: String = "",
+    val refreshedAt: Instant = Instant.now(),
 )
 
 @Immutable

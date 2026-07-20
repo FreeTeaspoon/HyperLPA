@@ -2,6 +2,7 @@ package app.hyperlpa.data.settings
 
 import android.content.Context
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
@@ -12,16 +13,19 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.Serializable
 import java.io.IOException
 
 private val Context.hyperLpaDataStore by preferencesDataStore(name = "hyperlpa_settings")
 
+@Serializable
 enum class ThemeMode {
     SYSTEM,
     LIGHT,
     DARK,
 }
 
+@Serializable
 enum class ThemeAccent {
     SYSTEM,
     BLUE,
@@ -34,6 +38,7 @@ enum class ThemeAccent {
     TEAL,
 }
 
+@Serializable
 enum class ThemePalette {
     TONAL_SPOT,
     NEUTRAL,
@@ -46,26 +51,31 @@ enum class ThemePalette {
     CONTENT,
 }
 
+@Serializable
 enum class NavigationStyle {
     STANDARD,
     FLOATING,
 }
 
+@Serializable
 enum class FloatingBottomBarStyle {
     MIUIX,
     IOS_LIKE,
 }
 
+@Serializable
 enum class NavigationLabels {
     ICON_AND_TEXT,
     ICON_ONLY,
 }
 
+@Serializable
 enum class ProfileLayout {
     LIST,
     WATERFALL,
 }
 
+@Serializable
 enum class ProfileSort {
     SLOT_ORDER,
     NAME,
@@ -74,6 +84,7 @@ enum class ProfileSort {
     STATE,
 }
 
+@Serializable
 enum class PhoneFormatStrategy {
     INTERNATIONAL_ONLY,
     INTERNATIONAL_AND_MOBILE,
@@ -81,12 +92,14 @@ enum class PhoneFormatStrategy {
     OFF,
 }
 
+@Serializable
 enum class RedactionMode {
     NONE,
     MIDDLE,
     FULL,
 }
 
+@Serializable
 data class AppSettings(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val useMonet: Boolean = false,
@@ -134,6 +147,7 @@ data class AppSettings(
     val iccidRedaction: RedactionMode = RedactionMode.NONE,
     val loadOperatorIcons: Boolean = true,
     val estimateProfileSize: Boolean = true,
+    val hideProfileDeletion: Boolean = false,
     val hideEuiccMemoryReset: Boolean = false,
     val apduLogging: Boolean = false,
     val developerMode: Boolean = false,
@@ -207,6 +221,7 @@ class AppSettingsStore(context: Context) {
     suspend fun setIccidRedaction(value: RedactionMode) = set(Keys.IccidRedaction, value.name)
     suspend fun setLoadOperatorIcons(value: Boolean) = set(Keys.LoadOperatorIcons, value)
     suspend fun setEstimateProfileSize(value: Boolean) = set(Keys.EstimateProfileSize, value)
+    suspend fun setHideProfileDeletion(value: Boolean) = set(Keys.HideProfileDeletion, value)
     suspend fun setHideEuiccMemoryReset(value: Boolean) = set(Keys.HideEuiccMemoryReset, value)
     suspend fun setApduLogging(value: Boolean) = set(Keys.ApduLogging, value)
     suspend fun setDeveloperMode(value: Boolean) = set(Keys.DeveloperMode, value)
@@ -222,6 +237,17 @@ class AppSettingsStore(context: Context) {
         value.map(String::trim).filter(String::isNotEmpty).distinct().joinToString("\n"),
     )
 
+    suspend fun replaceSettings(settings: AppSettings) {
+        dataStore.edit { preferences ->
+            preferences.clear()
+            preferences.writeSettings(settings)
+        }
+    }
+
+    suspend fun resetToDefaults(): AppSettings = AppSettings().also {
+        dataStore.edit { preferences -> preferences.clear() }
+    }
+
     private suspend fun <T> set(key: Preferences.Key<T>, value: T) {
         dataStore.edit { preferences -> preferences[key] = value }
     }
@@ -230,6 +256,72 @@ class AppSettingsStore(context: Context) {
         dataStore.edit { preferences ->
             if (value == null) preferences.remove(key) else preferences[key] = value
         }
+    }
+
+    private fun MutablePreferences.writeSettings(settings: AppSettings) {
+        this[Keys.ThemeMode] = settings.themeMode.name
+        this[Keys.UseMonet] = settings.useMonet
+        this[Keys.PureBlack] = settings.pureBlack
+        this[Keys.Accent] = settings.accent.name
+        this[Keys.Palette] = settings.palette.name
+        this[Keys.BlurEnabled] = settings.blurEnabled
+        this[Keys.PredictiveBack] = settings.predictiveBack
+        this[Keys.DensityScale] = settings.densityScale.coerceIn(0.8f, 1.1f)
+        this[Keys.NavigationStyle] = settings.navigationStyle.name
+        this[Keys.FloatingBottomBarStyle] = settings.floatingBottomBarStyle.name
+        this[Keys.NavigationLabels] = settings.navigationLabels.name
+        this[Keys.ProfileLayout] = settings.profileLayout.name
+        this[Keys.ProfileSort] = settings.profileSort.name
+        this[Keys.SortAscending] = settings.sortAscending
+        this[Keys.ShowProfileSearch] = settings.showProfileSearch
+        this[Keys.PhoneFormatStrategy] = settings.phoneFormatStrategy.name
+        this[Keys.ShowProfileNameOnHome] = settings.showProfileNameOnHome
+        this[Keys.ShowProfileProviderOnHome] = settings.showProfileProviderOnHome
+        this[Keys.ShowProfileIccidOnHome] = settings.showProfileIccidOnHome
+        this[Keys.ShowProfileIconOnHome] = settings.showProfileIconOnHome
+        this[Keys.ShowProfileTagsOnHome] = settings.showProfileTagsOnHome
+        this[Keys.ShowProfileRemindersOnHome] = settings.showProfileRemindersOnHome
+        this[Keys.ShowProfileSizeOnHome] = settings.showProfileSizeOnHome
+        this[Keys.ShowProfileSwitchOnHome] = settings.showProfileSwitchOnHome
+        this[Keys.ShowReaderSelectorOnHome] = settings.showReaderSelectorOnHome
+        this[Keys.ShowEidOnHome] = settings.showEidOnHome
+        this[Keys.AutoLoadProfiles] = settings.autoLoadProfiles
+        this[Keys.AutoLoadRemoteReaders] = settings.autoLoadRemoteReaders
+        this[Keys.EnableNBridge] = settings.enableNBridge
+        this[Keys.EnableOmapi] = settings.enableOmapi
+        this[Keys.EnableTelephony] = settings.enableTelephony
+        this[Keys.EnableUsbCcid] = settings.enableUsbCcid
+        this[Keys.EnableBle] = settings.enableBle
+        this[Keys.EnableRemote] = settings.enableRemote
+        this[Keys.NotificationInitialLoad] = settings.notificationInitialLoad
+        this[Keys.NotificationAfterSwitch] = settings.notificationAfterSwitch
+        this[Keys.NotificationAfterDelete] = settings.notificationAfterDelete
+        this[Keys.NotificationBeforeDownload] = settings.notificationBeforeDownload
+        this[Keys.NotificationAfterDownload] = settings.notificationAfterDownload
+        this[Keys.NotificationAutoSend] = settings.notificationAutoSend
+        this[Keys.NotificationAutoRemove] = settings.notificationAutoRemove
+        this[Keys.ScheduledReminders] = settings.scheduledReminders
+        this[Keys.EidRedaction] = settings.eidRedaction.name
+        this[Keys.IccidRedaction] = settings.iccidRedaction.name
+        this[Keys.LoadOperatorIcons] = settings.loadOperatorIcons
+        this[Keys.EstimateProfileSize] = settings.estimateProfileSize
+        this[Keys.HideProfileDeletion] = settings.hideProfileDeletion
+        this[Keys.HideEuiccMemoryReset] = settings.hideEuiccMemoryReset
+        this[Keys.ApduLogging] = settings.apduLogging
+        this[Keys.DeveloperMode] = settings.developerMode
+        this[Keys.Es10xMss] = settings.es10xMss.coerceIn(32, 255)
+        this[Keys.Imei] = settings.imei.filter(Char::isDigit).take(16)
+        settings.lastReaderId?.let { this[Keys.LastReaderId] = it }
+        this[Keys.IsdrAids] = settings.isdrAids
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .distinct()
+            .joinToString("\n")
+        this[Keys.RemoteReaderUrls] = settings.remoteReaderUrls
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .distinct()
+            .joinToString("\n")
     }
 
     private fun readSettings(preferences: Preferences): AppSettings = AppSettings(
@@ -285,6 +377,7 @@ class AppSettingsStore(context: Context) {
         iccidRedaction = preferences.enum(Keys.IccidRedaction, RedactionMode.NONE),
         loadOperatorIcons = preferences[Keys.LoadOperatorIcons] ?: true,
         estimateProfileSize = preferences[Keys.EstimateProfileSize] ?: true,
+        hideProfileDeletion = preferences[Keys.HideProfileDeletion] ?: false,
         hideEuiccMemoryReset = preferences[Keys.HideEuiccMemoryReset] ?: false,
         apduLogging = preferences[Keys.ApduLogging] ?: false,
         developerMode = preferences[Keys.DeveloperMode] ?: false,
@@ -360,6 +453,7 @@ class AppSettingsStore(context: Context) {
         val IccidRedaction = stringPreferencesKey("iccid_redaction")
         val LoadOperatorIcons = booleanPreferencesKey("load_operator_icons")
         val EstimateProfileSize = booleanPreferencesKey("estimate_profile_size")
+        val HideProfileDeletion = booleanPreferencesKey("hide_profile_deletion")
         val HideEuiccMemoryReset = booleanPreferencesKey("hide_euicc_memory_reset")
         val ApduLogging = booleanPreferencesKey("apdu_logging")
         val DeveloperMode = booleanPreferencesKey("developer_mode")

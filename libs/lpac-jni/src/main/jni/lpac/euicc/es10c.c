@@ -156,24 +156,47 @@ int es10c_get_profiles_info(struct euicc_ctx *ctx, struct es10c_profile_info_lis
                 break;
             case 0xB6: {
                 struct euicc_derutil_node configuration, field;
+                static const char *operation_desc[] = {
+                    "notificationInstall",
+                    "notificationLocalEnable",
+                    "notificationLocalDisable",
+                    "notificationLocalDelete",
+                    "notificationRpmEnable",
+                    "notificationRpmDisable",
+                    "notificationRpmDelete",
+                    "loadRpmPackageResult",
+                    NULL,
+                };
                 configuration.self.ptr = tmpnode.value;
                 configuration.self.length = 0;
-                while (p->notificationConfigurationInfo.notificationAddress == NULL &&
-                       euicc_derutil_unpack_next(&configuration, &configuration, tmpnode.value, tmpnode.length) == 0) {
+                while (euicc_derutil_unpack_next(&configuration, &configuration, tmpnode.value, tmpnode.length) == 0) {
                     if (configuration.tag != 0x30) {
                         continue;
                     }
                     field.self.ptr = configuration.value;
                     field.self.length = 0;
                     while (euicc_derutil_unpack_next(&field, &field, configuration.value, configuration.length) == 0) {
-                        if (field.tag == 0x81 && field.length > 0) {
+                        if (field.tag == 0x80 && field.length > 0 &&
+                            p->notificationConfigurationInfo.profileManagementOperation == NULL) {
+                            if (euicc_derutil_convert_bin2bits_str(
+                                    &p->notificationConfigurationInfo.profileManagementOperation,
+                                    field.value,
+                                    field.length,
+                                    operation_desc)) {
+                                goto err;
+                            }
+                        } else if (field.tag == 0x81 && field.length > 0 &&
+                                   p->notificationConfigurationInfo.notificationAddress == NULL) {
                             p->notificationConfigurationInfo.notificationAddress = malloc(field.length + 1);
                             if (p->notificationConfigurationInfo.notificationAddress != NULL) {
                                 memcpy(p->notificationConfigurationInfo.notificationAddress, field.value, field.length);
                                 p->notificationConfigurationInfo.notificationAddress[field.length] = '\0';
                             }
-                            break;
                         }
+                    }
+                    if (p->notificationConfigurationInfo.notificationAddress != NULL &&
+                        p->notificationConfigurationInfo.profileManagementOperation != NULL) {
+                        break;
                     }
                 }
                 break;
@@ -206,10 +229,37 @@ int es10c_get_profiles_info(struct euicc_ctx *ctx, struct es10c_profile_info_lis
                 }
                 break;
             }
-            case 0xB8:
-            case 0x99:
-                euicc_apdu_unhandled_tag_print(ctx->apdu.log_fp, &tmpnode);
+            case 0xB8: {
+                struct euicc_derutil_node proprietary;
+                proprietary.self.ptr = tmpnode.value;
+                proprietary.self.length = 0;
+                while (euicc_derutil_unpack_next(&proprietary, &proprietary, tmpnode.value, tmpnode.length) == 0) {
+                    if (proprietary.tag == 0x80 && proprietary.length > 0) {
+                        p->dpProprietaryData.dpOid = malloc((proprietary.length * 2) + 1);
+                        if (p->dpProprietaryData.dpOid == NULL) {
+                            goto err;
+                        }
+                        euicc_hexutil_bin2hex(
+                            p->dpProprietaryData.dpOid,
+                            (proprietary.length * 2) + 1,
+                            proprietary.value,
+                            proprietary.length);
+                        break;
+                    }
+                }
                 break;
+            }
+            case 0x99: {
+                static const char *policy_desc[] = {"pprUpdateControl", "ppr1", "ppr2", "ppr3", NULL};
+                if (euicc_derutil_convert_bin2bits_str(
+                        &p->profilePolicyRules,
+                        tmpnode.value,
+                        tmpnode.length,
+                        policy_desc)) {
+                    goto err;
+                }
+                break;
+            }
             }
         }
 
@@ -507,10 +557,13 @@ void es10c_profile_info_list_free_all(struct es10c_profile_info_list *profileInf
         free(profileInfoList->serviceProviderName);
         free(profileInfoList->profileName);
         free(profileInfoList->icon);
+        free(profileInfoList->notificationConfigurationInfo.profileManagementOperation);
         free(profileInfoList->notificationConfigurationInfo.notificationAddress);
         free(profileInfoList->profileOwner.mccmnc);
         free(profileInfoList->profileOwner.gid1);
         free(profileInfoList->profileOwner.gid2);
+        free(profileInfoList->dpProprietaryData.dpOid);
+        free(profileInfoList->profilePolicyRules);
         free(profileInfoList);
         profileInfoList = next;
     }
