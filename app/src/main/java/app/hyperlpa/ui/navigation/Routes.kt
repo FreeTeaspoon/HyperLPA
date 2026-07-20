@@ -26,6 +26,7 @@ sealed interface AppRoute {
     data object ProfileDisplaySettings : AppRoute
     data object PrivacySettings : AppRoute
     data object AdvancedSettings : AppRoute
+    data object BackupRestoreSettings : AppRoute
     data object AidManager : AppRoute
     data object TagsAndReminders : AppRoute
     data object TagManager : AppRoute

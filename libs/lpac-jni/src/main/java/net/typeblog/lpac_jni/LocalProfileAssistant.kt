@@ -24,6 +24,9 @@ interface LocalProfileAssistant {
     // Extended EuiccInfo for use with LUIs, containing information such as firmware version
     val euiccInfo2: EuiccInfo2?
 
+    // Addresses configured on the eUICC for default profile discovery and download.
+    val euiccConfiguredAddresses: EuiccConfiguredAddresses?
+
     /**
      * Set the max segment size (mss) for all es10x commands. This can help with removable
      * eUICCs that may run at a baud rate too fast for the modem.

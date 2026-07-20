@@ -685,6 +685,11 @@ fun SettingsScreen(
         item { SectionHeading("App") }
         item {
             GroupedCard {
+                ArrowPreference(
+                    title = "Backup & restore",
+                    summary = "Back up settings, profile data and custom icons",
+                    onClick = { onNavigate(AppRoute.BackupRestoreSettings) },
+                )
                 ArrowPreference(title = "Logs", summary = "Recent app and LPA activity", onClick = { onNavigate(AppRoute.Logs) })
                 ArrowPreference(title = "About HyperLPA", summary = "Version, licenses and implementation notes", onClick = { onNavigate(AppRoute.About) })
             }
