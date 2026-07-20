@@ -35,7 +35,7 @@ struct es10c_profile_info_list {
     enum es10c_icon_type iconType;
     char *icon;
     struct {
-        char **profileManagementOperation;
+        const char **profileManagementOperation;
         char *notificationAddress;
     } notificationConfigurationInfo;
     struct {
@@ -46,7 +46,7 @@ struct es10c_profile_info_list {
     struct {
         char *dpOid;
     } dpProprietaryData;
-    char **profilePolicyRules;
+    const char **profilePolicyRules;
 
     struct es10c_profile_info_list *next;
 };

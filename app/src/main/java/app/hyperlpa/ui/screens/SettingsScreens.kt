@@ -1,5 +1,9 @@
 package app.hyperlpa.ui.screens
 
+import android.net.Uri
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -32,6 +36,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -81,6 +86,7 @@ import top.yukonga.miuix.kmp.utils.overScrollVertical
 import top.yukonga.miuix.kmp.utils.scrollEndHaptic
 import top.yukonga.miuix.kmp.window.WindowDialog
 import kotlin.math.roundToInt
+import java.time.LocalDate
 
 private val ThemeModeLabels = listOf("Follow System", "Light", "Dark")
 private val PaletteLabels = listOf(
@@ -769,6 +775,12 @@ fun AdvancedSettingsScreen(
                     enabled = settings.developerMode,
                 )
                 SwitchPreference(
+                    checked = settings.hideProfileDeletion,
+                    onCheckedChange = viewModel::setHideProfileDeletion,
+                    title = "Hide profile deletion",
+                    summary = "Remove the delete action from profile details",
+                )
+                SwitchPreference(
                     checked = settings.hideEuiccMemoryReset,
                     onCheckedChange = viewModel::setHideEuiccMemoryReset,
                     title = "Hide eUICC memory reset",
@@ -802,6 +814,172 @@ fun AdvancedSettingsScreen(
             showImeiEditor = false
         },
     )
+}
+
+@Composable
+fun BackupRestoreSettingsScreen(
+    onBack: () -> Unit,
+    viewModel: HyperLpaViewModel,
+) {
+    val context = LocalContext.current
+    var busy by rememberSaveable { mutableStateOf(false) }
+    var pendingRestoreUri by remember { mutableStateOf<Uri?>(null) }
+    var showResetConfirmation by rememberSaveable { mutableStateOf(false) }
+    val createBackupLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        uri?.let {
+            busy = true
+            viewModel.createBackup(it) { success ->
+                busy = false
+                Toast.makeText(
+                    context,
+                    if (success) "Backup created" else "Could not create backup",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+    }
+    val restoreBackupLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        pendingRestoreUri = uri
+    }
+
+    DetailLazyScaffold(title = "Backup & restore", onBack = onBack) { _ ->
+        item { SectionHeading("Backup") }
+        item {
+            GroupedCard {
+                ArrowPreference(
+                    title = "Create backup",
+                    summary = "Save settings, tags, reminder dates, profile size data and custom icons",
+                    enabled = !busy,
+                    onClick = {
+                        createBackupLauncher.launch(
+                            "hyperlpa-backup-${LocalDate.now()}.json",
+                        )
+                    },
+                )
+            }
+        }
+        item { SectionHeading("Restore") }
+        item {
+            GroupedCard {
+                ArrowPreference(
+                    title = "Restore backup",
+                    summary = "Replace local settings and saved profile data from a HyperLPA backup",
+                    enabled = !busy,
+                    onClick = {
+                        restoreBackupLauncher.launch(arrayOf("application/json", "text/plain"))
+                    },
+                )
+                ArrowPreference(
+                    title = "Reset settings",
+                    summary = "Restore every app setting to its default value",
+                    enabled = !busy,
+                    titleColor = top.yukonga.miuix.kmp.basic.BasicComponentDefaults.titleColor(
+                        color = MiuixTheme.colorScheme.error,
+                    ),
+                    onClick = { showResetConfirmation = true },
+                )
+            }
+        }
+        item { SectionHeading("Privacy") }
+        item {
+            GroupedCard {
+                ArrowPreference(
+                    title = "Keep backups secure",
+                    summary = "A backup can contain ICCIDs, EID, IMEI, remote reader addresses and custom images",
+                    enabled = false,
+                    onClick = {},
+                )
+            }
+        }
+        item { SectionHeading("Not included") }
+        item {
+            GroupedCard {
+                ArrowPreference(
+                    title = "eSIM profiles",
+                    summary = "Installed profiles remain on the eUICC and are not copied into the backup",
+                    enabled = false,
+                    onClick = {},
+                )
+            }
+        }
+    }
+
+    OverlayDialog(
+        show = pendingRestoreUri != null,
+        title = "Restore this backup?",
+        summary = "Current settings and saved profile metadata will be replaced. Installed eSIM profiles will not be changed.",
+        onDismissRequest = { pendingRestoreUri = null },
+    ) {
+        SettingsConfirmationActions(
+            confirmText = "Restore",
+            onCancel = { pendingRestoreUri = null },
+            onConfirm = {
+                val uri = pendingRestoreUri ?: return@SettingsConfirmationActions
+                pendingRestoreUri = null
+                busy = true
+                viewModel.restoreBackup(uri) { success ->
+                    busy = false
+                    Toast.makeText(
+                        context,
+                        if (success) "Backup restored" else "Could not restore backup",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            },
+        )
+    }
+
+    OverlayDialog(
+        show = showResetConfirmation,
+        title = "Reset all settings?",
+        summary = "App settings will return to their defaults. Saved tags, reminders, profile sizes and icons will be kept.",
+        onDismissRequest = { showResetConfirmation = false },
+    ) {
+        SettingsConfirmationActions(
+            confirmText = "Reset settings",
+            destructive = true,
+            onCancel = { showResetConfirmation = false },
+            onConfirm = {
+                showResetConfirmation = false
+                busy = true
+                viewModel.resetSettings { success ->
+                    busy = false
+                    Toast.makeText(
+                        context,
+                        if (success) "Settings reset" else "Could not reset settings",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun SettingsConfirmationActions(
+    confirmText: String,
+    destructive: Boolean = false,
+    onCancel: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    Row(Modifier.fillMaxWidth()) {
+        TextButton(text = "Cancel", onClick = onCancel, modifier = Modifier.weight(1f))
+        Spacer(Modifier.width(16.dp))
+        TextButton(
+            text = confirmText,
+            onClick = onConfirm,
+            colors = if (destructive) {
+                ButtonDefaults.textButtonColors(textColor = MiuixTheme.colorScheme.error)
+            } else {
+                ButtonDefaults.textButtonColorsPrimary()
+            },
+            modifier = Modifier.weight(1f),
+        )
+    }
 }
 
 @Composable
