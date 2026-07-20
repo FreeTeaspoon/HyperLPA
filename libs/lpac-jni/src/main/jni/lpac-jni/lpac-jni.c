@@ -1,4 +1,5 @@
 #include <euicc/euicc.h>
+#include <euicc/es10a.h>
 #include <euicc/es10c.h>
 #include <euicc/es10c_ex.h>
 #include <euicc/interface.h>
@@ -195,6 +196,10 @@ LPAC_JNI_STRUCT_GETTER_STRING(struct es10c_profile_info_list, profile, notificat
 LPAC_JNI_STRUCT_GETTER_STRING(struct es10c_profile_info_list, profile, profileOwner.mccmnc, MccMnc)
 LPAC_JNI_STRUCT_GETTER_STRING(struct es10c_profile_info_list, profile, profileOwner.gid1, Gid1)
 LPAC_JNI_STRUCT_GETTER_STRING(struct es10c_profile_info_list, profile, profileOwner.gid2, Gid2)
+LPAC_JNI_STRUCT_GETTER_LONG(struct es10c_profile_info_list, profile,
+                            notificationConfigurationInfo.profileManagementOperation, NotificationOperations)
+LPAC_JNI_STRUCT_GETTER_STRING(struct es10c_profile_info_list, profile, dpProprietaryData.dpOid, DpOid)
+LPAC_JNI_STRUCT_GETTER_LONG(struct es10c_profile_info_list, profile, profilePolicyRules, PolicyRules)
 
 JNIEXPORT jint JNICALL
 Java_net_typeblog_lpac_1jni_LpacJni_es10cEnableProfile(JNIEnv *env, jobject thiz, jlong handle,
@@ -264,6 +269,26 @@ Java_net_typeblog_lpac_1jni_LpacJni_es10cexGetEuiccInfo2(JNIEnv *env, jobject th
     return (jlong) info;
 }
 
+JNIEXPORT jlong JNICALL
+Java_net_typeblog_lpac_1jni_LpacJni_es10aGetEuiccConfiguredAddresses(JNIEnv *env, jobject thiz, jlong handle) {
+    struct euicc_ctx *ctx = (struct euicc_ctx *) handle;
+    struct es10a_euicc_configured_addresses *addresses = calloc(1, sizeof(*addresses));
+    if (addresses == NULL) {
+        return 0;
+    }
+    if (es10a_get_euicc_configured_addresses(ctx, addresses) < 0) {
+        es10a_euicc_configured_addresses_free(addresses);
+        free(addresses);
+        return 0;
+    }
+    return (jlong) addresses;
+}
+
+static void lpac_jni_euicc_configured_addresses_free(struct es10a_euicc_configured_addresses *addresses) {
+    es10a_euicc_configured_addresses_free(addresses);
+    free(addresses);
+}
+
 
 JNIEXPORT jint JNICALL
 Java_net_typeblog_lpac_1jni_LpacJni_es10cEuiccMemoryReset(JNIEnv *env, jobject thiz, jlong handle) {
@@ -293,6 +318,21 @@ LPAC_JNI_STRUCT_GETTER_STRING(struct es10c_ex_euiccinfo2, euiccInfo2, sasAcredit
 LPAC_JNI_STRUCT_GETTER_STRING(struct es10c_ex_euiccinfo2, euiccInfo2, ppVersion, PpVersion)
 LPAC_JNI_STRUCT_GETTER_LONG(struct es10c_ex_euiccinfo2, euiccInfo2, extCardResource.freeNonVolatileMemory, FreeNonVolatileMemory)
 LPAC_JNI_STRUCT_GETTER_LONG(struct es10c_ex_euiccinfo2, euiccInfo2, extCardResource.freeVolatileMemory, FreeVolatileMemory)
+LPAC_JNI_STRUCT_GETTER_LONG(struct es10c_ex_euiccinfo2, euiccInfo2, extCardResource.installedApplication, InstalledApplication)
+LPAC_JNI_STRUCT_GETTER_LONG(struct es10c_ex_euiccinfo2, euiccInfo2, uiccCapability, UiccCapability)
+LPAC_JNI_STRUCT_GETTER_STRING(struct es10c_ex_euiccinfo2, euiccInfo2, ts102241Version, Ts102241Version)
+LPAC_JNI_STRUCT_GETTER_LONG(struct es10c_ex_euiccinfo2, euiccInfo2, rspCapability, RspCapability)
+LPAC_JNI_STRUCT_GETTER_STRING(struct es10c_ex_euiccinfo2, euiccInfo2, euiccCategory, EuiccCategory)
+LPAC_JNI_STRUCT_GETTER_LONG(struct es10c_ex_euiccinfo2, euiccInfo2, forbiddenProfilePolicyRules, ForbiddenProfilePolicyRules)
+LPAC_JNI_STRUCT_GETTER_STRING(struct es10c_ex_euiccinfo2, euiccInfo2, certificationDataObject.platformLabel, PlatformLabel)
+LPAC_JNI_STRUCT_GETTER_STRING(struct es10c_ex_euiccinfo2, euiccInfo2, certificationDataObject.discoveryBaseURL, DiscoveryBaseUrl)
 
 LPAC_JNI_STRUCT_GETTER_LONG(struct es10c_ex_euiccinfo2, euiccInfo2, euiccCiPKIdListForSigning, EuiccCiPKIdListForSigning)
 LPAC_JNI_STRUCT_GETTER_LONG(struct es10c_ex_euiccinfo2, euiccInfo2, euiccCiPKIdListForVerification, EuiccCiPKIdListForVerification)
+
+LPAC_JNI_STRUCT_GETTER_STRING(struct es10a_euicc_configured_addresses, euiccConfiguredAddresses,
+                              defaultDpAddress, DefaultDpAddress)
+LPAC_JNI_STRUCT_GETTER_STRING(struct es10a_euicc_configured_addresses, euiccConfiguredAddresses,
+                              rootDsAddress, RootDsAddress)
+LPAC_JNI_STRUCT_FREE(struct es10a_euicc_configured_addresses, euiccConfiguredAddresses,
+                     lpac_jni_euicc_configured_addresses_free)

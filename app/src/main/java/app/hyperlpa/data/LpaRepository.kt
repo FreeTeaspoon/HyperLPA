@@ -513,8 +513,10 @@ class LpaRepository(
         val assistant = active.assistant
         val eid = assistant.eID
         val info = assistant.euiccInfo2
+        val profiles = assistant.profiles.map(::mapProfile)
+        val addresses = assistant.euiccConfiguredAddresses
         mutableState.value = mutableState.value.copy(
-            profiles = assistant.profiles.map(::mapProfile),
+            profiles = profiles,
             notifications = assistant.notifications.map(::mapNotification),
             euiccInfo = EuiccInfo(
                 eid = eid,
@@ -528,6 +530,17 @@ class LpaRepository(
                 freeVolatileMemory = info?.freeRam,
                 signingKeyIds = info?.euiccCiPKIdListForSigning.orEmpty(),
                 verificationKeyIds = info?.euiccCiPKIdListForVerification.orEmpty(),
+                installedApplicationCount = info?.installedApplicationCount,
+                uiccCapabilities = info?.uiccCapabilities.orEmpty(),
+                ts102241Version = info?.ts102241Version.orEmpty(),
+                rspCapabilities = info?.rspCapabilities.orEmpty(),
+                euiccCategory = info?.euiccCategory.orEmpty(),
+                forbiddenProfilePolicyRules = info?.forbiddenProfilePolicyRules.orEmpty(),
+                platformLabel = info?.platformLabel.orEmpty(),
+                discoveryBaseUrl = info?.discoveryBaseUrl.orEmpty(),
+                defaultSmdpAddress = addresses?.defaultDpAddress.orEmpty(),
+                rootSmdsAddress = addresses?.rootDsAddress.orEmpty(),
+                refreshedAt = Instant.now(),
             ),
             failure = null,
         )
@@ -718,6 +731,9 @@ private fun mapProfile(profile: LocalProfileInfo): ProfileInfo {
         gid1 = profile.gid1,
         gid2 = profile.gid2,
         smdpAddress = profile.notificationAddress,
+        notificationOperations = profile.notificationOperations,
+        dpOid = profile.dpOid,
+        profilePolicyRules = profile.profilePolicyRules,
     )
 }
 

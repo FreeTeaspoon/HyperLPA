@@ -2,6 +2,8 @@ package app.hyperlpa.ui.screens
 
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.text.format.DateFormat
@@ -13,6 +15,8 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -46,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import app.hyperlpa.data.metadata.normalizeProfileTags
 import app.hyperlpa.data.metadata.providerIconKey
 import app.hyperlpa.data.settings.AppSettings
+import app.hyperlpa.data.settings.RedactionMode
 import app.hyperlpa.domain.model.ActivityLogEntry
 import app.hyperlpa.domain.model.DownloadRequest
 import app.hyperlpa.domain.model.EuiccInfo
@@ -56,6 +61,9 @@ import app.hyperlpa.domain.model.ProfileDownloadPreview
 import app.hyperlpa.domain.model.ProfileDownloadResult
 import app.hyperlpa.domain.model.ProfileInfo
 import app.hyperlpa.domain.model.ProfileState
+import app.hyperlpa.domain.model.ReaderInfo
+import app.hyperlpa.domain.model.ReaderKind
+import app.hyperlpa.domain.model.analyzeIccid
 import app.hyperlpa.ui.components.EmptyState
 import app.hyperlpa.ui.components.GroupedCard
 import app.hyperlpa.ui.components.ProfileArtwork
@@ -135,6 +143,7 @@ fun ProfileDetailsScreen(
     var showIconOptions by remember { mutableStateOf(false) }
     var showRemoveProfileIconConfirmation by remember { mutableStateOf(false) }
     var pickForProvider by remember { mutableStateOf(false) }
+    var technicalDetailsExpanded by rememberSaveable(profile?.iccid) { mutableStateOf(false) }
     val context = LocalContext.current
     val providerLabel = profile?.providerName?.trim().orEmpty().ifBlank { "this provider" }
     val canShareByProvider = providerIconKey(profile?.providerName) != null
@@ -156,6 +165,7 @@ fun ProfileDetailsScreen(
         }
     }
     val artworkBitmap = rememberProfileArtworkBitmap(profile, operatorIcon)
+    val iccidDetails = remember(profile?.iccid) { profile?.iccid?.let(::analyzeIccid) }
     val collapsedTitle = displayName?.nameText
         ?.takeIf(String::isNotBlank)
         ?: profile?.providerName?.takeIf(String::isNotBlank)
@@ -165,7 +175,7 @@ fun ProfileDetailsScreen(
         title = "",
         onBack = onBack,
         collapsedTitle = collapsedTitle,
-        collapsedBarRevealStart = 118.dp,
+        collapsedBarRevealStart = 132.dp,
         background = if (profile == null) null else {
             { ProfileGradientBackdrop(bitmap = artworkBitmap) }
         },
@@ -237,9 +247,38 @@ fun ProfileDetailsScreen(
                         title = "ICCID",
                         value = redactIdentifier(profile.iccid, settings.iccidRedaction),
                     )
+                    ValuePreference(
+                        title = "ICCID checksum",
+                        value = when (iccidDetails?.checksumValid) {
+                            true -> "Valid"
+                            false -> "Invalid"
+                            null -> "Unavailable"
+                        },
+                    )
+                    if (settings.iccidRedaction == RedactionMode.NONE) {
+                        iccidDetails?.issuerPrefix?.let { prefix ->
+                            ValuePreference(title = "Issuer prefix", value = prefix)
+                        }
+                    }
                     ValuePreference(title = "ISD-P AID", value = profile.isdPAid.ifBlank { "Unavailable" })
+                }
+            }
+            item { SectionHeading("Metadata") }
+            item {
+                GroupedCard {
+                    ValuePreference(title = "Profile name", value = profile.name.ifBlank { "Unavailable" })
+                    ValuePreference(title = "eUICC nickname", value = profile.nickname.ifBlank { "Not set" })
                     ValuePreference(title = "Profile class", value = profile.profileClass.displayName())
                     ValuePreference(title = "Provider", value = profile.providerName.ifBlank { "Unknown" })
+                    if (!profile.mcc.isNullOrBlank() || !profile.mnc.isNullOrBlank()) {
+                        ValuePreference(
+                            title = "Network",
+                            value = listOfNotNull(
+                                profile.mcc?.let { "MCC $it" },
+                                profile.mnc?.let { "MNC $it" },
+                            ).joinToString(" · "),
+                        )
+                    }
                     profile.estimatedBytes?.takeIf { it > 0 }?.let { bytes ->
                         ValuePreference(
                             title = if (profile.sizeIsEstimated) "Estimated profile storage" else "Measured profile storage",
@@ -248,17 +287,73 @@ fun ProfileDetailsScreen(
                     }
                 }
             }
-            item { SectionHeading("Danger zone") }
+            item { SectionHeading("Advanced") }
             item {
                 GroupedCard {
-                    ArrowPreference(
-                        title = "Delete profile",
-                        summary = "Permanently remove this profile from the eUICC",
-                        titleColor = top.yukonga.miuix.kmp.basic.BasicComponentDefaults.titleColor(
-                            color = MiuixTheme.colorScheme.error,
-                        ),
-                        onClick = { showDelete = true },
+                    BasicComponent(
+                        title = "Technical profile data",
+                        summary = if (technicalDetailsExpanded) "Hide technical fields" else {
+                            "Group identifiers, notification configuration and policy rules"
+                        },
+                        endActions = {
+                            Icon(
+                                imageVector = if (technicalDetailsExpanded) MiuixIcons.ExpandLess else MiuixIcons.ExpandMore,
+                                contentDescription = if (technicalDetailsExpanded) "Show less" else "Show more",
+                                modifier = Modifier.size(22.dp),
+                            )
+                        },
+                        onClick = { technicalDetailsExpanded = !technicalDetailsExpanded },
                     )
+                    AnimatedVisibility(
+                        visible = technicalDetailsExpanded,
+                        enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+                        exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
+                    ) {
+                        Column {
+                            profile.gid1?.takeIf(String::isNotBlank)?.let { ValuePreference("GID1", it) }
+                            profile.gid2?.takeIf(String::isNotBlank)?.let { ValuePreference("GID2", it) }
+                            profile.smdpAddress?.takeIf(String::isNotBlank)?.let {
+                                ValuePreference("Notification address", it)
+                            }
+                            if (profile.notificationOperations.isNotEmpty()) {
+                                ValuePreference(
+                                    "Notification events",
+                                    formatTechnicalValues(profile.notificationOperations),
+                                )
+                            }
+                            profile.dpOid?.takeIf(String::isNotBlank)?.let { ValuePreference("DP OID", it) }
+                            if (profile.profilePolicyRules.isNotEmpty()) {
+                                ValuePreference(
+                                    "Profile policy rules",
+                                    formatTechnicalValues(profile.profilePolicyRules),
+                                )
+                            }
+                            if (profile.gid1.isNullOrBlank() &&
+                                profile.gid2.isNullOrBlank() &&
+                                profile.smdpAddress.isNullOrBlank() &&
+                                profile.notificationOperations.isEmpty() &&
+                                profile.dpOid.isNullOrBlank() &&
+                                profile.profilePolicyRules.isEmpty()
+                            ) {
+                                ValuePreference("Technical data", "No additional fields reported")
+                            }
+                        }
+                    }
+                }
+            }
+            if (!settings.hideProfileDeletion) {
+                item { SectionHeading("Danger zone") }
+                item {
+                    GroupedCard {
+                        ArrowPreference(
+                            title = "Delete profile",
+                            summary = "Permanently remove this profile from the eUICC",
+                            titleColor = top.yukonga.miuix.kmp.basic.BasicComponentDefaults.titleColor(
+                                color = MiuixTheme.colorScheme.error,
+                            ),
+                            onClick = { showDelete = true },
+                        )
+                    }
                 }
             }
         }
@@ -292,7 +387,7 @@ fun ProfileDetailsScreen(
     }
 
     OverlayDialog(
-        show = showDelete,
+        show = showDelete && !settings.hideProfileDeletion,
         title = "Delete this profile?",
         summary = "This cannot be undone. You may need the original activation code to install it again.",
         onDismissRequest = { showDelete = false },
@@ -309,7 +404,7 @@ fun ProfileDetailsScreen(
     }
 
     OverlayDialog(
-        show = showDeleteConfirmation,
+        show = showDeleteConfirmation && !settings.hideProfileDeletion,
         title = "Delete profile permanently?",
         summary = "This is your final confirmation. The profile will be permanently removed from the eUICC.",
         onDismissRequest = { showDeleteConfirmation = false },
@@ -912,6 +1007,9 @@ fun BatchDownloadScreen(
 @Composable
 fun EuiccDetailsScreen(
     info: EuiccInfo?,
+    reader: ReaderInfo?,
+    installedProfileCount: Int,
+    enabledProfileCount: Int,
     settings: AppSettings,
     onBack: () -> Unit,
     onReset: () -> Unit,
@@ -919,6 +1017,7 @@ fun EuiccDetailsScreen(
     var showReset by remember { mutableStateOf(false) }
     var showResetConfirmation by remember { mutableStateOf(false) }
     var showFinalResetConfirmation by remember { mutableStateOf(false) }
+    var advancedDetailsExpanded by rememberSaveable(info?.eid) { mutableStateOf(false) }
     DetailLazyScaffold(title = "eUICC information", onBack = onBack) { _ ->
         if (info == null) {
             item {
@@ -936,8 +1035,41 @@ fun EuiccDetailsScreen(
                         title = "EID",
                         value = redactIdentifier(info.eid, settings.eidRedaction),
                     )
+                    ValuePreference(
+                        title = "eUICC category",
+                        value = info.euiccCategory.takeIf(String::isNotBlank)
+                            ?.let(::formatTechnicalValue)
+                            ?: "Unavailable",
+                    )
                     ValuePreference(title = "SAS accreditation", value = info.sasAccreditationNumber.ifBlank { "Unavailable" })
                     ValuePreference(title = "Firmware", value = info.firmwareVersion.ifBlank { "Unavailable" })
+                }
+            }
+            item { SectionHeading("Connection") }
+            item {
+                GroupedCard {
+                    ValuePreference(title = "Reader", value = reader?.name ?: "Unavailable")
+                    ValuePreference(
+                        title = "Access type",
+                        value = reader?.kind?.displayName() ?: "Unavailable",
+                    )
+                    reader?.detail?.takeIf(String::isNotBlank)?.let { detail ->
+                        ValuePreference(title = "Reader details", value = detail)
+                    }
+                    ValuePreference(title = "Last refreshed", value = info.refreshedAt.formatDateTime())
+                }
+            }
+            item { SectionHeading("Profiles and storage") }
+            item {
+                GroupedCard {
+                    ValuePreference(title = "Installed profiles", value = installedProfileCount.toString())
+                    ValuePreference(title = "Enabled profiles", value = enabledProfileCount.toString())
+                    ValuePreference(
+                        title = "Installed applications",
+                        value = info.installedApplicationCount?.toString() ?: "Unavailable",
+                    )
+                    ValuePreference(title = "Free non-volatile memory", value = info.freeNonVolatileMemory?.let(::formatBytes) ?: "Unavailable")
+                    ValuePreference(title = "Free volatile memory", value = info.freeVolatileMemory?.let(::formatBytes) ?: "Unavailable")
                 }
             }
             item { SectionHeading("Specifications") }
@@ -946,16 +1078,81 @@ fun EuiccDetailsScreen(
                     ValuePreference(title = "SGP.22", value = info.sgp22Version.ifBlank { "Unavailable" })
                     ValuePreference(title = "Profile package", value = info.profileVersion.ifBlank { "Unavailable" })
                     ValuePreference(title = "GlobalPlatform", value = info.globalPlatformVersion.ifBlank { "Unavailable" })
+                    ValuePreference(title = "ETSI TS 102 241", value = info.ts102241Version.ifBlank { "Unavailable" })
                     ValuePreference(title = "Protection profile", value = info.protectionProfileVersion.ifBlank { "Unavailable" })
                 }
             }
-            item { SectionHeading("Memory and keys") }
+            item { SectionHeading("Capabilities") }
             item {
                 GroupedCard {
-                    ValuePreference(title = "Non-volatile memory", value = info.freeNonVolatileMemory?.let(::formatBytes) ?: "Unavailable")
-                    ValuePreference(title = "Volatile memory", value = info.freeVolatileMemory?.let(::formatBytes) ?: "Unavailable")
-                    ValuePreference(title = "Signing key IDs", value = info.signingKeyIds.size.toString())
-                    ValuePreference(title = "Verification key IDs", value = info.verificationKeyIds.size.toString())
+                    ValuePreference(
+                        title = "UICC capabilities",
+                        value = formatTechnicalValues(info.uiccCapabilities),
+                    )
+                    ValuePreference(
+                        title = "Remote provisioning",
+                        value = formatTechnicalValues(info.rspCapabilities),
+                    )
+                }
+            }
+            item { SectionHeading("Provisioning") }
+            item {
+                GroupedCard {
+                    ValuePreference(
+                        title = "Default SM-DP+",
+                        value = info.defaultSmdpAddress.ifBlank { "Not configured" },
+                    )
+                    ValuePreference(
+                        title = "Root SM-DS",
+                        value = info.rootSmdsAddress.ifBlank { "Not configured" },
+                    )
+                    ValuePreference(
+                        title = "Platform label",
+                        value = info.platformLabel.ifBlank { "Unavailable" },
+                    )
+                    ValuePreference(
+                        title = "Discovery service",
+                        value = info.discoveryBaseUrl.ifBlank { "Unavailable" },
+                    )
+                }
+            }
+            item { SectionHeading("Advanced") }
+            item {
+                GroupedCard {
+                    BasicComponent(
+                        title = "Keys and policy",
+                        summary = if (advancedDetailsExpanded) "Hide key IDs and policy rules" else {
+                            "${info.signingKeyIds.size} signing · ${info.verificationKeyIds.size} verification keys"
+                        },
+                        endActions = {
+                            Icon(
+                                imageVector = if (advancedDetailsExpanded) MiuixIcons.ExpandLess else MiuixIcons.ExpandMore,
+                                contentDescription = if (advancedDetailsExpanded) "Show less" else "Show more",
+                                modifier = Modifier.size(22.dp),
+                            )
+                        },
+                        onClick = { advancedDetailsExpanded = !advancedDetailsExpanded },
+                    )
+                    AnimatedVisibility(
+                        visible = advancedDetailsExpanded,
+                        enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+                        exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
+                    ) {
+                        Column {
+                            ValuePreference(
+                                title = "Signing key IDs (${info.signingKeyIds.size})",
+                                value = formatKeyIds(info.signingKeyIds),
+                            )
+                            ValuePreference(
+                                title = "Verification key IDs (${info.verificationKeyIds.size})",
+                                value = formatKeyIds(info.verificationKeyIds),
+                            )
+                            ValuePreference(
+                                title = "Forbidden policy rules",
+                                value = formatTechnicalValues(info.forbiddenProfilePolicyRules),
+                            )
+                        }
+                    }
                 }
             }
             if (!settings.hideEuiccMemoryReset) {
@@ -1358,6 +1555,8 @@ private fun ProfileHero(
     artworkBitmap: Bitmap?,
     displayName: FormattedProfileDisplayName,
 ) {
+    val context = LocalContext.current
+    val phoneNumberInteractionSource = remember { MutableInteractionSource() }
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1388,6 +1587,17 @@ private fun ProfileHero(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
+                modifier = Modifier.clickable(
+                    interactionSource = phoneNumberInteractionSource,
+                    indication = null,
+                    onClickLabel = "Copy phone number",
+                ) {
+                    context.getSystemService(ClipboardManager::class.java)
+                        ?.setPrimaryClip(
+                            ClipData.newPlainText("Phone number", displayName.phoneText),
+                        )
+                    Toast.makeText(context, "Phone number copied", Toast.LENGTH_SHORT).show()
+                },
             )
         } else {
             Text(
@@ -1684,6 +1894,80 @@ private fun Enum<*>.displayName(): String = name
     .lowercase()
     .split('_')
     .joinToString(" ") { word -> word.replaceFirstChar(Char::uppercase) }
+
+private fun ReaderKind.displayName(): String = when (this) {
+    ReaderKind.NBRIDGE -> "NBridge"
+    ReaderKind.OMAPI -> "OMAPI"
+    ReaderKind.TELEPHONY -> "Telephony"
+    ReaderKind.USB_CCID -> "USB CCID"
+    ReaderKind.BLE -> "Bluetooth LE"
+    ReaderKind.REMOTE -> "Remote"
+}
+
+private fun formatTechnicalValues(values: Set<String>): String = values
+    .takeIf { it.isNotEmpty() }
+    ?.map(::formatTechnicalValue)
+    ?.sorted()
+    ?.joinToString()
+    ?: "Unavailable"
+
+private fun formatTechnicalValue(value: String): String = when (value) {
+    "notificationInstall" -> "Install"
+    "notificationLocalEnable" -> "Local enable"
+    "notificationLocalDisable" -> "Local disable"
+    "notificationLocalDelete" -> "Local delete"
+    "notificationRpmEnable" -> "Remote enable"
+    "notificationRpmDisable" -> "Remote disable"
+    "notificationRpmDelete" -> "Remote delete"
+    "loadRpmPackageResult" -> "Remote package result"
+    "pprUpdateControl" -> "PPR update control"
+    "ppr1" -> "PPR1"
+    "ppr2" -> "PPR2"
+    "ppr3" -> "PPR3"
+    "contactlessSupport" -> "Contactless"
+    "usimSupport" -> "USIM"
+    "isimSupport" -> "ISIM"
+    "csimSupport" -> "CSIM"
+    "akaMilenage" -> "AKA Milenage"
+    "akaCave" -> "AKA CAVE"
+    "akaTuak128" -> "AKA TUAK-128"
+    "akaTuak256" -> "AKA TUAK-256"
+    "gbaAuthenUsim" -> "GBA authentication (USIM)"
+    "gbaAuthenISim" -> "GBA authentication (ISIM)"
+    "mbmsAuthenUsim" -> "MBMS authentication"
+    "eapClient" -> "EAP client"
+    "javacard" -> "Java Card"
+    "multos" -> "MULTOS"
+    "multipleUsimSupport" -> "Multiple USIMs"
+    "multipleIsimSupport" -> "Multiple ISIMs"
+    "multipleCsimSupport" -> "Multiple CSIMs"
+    "berTlvFileSupport" -> "BER-TLV files"
+    "dfLinkSupport" -> "DF links"
+    "catTp" -> "CAT-TP"
+    "getIdentity" -> "Get Identity"
+    "profile-a-x25519" -> "Profile A (X25519)"
+    "profile-b-p256" -> "Profile B (P-256)"
+    "suciCalculatorApi" -> "SUCI calculator API"
+    "additionalProfile" -> "Additional profiles"
+    "crlSupport" -> "Certificate revocation lists"
+    "rpmSupport" -> "Remote profile management"
+    "testProfileSupport" -> "Test profiles"
+    "deviceInfoExtensibilitySupport" -> "Extensible device information"
+    "basicEuicc" -> "Basic"
+    "mediumEuicc" -> "Medium"
+    "contactlessEuicc" -> "Contactless"
+    "other" -> "Other"
+    else -> value
+        .replace(Regex("([a-z0-9])([A-Z])"), "$1 $2")
+        .replaceFirstChar(Char::uppercase)
+}
+
+private fun formatKeyIds(values: Set<String>): String = values
+    .takeIf { it.isNotEmpty() }
+    ?.map { it.uppercase() }
+    ?.sorted()
+    ?.joinToString("\n")
+    ?: "Unavailable"
 
 private fun formatBytes(bytes: Int): String = formatBytes(bytes.toLong())
 

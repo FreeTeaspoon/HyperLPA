@@ -10,6 +10,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import app.hyperlpa.data.LpaRepository
 import app.hyperlpa.data.LpaRepositoryState
+import app.hyperlpa.data.backup.HyperLpaBackupManager
 import app.hyperlpa.data.cloud.NekokoCloudService
 import app.hyperlpa.data.metadata.ProfileMetadata
 import app.hyperlpa.data.metadata.ProfileMetadataStore
@@ -47,7 +48,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
 import java.time.Instant
 
 data class HyperLpaUiState(
@@ -115,6 +118,7 @@ class HyperLpaViewModel(
     private val repository: LpaRepository,
     private val cloudService: NekokoCloudService,
 ) : AndroidViewModel(application) {
+    private val backupManager = HyperLpaBackupManager(application, settingsStore, metadataStore)
     private val backStack = mutableStateListOf<AppRoute>(AppRoute.Shell)
     val navigationBackStack: List<AppRoute> = backStack
     private val selectedTab = MutableStateFlow(AppTab.PROFILES)
@@ -537,6 +541,73 @@ class HyperLpaViewModel(
         cloudRefreshToken.value += 1
     }
 
+    fun createBackup(uri: Uri, onComplete: (Boolean) -> Unit) {
+        val snapshot = state.value
+        viewModelScope.launch {
+            val success = withContext(Dispatchers.IO) {
+                runCatching {
+                    val backup = backupManager.createBackup(
+                        settings = snapshot.settings,
+                        metadata = snapshot.metadata,
+                        providerIcons = snapshot.providerIcons,
+                    )
+                    getApplication<Application>().contentResolver
+                        .openOutputStream(uri, "wt")
+                        ?.bufferedWriter()
+                        ?.use { writer -> writer.write(backup) }
+                        ?: error("Could not open the backup destination")
+                }.isSuccess
+            }
+            onComplete(success)
+        }
+    }
+
+    fun restoreBackup(uri: Uri, onComplete: (Boolean) -> Unit) {
+        val snapshot = state.value
+        val previousSchedules = currentReminderSchedules()
+        viewModelScope.launch {
+            val restored = withContext(Dispatchers.IO) {
+                runCatching {
+                    val rawBackup = getApplication<Application>().contentResolver
+                        .openInputStream(uri)
+                        ?.use { input -> input.readTextLimited(MaxBackupBytes) }
+                        ?: error("Could not open the backup")
+                    backupManager.restoreBackup(
+                        rawBackup = rawBackup,
+                        previousMetadata = snapshot.metadata,
+                        previousProviderIcons = snapshot.providerIcons,
+                    )
+                }
+            }
+            restored.getOrNull()?.let { backup ->
+                metadataStore.syncReminders(previousSchedules, enabled = false)
+                val profileLabels = snapshot.lpa.profiles.associate { profile ->
+                    profile.iccid to profile.nickname.ifBlank { profile.name.ifBlank { "eSIM profile" } }
+                }
+                metadataStore.syncReminders(
+                    reminders = backup.metadata.mapValues { (iccid, metadata) ->
+                        (profileLabels[iccid] ?: "eSIM profile") to metadata.reminderAt
+                    },
+                    enabled = backup.settings.scheduledReminders,
+                )
+            }
+            onComplete(restored.isSuccess)
+        }
+    }
+
+    fun resetSettings(onComplete: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val defaults = runCatching { settingsStore.resetToDefaults() }
+            defaults.getOrNull()?.let { settings ->
+                metadataStore.syncReminders(
+                    reminders = currentReminderSchedules(),
+                    enabled = settings.scheduledReminders,
+                )
+            }
+            onComplete(defaults.isSuccess)
+        }
+    }
+
     fun setThemeMode(value: ThemeMode) = launch { settingsStore.setThemeMode(value) }
     fun setUseMonet(value: Boolean) = launch { settingsStore.setUseMonet(value) }
     fun setPureBlack(value: Boolean) = launch { settingsStore.setPureBlack(value) }
@@ -591,6 +662,7 @@ class HyperLpaViewModel(
     fun setIccidRedaction(value: RedactionMode) = launch { settingsStore.setIccidRedaction(value) }
     fun setLoadOperatorIcons(value: Boolean) = launch { settingsStore.setLoadOperatorIcons(value) }
     fun setEstimateProfileSize(value: Boolean) = launch { settingsStore.setEstimateProfileSize(value) }
+    fun setHideProfileDeletion(value: Boolean) = launch { settingsStore.setHideProfileDeletion(value) }
     fun setHideEuiccMemoryReset(value: Boolean) = launch { settingsStore.setHideEuiccMemoryReset(value) }
     fun setDeveloperMode(value: Boolean) = launch { settingsStore.setDeveloperMode(value) }
     fun setApduLogging(value: Boolean) = launch { settingsStore.setApduLogging(value) }
@@ -700,3 +772,19 @@ private data class DownloadPreviewCloudData(
     val estimatedBytes: Long? = null,
     val loading: Boolean = false,
 )
+
+private fun InputStream.readTextLimited(maxBytes: Int): String {
+    val output = ByteArrayOutputStream()
+    val buffer = ByteArray(8 * 1024)
+    var total = 0
+    while (true) {
+        val read = read(buffer)
+        if (read < 0) break
+        total += read
+        require(total <= maxBytes) { "The selected backup is too large" }
+        output.write(buffer, 0, read)
+    }
+    return output.toString(Charsets.UTF_8.name())
+}
+
+private const val MaxBackupBytes = 128 * 1024 * 1024

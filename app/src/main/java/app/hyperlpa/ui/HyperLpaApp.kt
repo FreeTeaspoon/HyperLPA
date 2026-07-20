@@ -48,11 +48,15 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.ui.NavDisplay
 import androidx.navigation3.ui.NavDisplayTransitionEffects
+import androidx.navigationevent.NavigationEventInfo
+import androidx.navigationevent.compose.NavigationBackHandler
+import androidx.navigationevent.compose.rememberNavigationEventState
 import app.hyperlpa.data.settings.FloatingBottomBarStyle
 import app.hyperlpa.data.settings.NavigationLabels
 import app.hyperlpa.data.settings.NavigationStyle
 import app.hyperlpa.domain.model.LpaOperation
 import app.hyperlpa.domain.model.DownloadStage
+import app.hyperlpa.domain.model.ProfileState
 import app.hyperlpa.ui.adaptive.AdaptiveTopAppBar
 import app.hyperlpa.ui.adaptive.rememberIsWideWindow
 import app.hyperlpa.ui.components.BlurredBar
@@ -67,6 +71,7 @@ import app.hyperlpa.ui.screens.AdvancedSettingsScreen
 import app.hyperlpa.ui.screens.AidManagerScreen
 import app.hyperlpa.ui.screens.AppearanceSettingsScreen
 import app.hyperlpa.ui.screens.BatchDownloadScreen
+import app.hyperlpa.ui.screens.BackupRestoreSettingsScreen
 import app.hyperlpa.ui.screens.DownloadProfileScreen
 import app.hyperlpa.ui.screens.ProfileDownloadConfirmationScreen
 import app.hyperlpa.ui.screens.ProfileDownloadResultScreen
@@ -261,6 +266,11 @@ fun HyperLpaApp(
             entry<AppRoute.EuiccDetails> {
                 EuiccDetailsScreen(
                     info = currentState.value.lpa.euiccInfo,
+                    reader = currentState.value.lpa.selectedReader,
+                    installedProfileCount = currentState.value.lpa.profiles.size,
+                    enabledProfileCount = currentState.value.lpa.profiles.count {
+                        it.state == ProfileState.ENABLED
+                    },
                     settings = currentState.value.settings,
                     onBack = viewModel::navigateBack,
                     onReset = viewModel::resetEuiccMemory,
@@ -304,6 +314,12 @@ fun HyperLpaApp(
             entry<AppRoute.AdvancedSettings> {
                 AdvancedSettingsScreen(
                     settings = currentState.value.settings,
+                    onBack = viewModel::navigateBack,
+                    viewModel = viewModel,
+                )
+            }
+            entry<AppRoute.BackupRestoreSettings> {
+                BackupRestoreSettingsScreen(
                     onBack = viewModel::navigateBack,
                     viewModel = viewModel,
                 )
@@ -388,8 +404,28 @@ fun HyperLpaApp(
                 failure = state.lpa.failure,
                 onDismiss = viewModel::clearFailure,
             )
+            MainTabBackHandler(
+                enabled = backStack.lastOrNull() == AppRoute.Shell &&
+                    state.selectedTab != AppTab.PROFILES,
+                onBack = { viewModel.selectTab(AppTab.PROFILES) },
+            )
         }
     }
+}
+
+@Composable
+private fun MainTabBackHandler(
+    enabled: Boolean,
+    onBack: () -> Unit,
+) {
+    val navigationEventState = rememberNavigationEventState(
+        currentInfo = NavigationEventInfo.None,
+    )
+    NavigationBackHandler(
+        state = navigationEventState,
+        isBackEnabled = enabled,
+        onBackCompleted = onBack,
+    )
 }
 
 @Composable
@@ -404,6 +440,9 @@ private fun MainShell(
     val scrollBehaviors = tabs.map { MiuixScrollBehavior() }
 
     LaunchedEffect(pagerState.currentPage) { mainPagerState.syncPage() }
+    LaunchedEffect(state.selectedTab) {
+        mainPagerState.animateToPage(state.selectedTab.ordinal)
+    }
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.settledPage }
             .distinctUntilChanged()
@@ -744,6 +783,33 @@ private fun OperationFailureDialog(
 }
 
 @Composable
+private fun NonDismissibleProgressDialog(
+    show: Boolean,
+    title: String?,
+    summary: String,
+    content: @Composable () -> Unit,
+) {
+    OverlayDialog(
+        show = show,
+        title = title,
+        summary = summary,
+        onDismissRequest = null,
+    ) {
+        // Miuix still animates predictive back when onDismissRequest is null. A handler composed
+        // inside its content takes precedence and consumes back without changing dialog progress.
+        val navigationEventState = rememberNavigationEventState(
+            currentInfo = NavigationEventInfo.None,
+        )
+        NavigationBackHandler(
+            state = navigationEventState,
+            isBackEnabled = show,
+            onBackCompleted = {},
+        )
+        content()
+    }
+}
+
+@Composable
 private fun OperationProgressDialog(operation: LpaOperation) {
     val title = when (operation) {
         is LpaOperation.Switching -> if (operation.enable) "Enabling profile" else "Disabling profile"
@@ -759,11 +825,10 @@ private fun OperationProgressDialog(operation: LpaOperation) {
         -> null
     }
 
-    OverlayDialog(
+    NonDismissibleProgressDialog(
         show = title != null,
         title = title,
         summary = "Keep the eUICC connected. This can take a few seconds.",
-        onDismissRequest = null,
     ) {
         Box(
             modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
@@ -788,11 +853,10 @@ private fun ProfileInstallProgressDialog(operation: LpaOperation) {
         null
     }
 
-    OverlayDialog(
+    NonDismissibleProgressDialog(
         show = show,
         title = "Installing profile",
         summary = "Keep the eUICC connected until installation is complete.",
-        onDismissRequest = null,
     ) {
         if (progress != null && sentBytes != null && totalBytes != null) {
             Column(

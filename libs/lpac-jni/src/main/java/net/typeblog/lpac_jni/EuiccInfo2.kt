@@ -12,6 +12,19 @@ data class EuiccInfo2(
     val freeRam: Int,
     val euiccCiPKIdListForSigning: Set<String>,
     val euiccCiPKIdListForVerification: Set<String>,
+    val installedApplicationCount: Int = 0,
+    val uiccCapabilities: Set<String> = emptySet(),
+    val ts102241Version: String = "",
+    val rspCapabilities: Set<String> = emptySet(),
+    val euiccCategory: String = "",
+    val forbiddenProfilePolicyRules: Set<String> = emptySet(),
+    val platformLabel: String = "",
+    val discoveryBaseUrl: String = "",
+)
+
+data class EuiccConfiguredAddresses(
+    val defaultDpAddress: String,
+    val rootDsAddress: String,
 )
 
 data class Version(
