@@ -28,6 +28,8 @@ internal object LpacJni {
 
     // es10a
     external fun es10aGetEuiccConfiguredAddresses(handle: Long): Long
+    external fun es10aSetDefaultDpAddress(handle: Long, address: String): Int
+    external fun discoverSmdpAddresses(handle: Long, address: String, imei: String?): Array<String>?
 
     // es10b
     external fun es10bListNotification(handle: Long): Long // A native pointer to a linked list. Handle with linked list-related methods below. May be 0 (null)
@@ -42,6 +44,8 @@ internal object LpacJni {
 
     external fun downloadErrCodeToString(code: Int): String
     external fun downloadLastHttpError(handle: Long): String?
+    /** The exact CERT.DPauth value selected by the native ES9+ parser. */
+    external fun downloadServerCertificate(handle: Long): String?
     external fun handleNotification(handle: Long, seqNumber: Long): Int
 
     // Cancel any ongoing es9p and/or es10b sessions

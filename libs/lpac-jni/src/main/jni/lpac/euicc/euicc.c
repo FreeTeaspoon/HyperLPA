@@ -8,6 +8,7 @@
 
 #define APDU_EUICC_HEADER 0x80, 0xE2
 #define APDU_CONTINUE_READ_HEADER 0x80, 0xC0, 0x00, 0x00
+#define EUICC_MAX_COMMAND_RESPONSE_BYTES (16U * 1024U * 1024U)
 
 static int es10x_transmit(struct euicc_ctx *ctx, struct apdu_response *response, struct apdu_request *req,
                           unsigned req_len) {
@@ -25,18 +26,22 @@ static int es10x_transmit_iter(struct euicc_ctx *ctx, struct apdu_request *req, 
     }
 
     do {
+        uint8_t sw1 = response.sw1;
+        uint8_t sw2 = response.sw2;
+
         if (response.length > 0) {
             if (callback(&response, userdata) < 0) {
+                euicc_apdu_response_free(&response);
                 return -1;
             }
         }
 
         euicc_apdu_response_free(&response);
 
-        if (response.sw1 == SW1_LAST) {
+        if (sw1 == SW1_LAST) {
             int ret;
 
-            if ((ret = euicc_apdu_le(ctx, &request, APDU_CONTINUE_READ_HEADER, response.sw2)) < 0) {
+            if ((ret = euicc_apdu_le(ctx, &request, APDU_CONTINUE_READ_HEADER, sw2)) < 0) {
                 return -1;
             }
 
@@ -45,7 +50,7 @@ static int es10x_transmit_iter(struct euicc_ctx *ctx, struct apdu_request *req, 
             }
 
             continue;
-        } else if ((response.sw1 & 0xF0) == SW1_OK) {
+        } else if ((sw1 & 0xF0) == SW1_OK) {
             return 0;
         }
 
@@ -118,6 +123,10 @@ static int iter_es10x_command(struct apdu_response *response, void *userdata) {
     struct userdata_es10x_command *ud = (struct userdata_es10x_command *)userdata;
     uint8_t *new_response_data;
 
+    if (ud->resp_len > EUICC_MAX_COMMAND_RESPONSE_BYTES ||
+        response->length > EUICC_MAX_COMMAND_RESPONSE_BYTES - ud->resp_len) {
+        return -1;
+    }
     new_response_data = realloc(ud->resp, ud->resp_len + response->length);
     if (!new_response_data) {
         return -1;

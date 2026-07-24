@@ -42,17 +42,34 @@ static int apdu_interface_connect(struct euicc_ctx *ctx) {
 
 static void apdu_interface_disconnect(struct euicc_ctx *ctx) {
     LPAC_JNI_SETUP_ENV;
+    if ((*env)->ExceptionCheck(env))
+        return;
     (*env)->CallVoidMethod(env, LPAC_JNI_CTX(ctx)->apdu_interface, method_apdu_disconnect);
 }
 
 static int
 apdu_interface_logical_channel_open(struct euicc_ctx *ctx, const uint8_t *aid, uint8_t aid_len) {
     LPAC_JNI_SETUP_ENV;
+    if (aid == NULL || aid_len < LPAC_JNI_MIN_AID_BYTES || aid_len > LPAC_JNI_MAX_AID_BYTES)
+        return -1;
     jbyteArray jbarr = (*env)->NewByteArray(env, aid_len);
+    if (jbarr == NULL) {
+        lpac_jni_capture_exception(ctx, env);
+        return -1;
+    }
     (*env)->SetByteArrayRegion(env, jbarr, 0, aid_len, (const jbyte *) aid);
+    if ((*env)->ExceptionCheck(env)) {
+        lpac_jni_capture_exception(ctx, env);
+        (*env)->DeleteLocalRef(env, jbarr);
+        return -1;
+    }
     jint ret = (*env)->CallIntMethod(env, LPAC_JNI_CTX(ctx)->apdu_interface,
                                      method_apdu_logical_channel_open, jbarr);
-    LPAC_JNI_EXCEPTION_RETURN;
+    (*env)->DeleteLocalRef(env, jbarr);
+    if ((*env)->ExceptionCheck(env)) {
+        lpac_jni_capture_exception(ctx, env);
+        return -1;
+    }
     LPAC_JNI_CTX(ctx)->logical_channel_id = ret;
     return ret;
 }
@@ -63,7 +80,9 @@ static void apdu_interface_logical_channel_close(struct euicc_ctx *ctx,
     jint logical_channel_id = LPAC_JNI_CTX(ctx)->logical_channel_id;
     (*env)->CallVoidMethod(env, LPAC_JNI_CTX(ctx)->apdu_interface,
                            method_apdu_logical_channel_close, logical_channel_id);
-    (*env)->ExceptionClear(env);
+    /* euicc_fini must still call disconnect, so retain the original failure in
+     * the context and rethrow it only after native cleanup has completed. */
+    lpac_jni_capture_exception(ctx, env);
 }
 
 static int
@@ -71,19 +90,53 @@ apdu_interface_transmit(struct euicc_ctx *ctx, uint8_t **rx, uint32_t *rx_len, c
                         uint32_t tx_len) {
     const int logic_channel = LPAC_JNI_CTX(ctx)->logical_channel_id;
     LPAC_JNI_SETUP_ENV;
-    jbyteArray txArr = (*env)->NewByteArray(env, tx_len);
-    (*env)->SetByteArrayRegion(env, txArr, 0, tx_len, (const jbyte *) tx);
-    jbyteArray ret = (jbyteArray) (*env)->CallObjectMethod(
+    jbyteArray txArr = NULL;
+    jbyteArray ret = NULL;
+    jsize ret_len;
+    int result = -1;
+
+    if (rx == NULL || rx_len == NULL || tx == NULL || tx_len > LPAC_JNI_MAX_APDU_BYTES)
+        return -1;
+    *rx = NULL;
+    *rx_len = 0;
+
+    txArr = (*env)->NewByteArray(env, (jsize)tx_len);
+    if (txArr == NULL)
+        goto out;
+    (*env)->SetByteArrayRegion(env, txArr, 0, (jsize)tx_len, (const jbyte *) tx);
+    if ((*env)->ExceptionCheck(env))
+        goto out;
+    ret = (jbyteArray) (*env)->CallObjectMethod(
             env, LPAC_JNI_CTX(ctx)->apdu_interface,
             method_apdu_transmit, logic_channel, txArr
     );
-    LPAC_JNI_EXCEPTION_RETURN;
-    *rx_len = (*env)->GetArrayLength(env, ret);
-    *rx = calloc(*rx_len, sizeof(uint8_t));
-    (*env)->GetByteArrayRegion(env, ret, 0, *rx_len, (jbyte *) *rx);
-    (*env)->DeleteLocalRef(env, txArr);
-    (*env)->DeleteLocalRef(env, ret);
-    return 0;
+    if ((*env)->ExceptionCheck(env) || ret == NULL)
+        goto out;
+    ret_len = (*env)->GetArrayLength(env, ret);
+    if (ret_len < 2 || (uint32_t)ret_len > LPAC_JNI_MAX_APDU_BYTES)
+        goto out;
+    if (ret_len > 0) {
+        *rx = malloc((size_t)ret_len);
+        if (*rx == NULL)
+            goto out;
+        (*env)->GetByteArrayRegion(env, ret, 0, ret_len, (jbyte *)*rx);
+        if ((*env)->ExceptionCheck(env))
+            goto out;
+    }
+    *rx_len = (uint32_t)ret_len;
+    result = 0;
+
+out:
+    if (result != 0) {
+        free(*rx);
+        *rx = NULL;
+        *rx_len = 0;
+    }
+    if (txArr != NULL)
+        (*env)->DeleteLocalRef(env, txArr);
+    if (ret != NULL)
+        (*env)->DeleteLocalRef(env, ret);
+    return result;
 }
 
 static int
@@ -91,34 +144,90 @@ http_interface_transmit(struct euicc_ctx *ctx, const char *url, uint32_t *rcode,
                         uint32_t *rx_len, const uint8_t *tx, uint32_t tx_len,
                         const char **headers) {
     LPAC_JNI_SETUP_ENV;
-    jstring jurl = toJString(env, url);
-    jbyteArray txArr = (*env)->NewByteArray(env, tx_len);
-    (*env)->SetByteArrayRegion(env, txArr, 0, tx_len, (const jbyte *) tx);
+    jstring jurl = NULL;
+    jbyteArray txArr = NULL;
+    jobjectArray headersArr = NULL;
+    jobject ret = NULL;
+    jbyteArray rxArr = NULL;
+    jsize ret_len;
+    int result = -1;
 
-    int num_headers = 0;
-    while (headers[num_headers] != NULL) {
+    if (url == NULL || rcode == NULL || rx == NULL || rx_len == NULL || tx == NULL ||
+        headers == NULL || tx_len > LPAC_JNI_MAX_HTTP_BYTES)
+        return -1;
+    *rcode = 0;
+    *rx = NULL;
+    *rx_len = 0;
+
+    jurl = toJString(env, url);
+    if (jurl == NULL)
+        goto out;
+    txArr = (*env)->NewByteArray(env, (jsize)tx_len);
+    if (txArr == NULL)
+        goto out;
+    (*env)->SetByteArrayRegion(env, txArr, 0, (jsize)tx_len, (const jbyte *) tx);
+    if ((*env)->ExceptionCheck(env))
+        goto out;
+
+    uint32_t num_headers = 0;
+    while (num_headers < LPAC_JNI_MAX_HTTP_HEADERS && headers[num_headers] != NULL) {
         num_headers++;
     }
-    jobjectArray headersArr = (*env)->NewObjectArray(env, num_headers, string_class, NULL);
-    for (int i = 0; i < num_headers; i++) {
+    if (num_headers == LPAC_JNI_MAX_HTTP_HEADERS)
+        goto out;
+    headersArr = (*env)->NewObjectArray(env, (jsize)num_headers, string_class, NULL);
+    if (headersArr == NULL)
+        goto out;
+    for (uint32_t i = 0; i < num_headers; i++) {
         jstring header = toJString(env, headers[i]);
-        (*env)->SetObjectArrayElement(env, headersArr, i, header);
+        if (header == NULL)
+            goto out;
+        (*env)->SetObjectArrayElement(env, headersArr, (jsize)i, header);
         (*env)->DeleteLocalRef(env, header);
+        if ((*env)->ExceptionCheck(env))
+            goto out;
     }
 
-    jobject ret = (*env)->CallObjectMethod(env, LPAC_JNI_CTX(ctx)->http_interface,
-                                           method_http_transmit, jurl, txArr, headersArr);
-    LPAC_JNI_EXCEPTION_RETURN;
+    ret = (*env)->CallObjectMethod(env, LPAC_JNI_CTX(ctx)->http_interface,
+                                   method_http_transmit, jurl, txArr, headersArr);
+    if ((*env)->ExceptionCheck(env) || ret == NULL)
+        goto out;
     *rcode = (*env)->GetIntField(env, ret, field_resp_rcode);
-    jbyteArray rxArr = (jbyteArray) (*env)->GetObjectField(env, ret, field_resp_data);
-    *rx_len = (*env)->GetArrayLength(env, rxArr);
-    *rx = calloc(*rx_len, sizeof(uint8_t));
-    (*env)->GetByteArrayRegion(env, rxArr, 0, *rx_len, (jbyte *) *rx);
-    (*env)->DeleteLocalRef(env, txArr);
-    (*env)->DeleteLocalRef(env, rxArr);
-    (*env)->DeleteLocalRef(env, headersArr);
-    (*env)->DeleteLocalRef(env, ret);
-    return 0;
+    rxArr = (jbyteArray) (*env)->GetObjectField(env, ret, field_resp_data);
+    if ((*env)->ExceptionCheck(env) || rxArr == NULL)
+        goto out;
+    ret_len = (*env)->GetArrayLength(env, rxArr);
+    if (ret_len < 0 || (uint32_t)ret_len > LPAC_JNI_MAX_HTTP_BYTES)
+        goto out;
+    /* libeuicc diagnostics temporarily treat this response as a C string. */
+    *rx = calloc((size_t)ret_len + 1U, 1U);
+    if (*rx == NULL)
+        goto out;
+    if (ret_len > 0) {
+        (*env)->GetByteArrayRegion(env, rxArr, 0, ret_len, (jbyte *)*rx);
+        if ((*env)->ExceptionCheck(env))
+            goto out;
+    }
+    *rx_len = (uint32_t)ret_len;
+    result = 0;
+
+out:
+    if (result != 0) {
+        free(*rx);
+        *rx = NULL;
+        *rx_len = 0;
+    }
+    if (jurl != NULL)
+        (*env)->DeleteLocalRef(env, jurl);
+    if (txArr != NULL)
+        (*env)->DeleteLocalRef(env, txArr);
+    if (rxArr != NULL)
+        (*env)->DeleteLocalRef(env, rxArr);
+    if (headersArr != NULL)
+        (*env)->DeleteLocalRef(env, headersArr);
+    if (ret != NULL)
+        (*env)->DeleteLocalRef(env, ret);
+    return result;
 }
 
 struct euicc_apdu_interface lpac_jni_apdu_interface = {

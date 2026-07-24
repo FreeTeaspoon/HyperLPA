@@ -1,9 +1,12 @@
 package app.hyperlpa.ui.screens
 
+import android.os.Build
+import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,6 +26,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,31 +37,42 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.hyperlpa.data.settings.ProfileLayout
+import app.hyperlpa.data.history.NotificationHistoryEntry
+import app.hyperlpa.data.history.NotificationHistoryAction
+import app.hyperlpa.data.history.NotificationHistoryStatus
+import app.hyperlpa.data.history.NotificationHistoryTrigger
+import app.hyperlpa.R
 import app.hyperlpa.domain.model.LpaNotification
 import app.hyperlpa.domain.model.LpaOperation
 import app.hyperlpa.domain.model.NotificationOperation
 import app.hyperlpa.domain.model.ProfileInfo
 import app.hyperlpa.domain.model.ProfileState
 import app.hyperlpa.ui.HyperLpaUiState
+import app.hyperlpa.ui.BluetoothReaderAvailability
+import app.hyperlpa.ui.BluetoothReaderUiState
 import app.hyperlpa.ui.adaptive.CenteredContent
 import app.hyperlpa.ui.components.EmptyState
 import app.hyperlpa.ui.components.GroupedCard
 import app.hyperlpa.ui.components.LoadingState
 import app.hyperlpa.ui.components.PageStateHost
 import app.hyperlpa.ui.components.PageStateKind
-import app.hyperlpa.ui.components.ProfileArtwork
+import app.hyperlpa.ui.components.ResolvedProfileArtwork
 import app.hyperlpa.ui.components.SectionHeading
 import app.hyperlpa.ui.components.formatProfileDisplayName
 import app.hyperlpa.ui.components.redactIdentifier
+import app.hyperlpa.ui.components.rememberProfileArtworkBitmaps
 import app.hyperlpa.ui.navigation.AppRoute
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
+import kotlinx.coroutines.delay
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
@@ -91,6 +106,7 @@ fun ProfilesScreen(
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues,
     scrollBehavior: ScrollBehavior,
+    bluetoothReaderState: BluetoothReaderUiState,
     onSearchChange: (String) -> Unit,
     onSelectReader: (String) -> Unit,
     onRefreshReaders: () -> Unit,
@@ -100,18 +116,64 @@ fun ProfilesScreen(
     onDownload: () -> Unit,
     onRefresh: () -> Unit,
 ) {
-    // Keep both layout positions alive while profile refresh/enrichment temporarily
-    // swaps the content for a loading state during a profile switch.
+    // Keep both layout positions alive while switching between list and waterfall.
     val listState = rememberLazyListState()
     val gridState = rememberLazyGridState()
     val profiles = state.profiles
+    val artworkLoadState = rememberProfileArtworkBitmaps(
+        profiles = profiles,
+        cloudIcons = state.operatorIcons,
+        sourceKey = state.lpa.euiccInfo?.eid,
+        enabled = state.settings.showProfileIconOnHome,
+    )
+    val artworkReady = artworkLoadState.ready &&
+        (!state.settings.showProfileIconOnHome ||
+            !state.settings.loadOperatorIcons ||
+            state.profileEnrichmentReady)
     val hasNoSearchResults = state.searchQuery.isNotBlank() &&
         state.lpa.profiles.isNotEmpty() &&
         profiles.isEmpty()
+    val loadingMessage = when (val operation = state.lpa.operation) {
+        is LpaOperation.Connecting -> stringResource(
+            R.string.profiles_connecting_reader,
+            operation.readerName,
+        )
+        else -> stringResource(
+            if (state.lpa.profiles.isEmpty()) {
+                R.string.reader_loading
+            } else {
+                R.string.operation_reading_profiles
+            },
+        )
+    }
+    val usesNearbyDevicesPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    val noReaderTitle = when (bluetoothReaderState.availability) {
+        BluetoothReaderAvailability.PERMISSION_REQUIRED -> stringResource(
+            app.hyperlpa.R.string.reader_bluetooth_permission_required_title,
+        )
+        BluetoothReaderAvailability.BLUETOOTH_OFF -> stringResource(
+            app.hyperlpa.R.string.reader_bluetooth_off_title,
+        )
+        else -> stringResource(app.hyperlpa.R.string.reader_none_title)
+    }
+    val noReaderMessage = when (bluetoothReaderState.availability) {
+        BluetoothReaderAvailability.PERMISSION_REQUIRED -> stringResource(
+            if (usesNearbyDevicesPermission) {
+                app.hyperlpa.R.string.reader_bluetooth_permission_required_message
+            } else {
+                app.hyperlpa.R.string.reader_bluetooth_location_required_message
+            },
+        )
+        BluetoothReaderAvailability.BLUETOOTH_OFF -> stringResource(
+            app.hyperlpa.R.string.reader_bluetooth_off_message,
+        )
+        else -> stringResource(app.hyperlpa.R.string.reader_none_message)
+    }
     val pageState = when {
+        state.lpa.operation is LpaOperation.Connecting -> PageStateKind.LOADING
         !state.lpa.initialized ||
             (state.lpa.operation is LpaOperation.DiscoveringReaders && state.lpa.profiles.isEmpty()) -> PageStateKind.LOADING
-        !state.profileEnrichmentReady && state.lpa.profiles.isNotEmpty() -> PageStateKind.LOADING
+        state.lpa.profiles.isNotEmpty() && !artworkReady -> PageStateKind.LOADING
         state.lpa.readers.isEmpty() -> PageStateKind.ERROR
         state.lpa.selectedReader == null -> PageStateKind.EMPTY
         profiles.isEmpty() -> PageStateKind.EMPTY
@@ -131,7 +193,7 @@ fun ProfilesScreen(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center,
             ) {
-                    LoadingState(message = "Looking for eUICC readers")
+                    LoadingState(message = loadingMessage)
                 }
             } else if (state.settings.profileLayout == ProfileLayout.WATERFALL && pageState == PageStateKind.CONTENT) {
                 LazyVerticalGrid(
@@ -163,6 +225,7 @@ fun ProfilesScreen(
                     items(profiles, key = ProfileInfo::iccid) { profile ->
                         ProfileCard(
                             profile = profile,
+                            artworkBitmap = artworkLoadState.bitmaps[profile.iccid],
                             state = state,
                             onOpen = { onOpenProfile(profile) },
                             onEnableChange = { enabled -> onEnableChange(profile.iccid, enabled) },
@@ -198,6 +261,7 @@ fun ProfilesScreen(
                         items(profiles, key = ProfileInfo::iccid) { profile ->
                             ProfileCard(
                                 profile = profile,
+                                artworkBitmap = artworkLoadState.bitmaps[profile.iccid],
                                 state = state,
                                 onOpen = { onOpenProfile(profile) },
                                 onEnableChange = { enabled -> onEnableChange(profile.iccid, enabled) },
@@ -207,19 +271,19 @@ fun ProfilesScreen(
                         item(key = "state") {
                             PageStateHost(
                                 state = pageState,
-                                loadingMessage = "Looking for eUICC readers",
+                                loadingMessage = loadingMessage,
                                 emptyTitle = when {
-                                    state.lpa.selectedReader == null -> "Choose a reader"
-                                    hasNoSearchResults -> "No profiles found"
-                                    else -> "No profiles installed"
+                                    state.lpa.selectedReader == null -> stringResource(R.string.profiles_choose_reader)
+                                    hasNoSearchResults -> stringResource(R.string.profiles_none_found)
+                                    else -> stringResource(R.string.profiles_none_installed)
                                 },
                                 emptyMessage = when {
-                                    state.lpa.selectedReader == null -> "Select an available secure-element reader to continue."
-                                    hasNoSearchResults -> "Try a different search."
-                                    else -> "Download an activation code to install your first eSIM profile."
+                                    state.lpa.selectedReader == null -> stringResource(R.string.profiles_choose_reader_message)
+                                    hasNoSearchResults -> stringResource(R.string.profiles_search_empty_message)
+                                    else -> stringResource(R.string.profiles_none_installed_message)
                                 },
-                                errorTitle = "No eUICC reader found",
-                                errorMessage = "Connect a USB or BLE reader, install NBridge, or enable OMAPI access.",
+                                errorTitle = noReaderTitle,
+                                errorMessage = noReaderMessage,
                                 onRetry = onRefreshReaders,
                             ) {}
                         }
@@ -227,7 +291,7 @@ fun ProfilesScreen(
                     if (pageState == PageStateKind.EMPTY && state.lpa.selectedReader != null && !hasNoSearchResults) {
                         item(key = "download") {
                             TextButton(
-                                text = "Download profile",
+                                text = stringResource(R.string.action_download_profile),
                                 onClick = onDownload,
                                 colors = ButtonDefaults.textButtonColorsPrimary(),
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
@@ -248,6 +312,16 @@ private fun ProfilesHeader(
     onRefreshReaders: () -> Unit,
     onOpenEuiccDetails: () -> Unit,
 ) {
+    val enrichmentLoading = !state.profileEnrichmentReady && state.lpa.profiles.isNotEmpty()
+    val enrichmentEid = state.lpa.euiccInfo?.eid
+    var showEnrichmentLoading by remember(enrichmentEid) { mutableStateOf(false) }
+    LaunchedEffect(enrichmentLoading, enrichmentEid) {
+        showEnrichmentLoading = false
+        if (enrichmentLoading) {
+            delay(ProfileEnrichmentLoadingDelayMillis)
+            showEnrichmentLoading = true
+        }
+    }
     Column(modifier = Modifier.fillMaxWidth()) {
         val showEid = state.settings.showEidOnHome && state.lpa.euiccInfo != null
         if (state.settings.showReaderSelectorOnHome || showEid) {
@@ -255,8 +329,8 @@ private fun ProfilesHeader(
                 if (state.settings.showReaderSelectorOnHome) {
                     if (state.lpa.readers.isEmpty()) {
                         ArrowPreference(
-                            title = "Find readers",
-                            summary = "Scan NBridge, OMAPI and USB CCID sources",
+                            title = stringResource(R.string.profiles_find_readers),
+                            summary = stringResource(R.string.profiles_find_readers_summary),
                             onClick = onRefreshReaders,
                         )
                     } else {
@@ -264,8 +338,9 @@ private fun ProfilesHeader(
                             it.id == state.lpa.selectedReaderId
                         }.coerceAtLeast(0)
                         OverlayDropdownPreference(
-                            title = "Active reader",
-                            summary = state.lpa.selectedReader?.detail ?: "Select a reader",
+                            title = stringResource(R.string.profiles_active_reader),
+                            summary = state.lpa.selectedReader?.detail
+                                ?: stringResource(R.string.profiles_select_reader),
                             items = state.lpa.readers.map { it.name },
                             selectedIndex = selectedIndex,
                             onSelectedIndexChange = { index ->
@@ -291,8 +366,8 @@ private fun ProfilesHeader(
             Column {
                 TextField(
                     value = state.searchQuery,
-                    onValueChange = onSearchChange,
-                    label = "Search profiles",
+                    onValueChange = { onSearchChange(it.take(MaxSearchQueryCharacters)) },
+                    label = stringResource(R.string.profiles_search),
                     useLabelAsPlaceholder = true,
                     singleLine = true,
                     leadingIcon = {
@@ -306,23 +381,36 @@ private fun ProfilesHeader(
                 )
             }
         }
+        AnimatedVisibility(visible = showEnrichmentLoading) {
+            Text(
+                text = stringResource(R.string.profiles_optional_data_loading),
+                style = MiuixTheme.textStyles.footnote1,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                modifier = Modifier.padding(horizontal = 28.dp, vertical = 6.dp),
+            )
+        }
     }
 }
+
+private const val ProfileEnrichmentLoadingDelayMillis = 500L
 
 @Composable
 private fun ProfileCard(
     profile: ProfileInfo,
+    artworkBitmap: Bitmap?,
     state: HyperLpaUiState,
     onOpen: () -> Unit,
     onEnableChange: (Boolean) -> Unit,
 ) {
     val isEnabled = profile.state == ProfileState.ENABLED
-    val displayName = remember(profile, state.settings.phoneFormatStrategy) {
-        formatProfileDisplayName(profile, state.settings.phoneFormatStrategy)
+    val fallbackName = stringResource(R.string.profile_default_name)
+    val displayName = remember(profile, state.settings.phoneFormatStrategy, fallbackName) {
+        formatProfileDisplayName(profile, state.settings.phoneFormatStrategy, fallbackName)
     }
+    val unknownOperator = stringResource(R.string.profile_unknown_operator)
     val operatorAndTags = buildList {
         if (state.settings.showProfileProviderOnHome) {
-            add(profile.providerName.ifBlank { "Unknown operator" })
+            add(profile.providerName.ifBlank { unknownOperator })
         }
         if (state.settings.showProfileTagsOnHome) {
             addAll(profile.tags.filter(String::isNotBlank))
@@ -333,9 +421,19 @@ private fun ProfileCard(
     } else {
         null
     }
+    val cardDescription = stringResource(R.string.profile_open_named, displayName.fullText)
+    val switchDescription = stringResource(
+        if (isEnabled) R.string.profile_disable_named else R.string.profile_enable_named,
+        displayName.fullText,
+    )
 
     Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(bottom = 8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp)
+            .padding(bottom = 8.dp)
+            .defaultMinSize(minHeight = 48.dp)
+            .semantics { contentDescription = cardDescription },
         cornerRadius = 16.dp,
         insideMargin = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
         pressFeedbackType = PressFeedbackType.Sink,
@@ -347,9 +445,9 @@ private fun ProfileCard(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (state.settings.showProfileIconOnHome) {
-                ProfileArtwork(
+                ResolvedProfileArtwork(
                     profile = profile,
-                    cloudIcon = state.operatorIcons[profile.iccid],
+                    bitmap = artworkBitmap,
                     isEnabled = isEnabled,
                 )
             }
@@ -375,7 +473,10 @@ private fun ProfileCard(
                 if (state.settings.showProfileRemindersOnHome) {
                     profile.reminderAt?.let { reminderAt ->
                         Text(
-                            text = "Reminder · ${reminderAt.formatReminderDateTime()}",
+                            text = stringResource(
+                                R.string.profile_reminder_summary,
+                                reminderAt.formatReminderDateTime(),
+                            ),
                             style = MiuixTheme.textStyles.footnote1,
                             color = MiuixTheme.colorScheme.primary,
                             maxLines = 1,
@@ -404,7 +505,13 @@ private fun ProfileCard(
                         }
                         profileBytes?.let { bytes ->
                             Text(
-                                text = "${if (profile.sizeIsEstimated) "~" else ""}${formatProfileBytes(bytes)}",
+                                text = formatProfileBytes(bytes).let { formatted ->
+                                    if (profile.sizeIsEstimated) {
+                                        stringResource(R.string.profile_size_estimated, formatted)
+                                    } else {
+                                        formatted
+                                    }
+                                },
                                 style = MiuixTheme.textStyles.footnote1,
                                 color = if (profile.sizeIsEstimated) {
                                     MiuixTheme.colorScheme.onSurfaceVariantSummary
@@ -422,18 +529,29 @@ private fun ProfileCard(
                     checked = isEnabled,
                     onCheckedChange = onEnableChange,
                     modifier = Modifier.semantics {
-                        contentDescription = if (isEnabled) "Disable profile" else "Enable profile"
+                        contentDescription = switchDescription
                     },
                 )
             }
         }
     }
-}private fun formatProfileBytes(bytes: Long): String {
-    if (bytes < 1_024) return "$bytes B"
+}
+
+@Composable
+private fun formatProfileBytes(bytes: Long): String {
+    if (bytes < 1_024) return stringResource(R.string.size_bytes, bytes)
     val kib = bytes / 1_024.0
-    if (kib < 1_024) return if (kib >= 100) "%.0f KiB".format(kib) else "%.1f KiB".format(kib)
+    if (kib < 1_024) {
+        return stringResource(
+            if (kib >= 100) R.string.size_kibibytes_whole else R.string.size_kibibytes_decimal,
+            kib,
+        )
+    }
     val mib = kib / 1_024.0
-    return if (mib >= 100) "%.0f MiB".format(mib) else "%.1f MiB".format(mib)
+    return stringResource(
+        if (mib >= 100) R.string.size_mebibytes_whole else R.string.size_mebibytes_decimal,
+        mib,
+    )
 }
 
 @Composable
@@ -445,6 +563,7 @@ fun NotificationsScreen(
     onProcess: (Long) -> Unit,
     onDelete: (Long) -> Unit,
     onRefresh: () -> Unit,
+    onClearHistory: () -> Unit,
 ) {
     PullToRefresh(
         isRefreshing = state.lpa.operation is LpaOperation.Refreshing,
@@ -468,20 +587,20 @@ fun NotificationsScreen(
                     bottom = contentPadding.calculateBottomPadding() + 24.dp,
                 ),
             ) {
-                item { SectionHeading("Pending on eUICC") }
+                item { SectionHeading(stringResource(R.string.notifications_pending_section)) }
                 if (state.lpa.selectedReader == null) {
                     item {
                         EmptyState(
-                            title = "No reader connected",
-                            message = "Connect a reader on the Profiles page to load notifications.",
+                            title = stringResource(R.string.notifications_no_reader),
+                            message = stringResource(R.string.notifications_no_reader_message),
                             icon = MiuixIcons.Messages,
                         )
                     }
                 } else if (state.lpa.notifications.isEmpty()) {
                     item {
                         EmptyState(
-                            title = "No pending notifications",
-                            message = "Profile management notifications are already up to date.",
+                            title = stringResource(R.string.notifications_none_pending),
+                            message = stringResource(R.string.notifications_none_pending_message),
                             icon = MiuixIcons.Messages,
                         )
                     }
@@ -490,7 +609,100 @@ fun NotificationsScreen(
                         NotificationCard(notification = notification, onProcess = onProcess, onDelete = onDelete)
                     }
                 }
+                item { SectionHeading(stringResource(R.string.notification_history_section)) }
+                if (state.notificationHistory.isEmpty()) {
+                    item {
+                        EmptyState(
+                            title = stringResource(R.string.notification_history_empty),
+                            message = stringResource(R.string.notification_history_empty_message),
+                            icon = MiuixIcons.Messages,
+                        )
+                    }
+                } else {
+                    item {
+                        GroupedCard {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = pluralStringResource(
+                                        R.plurals.notification_history_saved_count,
+                                        state.notificationHistory.size,
+                                        state.notificationHistory.size,
+                                    ),
+                                    style = MiuixTheme.textStyles.body2,
+                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                )
+                                TextButton(
+                                    text = stringResource(R.string.common_clear),
+                                    onClick = onClearHistory,
+                                )
+                            }
+                        }
+                    }
+                    items(state.notificationHistory.asReversed()) { entry ->
+                        NotificationHistoryCard(entry = entry)
+                    }
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun NotificationHistoryCard(entry: NotificationHistoryEntry) {
+    val actionLabel = entry.action.localizedLabel()
+    val statusLabel = entry.status.localizedLabel()
+    val triggerLabel = entry.trigger.localizedLabel()
+    val operationLabel = localizedNotificationOperation(entry.notificationOperation)
+    val operationSummary = entry.endpointHost?.let { host ->
+        stringResource(R.string.notification_history_operation_host, operationLabel, host)
+    } ?: operationLabel
+    val failureLabel = entry.failureCode?.localizedFailureLabel()
+    val timestamp = entry.timestamp.formatReminderDateTime()
+    val timestampSummary = failureLabel?.let { failure ->
+        stringResource(R.string.notification_history_time_failure, timestamp, failure)
+    } ?: timestamp
+    GroupedCard {
+        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = stringResource(
+                        R.string.notification_history_action_status,
+                        actionLabel,
+                        statusLabel,
+                    ),
+                    style = MiuixTheme.textStyles.title3,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (entry.status == NotificationHistoryStatus.FAILED) {
+                        MiuixTheme.colorScheme.error
+                    } else {
+                        MiuixTheme.colorScheme.primary
+                    },
+                )
+                Text(
+                    text = triggerLabel,
+                    style = MiuixTheme.textStyles.footnote1,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantActions,
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = operationSummary,
+                style = MiuixTheme.textStyles.body2,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            )
+            Text(
+                text = timestampSummary,
+                style = MiuixTheme.textStyles.footnote1,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            )
         }
     }
 }
@@ -516,19 +728,24 @@ private fun NotificationCard(
                 )
                 Column(Modifier.weight(1f)) {
                     Text(
-                        text = notification.operation.label,
+                        text = notification.operation.localizedLabel(),
                         style = MiuixTheme.textStyles.title3,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = notification.address.ifBlank { "No notification address" },
+                        text = notification.address.ifBlank {
+                            stringResource(R.string.notification_no_address)
+                        },
                         style = MiuixTheme.textStyles.body2,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = "Sequence ${notification.sequenceNumber}",
+                        text = stringResource(
+                            R.string.notification_sequence,
+                            notification.sequenceNumber,
+                        ),
                         style = MiuixTheme.textStyles.footnote1,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     )
@@ -539,9 +756,12 @@ private fun NotificationCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
             ) {
-                TextButton(text = "Remove", onClick = { onDelete(notification.sequenceNumber) })
                 TextButton(
-                    text = "Send",
+                    text = stringResource(R.string.common_remove),
+                    onClick = { onDelete(notification.sequenceNumber) },
+                )
+                TextButton(
+                    text = stringResource(R.string.common_send),
                     onClick = { onProcess(notification.sequenceNumber) },
                     colors = ButtonDefaults.textButtonColorsPrimary(),
                 )
@@ -550,14 +770,55 @@ private fun NotificationCard(
     }
 }
 
-private val NotificationOperation.label: String
-    get() = when (this) {
-        NotificationOperation.INSTALL -> "Profile installed"
-        NotificationOperation.ENABLE -> "Profile enabled"
-        NotificationOperation.DISABLE -> "Profile disabled"
-        NotificationOperation.DELETE -> "Profile deleted"
-        NotificationOperation.UNKNOWN -> "Profile operation"
-    }
+@Composable
+private fun NotificationOperation.localizedLabel(): String = stringResource(
+    when (this) {
+        NotificationOperation.INSTALL -> R.string.notification_operation_install
+        NotificationOperation.ENABLE -> R.string.notification_operation_enable
+        NotificationOperation.DISABLE -> R.string.notification_operation_disable
+        NotificationOperation.DELETE -> R.string.notification_operation_delete
+        NotificationOperation.UNKNOWN -> R.string.notification_operation_unknown
+    },
+)
+
+@Composable
+private fun localizedNotificationOperation(rawValue: String): String =
+    runCatching { NotificationOperation.valueOf(rawValue) }
+        .getOrDefault(NotificationOperation.UNKNOWN)
+        .localizedLabel()
+
+@Composable
+private fun NotificationHistoryAction.localizedLabel(): String = stringResource(
+    when (this) {
+        NotificationHistoryAction.SEND -> R.string.notification_history_action_send
+        NotificationHistoryAction.DELETE -> R.string.notification_history_action_delete
+    },
+)
+
+@Composable
+private fun NotificationHistoryStatus.localizedLabel(): String = stringResource(
+    when (this) {
+        NotificationHistoryStatus.SUCCEEDED -> R.string.notification_history_status_succeeded
+        NotificationHistoryStatus.FAILED -> R.string.notification_history_status_failed
+    },
+)
+
+@Composable
+private fun NotificationHistoryTrigger.localizedLabel(): String = stringResource(
+    when (this) {
+        NotificationHistoryTrigger.MANUAL -> R.string.notification_history_trigger_manual
+        NotificationHistoryTrigger.AUTOMATIC -> R.string.notification_history_trigger_automatic
+    },
+)
+
+@Composable
+private fun String.localizedFailureLabel(): String = stringResource(
+    when (this) {
+        "rejected" -> R.string.notification_history_failure_rejected
+        "exception" -> R.string.notification_history_failure_exception
+        else -> R.string.notification_history_failure_unknown
+    },
+)
 
 @Composable
 fun ToolsScreen(
@@ -572,41 +833,74 @@ fun ToolsScreen(
         contentPadding = contentPadding,
         scrollBehavior = scrollBehavior,
     ) {
-        item { SectionHeading("Profile management") }
+        item { SectionHeading(stringResource(R.string.tools_profile_management)) }
         item {
             GroupedCard {
-                ToolPreference("Download profile", "Install an activation code or scan a QR code", MiuixIcons.Download) {
+                ToolPreference(
+                    stringResource(R.string.action_download_profile),
+                    stringResource(R.string.tools_download_profile_summary),
+                    MiuixIcons.Download,
+                ) {
                     onNavigate(AppRoute.DownloadProfile)
                 }
-                ToolPreference("Batch download", "Queue multiple activation codes", MiuixIcons.Add) {
+                ToolPreference(
+                    stringResource(R.string.tools_batch_download),
+                    stringResource(R.string.tools_batch_download_summary),
+                    MiuixIcons.Add,
+                ) {
                     onNavigate(AppRoute.BatchDownload)
                 }
-                ToolPreference("eUICC information", state.lpa.euiccInfo?.eid ?: "Connect a reader first", MiuixIcons.Info) {
+                ToolPreference(
+                    stringResource(R.string.tools_euicc_information),
+                    state.lpa.euiccInfo?.let { redactIdentifier(it.eid, state.settings.eidRedaction) }
+                        ?: stringResource(R.string.tools_connect_reader_first),
+                    MiuixIcons.Info,
+                ) {
                     onNavigate(AppRoute.EuiccDetails)
                 }
             }
         }
-        item { SectionHeading("Organisation") }
+        item { SectionHeading(stringResource(R.string.tools_organisation)) }
         item {
             GroupedCard {
-                ToolPreference("Tags & reminders", "Manage tags, dates and reminder permissions", MiuixIcons.Messages) {
+                ToolPreference(
+                    stringResource(R.string.tools_tags_reminders),
+                    stringResource(R.string.tools_tags_reminders_summary),
+                    MiuixIcons.Messages,
+                ) {
                     onNavigate(AppRoute.TagsAndReminders)
                 }
-                ToolPreference("Statistics", "Profile and notification overview", MiuixIcons.Info) {
+                ToolPreference(
+                    stringResource(R.string.tools_statistics),
+                    stringResource(R.string.tools_statistics_summary),
+                    MiuixIcons.Info,
+                ) {
                     onNavigate(AppRoute.Statistics)
                 }
             }
         }
-        item { SectionHeading("Diagnostics") }
+        item { SectionHeading(stringResource(R.string.tools_diagnostics)) }
         item {
             GroupedCard {
-                ToolPreference("Reader diagnostics", "Reader types and current availability", MiuixIcons.Refresh) {
+                ToolPreference(
+                    stringResource(R.string.tools_reader_diagnostics),
+                    stringResource(R.string.tools_reader_diagnostics_summary),
+                    MiuixIcons.Refresh,
+                ) {
                     onNavigate(AppRoute.ReaderSettings)
                 }
-                ToolPreference("ISD-R AIDs", "Manage compatibility AID candidates", MiuixIcons.Info) {
+                ToolPreference(
+                    stringResource(R.string.tools_isdr_aids),
+                    stringResource(R.string.tools_isdr_aids_summary),
+                    MiuixIcons.Info,
+                ) {
                     onNavigate(AppRoute.AidManager)
                 }
-                ToolPreference("Activity logs", "Inspect LPA and reader events", MiuixIcons.Messages) {
+                ToolPreference(
+                    stringResource(R.string.tools_activity_logs),
+                    stringResource(R.string.tools_activity_logs_summary),
+                    MiuixIcons.Messages,
+                ) {
                     onNavigate(AppRoute.Logs)
                 }
             }
@@ -632,66 +926,74 @@ fun SettingsScreen(
         contentPadding = contentPadding,
         scrollBehavior = scrollBehavior,
     ) {
-        item { SectionHeading("Personalisation") }
+        item { SectionHeading(stringResource(R.string.settings_personalisation)) }
         item {
             GroupedCard {
                 ArrowPreference(
-                    title = "Appearance & Theme",
-                    summary = "Color mode, palette, interface scale and bottom bar style",
+                    title = stringResource(R.string.settings_appearance_theme),
+                    summary = stringResource(R.string.settings_appearance_theme_summary),
                     onClick = { onNavigate(AppRoute.AppearanceSettings) },
                 )
                 ArrowPreference(
-                    title = "Profile display",
-                    summary = "Layout, sorting and profile search",
+                    title = stringResource(R.string.settings_profile_display),
+                    summary = stringResource(R.string.settings_profile_display_summary),
                     onClick = { onNavigate(AppRoute.ProfileDisplaySettings) },
                 )
             }
         }
-        item { SectionHeading("LPA") }
+        item { SectionHeading(stringResource(R.string.settings_lpa_section)) }
         item {
             GroupedCard {
                 ArrowPreference(
-                    title = "Reader types",
-                    summary = "NBridge, OMAPI, USB CCID, telephony, BLE and remote",
+                    title = stringResource(R.string.settings_reader_types),
+                    summary = stringResource(R.string.settings_reader_types_summary),
                     onClick = { onNavigate(AppRoute.ReaderSettings) },
                 )
                 ArrowPreference(
-                    title = "Notification processing",
-                    summary = "Automatic send and removal policies",
+                    title = stringResource(R.string.settings_notification_processing),
+                    summary = stringResource(R.string.settings_notification_processing_summary),
                     onClick = { onNavigate(AppRoute.NotificationSettings) },
                 )
                 ArrowPreference(
-                    title = "Tags & reminders",
-                    summary = "Tags, reminder permissions and scheduled alerts",
+                    title = stringResource(R.string.tools_tags_reminders),
+                    summary = stringResource(R.string.settings_tags_reminders_summary),
                     onClick = { onNavigate(AppRoute.TagsAndReminders) },
                 )
                 ArrowPreference(
-                    title = "Advanced LPA settings",
-                    summary = "MSS, IMEI, AIDs and developer diagnostics",
+                    title = stringResource(R.string.settings_advanced_lpa),
+                    summary = stringResource(R.string.settings_advanced_lpa_summary),
                     onClick = { onNavigate(AppRoute.AdvancedSettings) },
                 )
             }
         }
-        item { SectionHeading("Privacy") }
+        item { SectionHeading(stringResource(R.string.settings_privacy_section)) }
         item {
             GroupedCard {
                 ArrowPreference(
-                    title = "Privacy & Nekoko Cloud",
-                    summary = "Redaction, operator icons and profile size predictions",
+                    title = stringResource(R.string.settings_privacy_cloud),
+                    summary = stringResource(R.string.settings_privacy_cloud_summary),
                     onClick = { onNavigate(AppRoute.PrivacySettings) },
                 )
             }
         }
-        item { SectionHeading("App") }
+        item { SectionHeading(stringResource(R.string.settings_app_section)) }
         item {
             GroupedCard {
                 ArrowPreference(
-                    title = "Backup & restore",
-                    summary = "Back up settings, profile data and custom icons",
+                    title = stringResource(R.string.settings_backup_restore),
+                    summary = stringResource(R.string.settings_backup_restore_summary),
                     onClick = { onNavigate(AppRoute.BackupRestoreSettings) },
                 )
-                ArrowPreference(title = "Logs", summary = "Recent app and LPA activity", onClick = { onNavigate(AppRoute.Logs) })
-                ArrowPreference(title = "About HyperLPA", summary = "Version, licenses and implementation notes", onClick = { onNavigate(AppRoute.About) })
+                ArrowPreference(
+                    title = stringResource(R.string.settings_logs),
+                    summary = stringResource(R.string.settings_logs_summary),
+                    onClick = { onNavigate(AppRoute.Logs) },
+                )
+                ArrowPreference(
+                    title = stringResource(R.string.settings_about),
+                    summary = stringResource(R.string.settings_about_summary),
+                    onClick = { onNavigate(AppRoute.About) },
+                )
             }
         }
     }
@@ -745,3 +1047,5 @@ private fun ToolPreference(
         onClick = onClick,
     )
 }
+
+private const val MaxSearchQueryCharacters = 256

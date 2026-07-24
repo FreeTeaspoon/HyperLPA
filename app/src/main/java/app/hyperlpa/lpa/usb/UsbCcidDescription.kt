@@ -11,8 +11,8 @@ data class UsbCcidDescription(
     private val dwFeatures: Int
 ) {
     companion object {
-        private const val DESCRIPTOR_LENGTH: Byte = 0x36
-        private const val DESCRIPTOR_TYPE: Byte = 0x21
+        private const val DESCRIPTOR_LENGTH = 0x36
+        private const val DESCRIPTOR_TYPE = 0x21
 
         // dwFeatures Masks
         private const val FEATURE_AUTOMATIC_VOLTAGE = 0x00008
@@ -33,40 +33,23 @@ data class UsbCcidDescription(
         private const val MASK_T1_PROTO = 2
 
         fun fromRawDescriptors(desc: ByteArray): UsbCcidDescription? {
-            var dwProtocols = 0
-            var dwFeatures = 0
-            var bMaxSlotIndex: Byte = 0
-            var bVoltageSupport: Byte = 0
-
-            var hasCcidDescriptor = false
-
-            val byteBuffer = ByteBuffer.wrap(desc).order(ByteOrder.LITTLE_ENDIAN)
-
-            while (byteBuffer.hasRemaining()) {
-                byteBuffer.mark()
-                val len = byteBuffer.get()
-                val type = byteBuffer.get()
-                if (type == DESCRIPTOR_TYPE && len == DESCRIPTOR_LENGTH) {
-                    byteBuffer.reset()
-                    byteBuffer.position(byteBuffer.position() + SLOT_OFFSET)
-                    bMaxSlotIndex = byteBuffer.get()
-                    bVoltageSupport = byteBuffer.get()
-                    dwProtocols = byteBuffer.int
-                    byteBuffer.reset()
-                    byteBuffer.position(byteBuffer.position() + FEATURES_OFFSET)
-                    dwFeatures = byteBuffer.int
-                    hasCcidDescriptor = true
-                    break
-                } else {
-                    byteBuffer.position(byteBuffer.position() + len - 2)
+            var offset = 0
+            val buffer = ByteBuffer.wrap(desc).order(ByteOrder.LITTLE_ENDIAN)
+            while (offset + 2 <= desc.size) {
+                val length = desc[offset].toUByte().toInt()
+                val type = desc[offset + 1].toUByte().toInt()
+                if (length < 2 || offset + length > desc.size) return null
+                if (type == DESCRIPTOR_TYPE && length >= DESCRIPTOR_LENGTH) {
+                    return UsbCcidDescription(
+                        bMaxSlotIndex = desc[offset + SLOT_OFFSET],
+                        bVoltageSupport = desc[offset + SLOT_OFFSET + 1],
+                        dwProtocols = buffer.getInt(offset + SLOT_OFFSET + 2),
+                        dwFeatures = buffer.getInt(offset + FEATURES_OFFSET),
+                    )
                 }
+                offset += length
             }
-
-            return if (hasCcidDescriptor) {
-                UsbCcidDescription(bMaxSlotIndex, bVoltageSupport, dwProtocols, dwFeatures)
-            } else {
-                null
-            }
+            return null
         }
     }
 
@@ -78,8 +61,8 @@ data class UsbCcidDescription(
         V18(3, VOLTAGE_1V8.toInt());
         // @formatter:on
 
-        val mask = powerOnValue.toByte()
-        val powerOnValue = mask.toByte()
+        val powerOnValue = powerOnValue.toByte()
+        val mask = mask.toByte()
     }
 
     private fun hasFeature(feature: Int) = (dwFeatures and feature) != 0

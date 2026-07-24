@@ -27,4 +27,10 @@ class RedactionTest {
         assertEquals(8, redacted.length)
         assertTrue(redacted.all { it == '•' })
     }
+
+    @Test
+    fun shortIdentifiersAreMaskedInsteadOfReturned() {
+        assertEquals("••••", redactIdentifier("1234", RedactionMode.MIDDLE))
+        assertEquals("••••••••", redactIdentifier("1234", RedactionMode.FULL))
+    }
 }

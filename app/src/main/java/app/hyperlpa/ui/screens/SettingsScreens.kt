@@ -1,6 +1,11 @@
 package app.hyperlpa.ui.screens
 
+import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -37,12 +42,26 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.core.net.toUri
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.hyperlpa.BuildConfig
+import app.hyperlpa.R
 import app.hyperlpa.data.settings.AppSettings
 import app.hyperlpa.data.settings.DefaultIsdrAids
 import app.hyperlpa.data.settings.FloatingBottomBarStyle
+import app.hyperlpa.data.settings.IsdrAidValidationError
+import app.hyperlpa.data.settings.IsdrAidValidationException
+import app.hyperlpa.data.settings.MaximumAidCandidates
+import app.hyperlpa.data.settings.MaximumAidEditorCharacters
+import app.hyperlpa.data.settings.MaximumRemoteReaderEditorCharacters
+import app.hyperlpa.data.settings.MaximumRemoteReaderEndpoints
 import app.hyperlpa.data.settings.NavigationLabels
 import app.hyperlpa.data.settings.NavigationStyle
 import app.hyperlpa.data.settings.PhoneFormatStrategy
@@ -52,8 +71,16 @@ import app.hyperlpa.data.settings.RedactionMode
 import app.hyperlpa.data.settings.ThemeAccent
 import app.hyperlpa.data.settings.ThemeMode
 import app.hyperlpa.data.settings.ThemePalette
+import app.hyperlpa.data.settings.RemoteReaderSettingsValidationError
+import app.hyperlpa.data.settings.RemoteReaderSettingsValidationException
+import app.hyperlpa.data.settings.isValidRemoteReaderToken
+import app.hyperlpa.data.settings.validateIsdrAids
+import app.hyperlpa.data.settings.validateRemoteReaderSettings
+import app.hyperlpa.domain.model.ReaderKind
 import app.hyperlpa.ui.HyperLpaUiState
 import app.hyperlpa.ui.HyperLpaViewModel
+import app.hyperlpa.ui.BluetoothReaderAvailability
+import app.hyperlpa.ui.BluetoothReaderUiState
 import app.hyperlpa.ui.adaptive.AdaptiveTopAppBar
 import app.hyperlpa.ui.adaptive.CenteredContent
 import app.hyperlpa.ui.adaptive.horizontalCutoutPadding
@@ -62,6 +89,7 @@ import app.hyperlpa.ui.components.SectionHeading
 import app.hyperlpa.ui.components.DetailLazyScaffold
 import app.hyperlpa.ui.components.BlurredBar
 import app.hyperlpa.ui.components.rememberAppBackdrop
+import app.hyperlpa.ui.components.redactIdentifier
 import app.hyperlpa.ui.navigation.AppRoute
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Icon
@@ -88,30 +116,6 @@ import top.yukonga.miuix.kmp.window.WindowDialog
 import kotlin.math.roundToInt
 import java.time.LocalDate
 
-private val ThemeModeLabels = listOf("Follow System", "Light", "Dark")
-private val PaletteLabels = listOf(
-    "Tonal Spot (TonalSpot)",
-    "Neutral (Neutral)",
-    "Vibrant (Vibrant)",
-    "Expressive (Expressive)",
-    "Rainbow (Rainbow)",
-    "Fruit Salad (FruitSalad)",
-    "Monochrome (Monochrome)",
-    "Fidelity (Fidelity)",
-    "Content (Content)",
-)
-private val AccentLabels = listOf(
-    "System color",
-    "Blue",
-    "Purple",
-    "Pink",
-    "Red",
-    "Orange",
-    "Yellow",
-    "Green",
-    "Teal",
-)
-
 @Composable
 fun AppearanceSettingsScreen(
     settings: AppSettings,
@@ -120,7 +124,9 @@ fun AppearanceSettingsScreen(
 ) {
     val scrollBehavior = MiuixScrollBehavior()
     var densityDraft by remember(settings.densityScale) {
-        mutableFloatStateOf((settings.densityScale * 100f).roundToInt().toFloat())
+        mutableFloatStateOf(
+            (settings.densityScale.coerceIn(1f, 1.1f) * 100f).roundToInt().toFloat(),
+        )
     }
     var showDensityDialog by rememberSaveable { mutableStateOf(false) }
     var densityText by rememberSaveable { mutableStateOf("") }
@@ -128,13 +134,18 @@ fun AppearanceSettingsScreen(
     val backdrop = rememberAppBackdrop()
     val haptic = LocalHapticFeedback.current
     val focusManager = LocalFocusManager.current
+    val themeModeLabels = ThemeMode.entries.map { stringResource(it.labelResource()) }
+    val paletteLabels = ThemePalette.entries.map { stringResource(it.labelResource()) }
+    val accentLabels = ThemeAccent.entries.map { stringResource(it.labelResource()) }
+    val floatingBarLabels = FloatingBottomBarStyle.entries.map { stringResource(it.labelResource()) }
+    val navigationLabelOptions = NavigationLabels.entries.map { stringResource(it.labelResource()) }
 
     Scaffold(
         containerColor = MiuixTheme.colorScheme.surface,
         topBar = {
             BlurredBar(backdrop) {
                 AdaptiveTopAppBar(
-                    title = "Appearance & Theme",
+                    title = stringResource(R.string.settings_appearance_theme),
                     color = if (backdrop != null) Color.Transparent else MiuixTheme.colorScheme.surface,
                     scrollBehavior = scrollBehavior,
                     navigationIcon = { AppearanceBackButton(onBack) },
@@ -162,21 +173,21 @@ fun AppearanceSettingsScreen(
                 ),
                 overscrollEffect = null,
             ) {
-                item { SectionHeading("Color & Theme") }
+                item { SectionHeading(stringResource(R.string.appearance_color_theme)) }
                 item {
                     GroupedCard {
                         OverlayDropdownPreference(
-                            title = "Theme Mode",
-                            summary = ThemeModeLabels[settings.themeMode.ordinal],
-                            items = ThemeModeLabels,
+                            title = stringResource(R.string.appearance_theme_mode),
+                            summary = themeModeLabels[settings.themeMode.ordinal],
+                            items = themeModeLabels,
                             selectedIndex = settings.themeMode.ordinal,
                             onSelectedIndexChange = { index ->
                                 ThemeMode.entries.getOrNull(index)?.let(viewModel::setThemeMode)
                             },
                         )
                         SwitchPreference(
-                            title = "Monet Colors",
-                            summary = "Use the system dynamic color palette when available",
+                            title = stringResource(R.string.appearance_monet_colors),
+                            summary = stringResource(R.string.appearance_monet_colors_summary),
                             checked = settings.useMonet,
                             onCheckedChange = viewModel::setUseMonet,
                         )
@@ -187,26 +198,26 @@ fun AppearanceSettingsScreen(
                         ) {
                             Column {
                                 OverlayDropdownPreference(
-                                    title = "Color Style",
-                                    summary = PaletteLabels[settings.palette.ordinal],
-                                    items = PaletteLabels,
+                                    title = stringResource(R.string.appearance_color_style),
+                                    summary = paletteLabels[settings.palette.ordinal],
+                                    items = paletteLabels,
                                     selectedIndex = settings.palette.ordinal,
                                     onSelectedIndexChange = { index ->
                                         ThemePalette.entries.getOrNull(index)?.let(viewModel::setPalette)
                                     },
                                 )
                                 OverlayDropdownPreference(
-                                    title = "Accent Color",
-                                    summary = AccentLabels[settings.accent.ordinal],
-                                    items = AccentLabels,
+                                    title = stringResource(R.string.appearance_accent_color),
+                                    summary = accentLabels[settings.accent.ordinal],
+                                    items = accentLabels,
                                     selectedIndex = settings.accent.ordinal,
                                     onSelectedIndexChange = { index ->
                                         ThemeAccent.entries.getOrNull(index)?.let(viewModel::setAccent)
                                     },
                                 )
                                 SwitchPreference(
-                                    title = "Pure Black Background",
-                                    summary = "Use a pure black background in dark mode",
+                                    title = stringResource(R.string.appearance_pure_black),
+                                    summary = stringResource(R.string.appearance_pure_black_summary),
                                     checked = settings.pureBlack,
                                     onCheckedChange = viewModel::setPureBlack,
                                 )
@@ -215,42 +226,45 @@ fun AppearanceSettingsScreen(
                     }
                 }
 
-                item { SectionHeading("Interface & Effects") }
+                item { SectionHeading(stringResource(R.string.appearance_interface_effects)) }
                 item {
                     GroupedCard {
                         SwitchPreference(
-                            title = "Blur Effects",
-                            summary = "Enable blur effects for bars and layered surfaces",
+                            title = stringResource(R.string.appearance_blur_effects),
+                            summary = stringResource(R.string.appearance_blur_effects_summary),
                             checked = settings.blurEnabled && blurSupported,
                             enabled = blurSupported,
                             onCheckedChange = viewModel::setBlurEnabled,
                         )
                         SwitchPreference(
-                            title = "Predictive Back Gesture",
-                            summary = "Enable predictive back animation",
+                            title = stringResource(R.string.appearance_predictive_back),
+                            summary = stringResource(R.string.appearance_predictive_back_summary),
                             checked = settings.predictiveBack,
                             onCheckedChange = viewModel::setPredictiveBack,
                         )
                         ArrowPreference(
-                            title = "Interface Scale",
-                            summary = "Adjust the global display scale (80% - 110%)",
+                            title = stringResource(R.string.appearance_interface_scale),
+                            summary = stringResource(R.string.appearance_interface_scale_summary),
                             endActions = {
                                 Text(
-                                    text = "${densityDraft.roundToInt()}%",
+                                    text = stringResource(
+                                        R.string.appearance_scale_percent,
+                                        densityDraft.roundToInt(),
+                                    ),
                                     style = MiuixTheme.textStyles.body2,
                                     color = MiuixTheme.colorScheme.onSurfaceVariantActions,
                                 )
                             },
                             bottomAction = {
                                 Slider(
-                                    value = densityDraft.coerceIn(80f, 110f),
+                                    value = densityDraft.coerceIn(100f, 110f),
                                     onValueChange = { densityDraft = it },
                                     onValueChangeFinished = {
                                         viewModel.setDensityScale(densityDraft / 100f)
                                     },
-                                    valueRange = 80f..110f,
+                                    valueRange = 100f..110f,
                                     showKeyPoints = true,
-                                    keyPoints = listOf(80f, 90f, 100f, 110f),
+                                    keyPoints = listOf(100f, 105f, 110f),
                                     magnetThreshold = 0.01f,
                                     hapticEffect = SliderDefaults.SliderHapticEffect.Step,
                                     modifier = Modifier.fillMaxWidth(),
@@ -265,12 +279,12 @@ fun AppearanceSettingsScreen(
                     }
                 }
 
-                item { SectionHeading("Bottom Navigation") }
+                item { SectionHeading(stringResource(R.string.appearance_bottom_navigation)) }
                 item {
                     GroupedCard {
                         SwitchPreference(
-                            title = "Floating Bottom Bar",
-                            summary = "Use a floating bottom navigation bar on phones",
+                            title = stringResource(R.string.appearance_floating_bottom_bar),
+                            summary = stringResource(R.string.appearance_floating_bottom_bar_summary),
                             checked = settings.navigationStyle == NavigationStyle.FLOATING,
                             onCheckedChange = { enabled ->
                                 viewModel.setNavigationStyle(
@@ -284,13 +298,9 @@ fun AppearanceSettingsScreen(
                             exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
                         ) {
                             OverlayDropdownPreference(
-                                title = "Floating Bottom Bar Style",
-                                summary = if (settings.floatingBottomBarStyle == FloatingBottomBarStyle.MIUIX) {
-                                    "Miuix"
-                                } else {
-                                    "iOS-like (Liquid Glass)"
-                                },
-                                items = listOf("Miuix", "iOS-like (Liquid Glass)"),
+                                title = stringResource(R.string.appearance_floating_bar_style),
+                                summary = floatingBarLabels[settings.floatingBottomBarStyle.ordinal],
+                                items = floatingBarLabels,
                                 selectedIndex = settings.floatingBottomBarStyle.ordinal,
                                 onSelectedIndexChange = { index ->
                                     FloatingBottomBarStyle.entries.getOrNull(index)
@@ -299,13 +309,9 @@ fun AppearanceSettingsScreen(
                             )
                         }
                         OverlayDropdownPreference(
-                            title = "Bottom Bar Options",
-                            summary = if (settings.navigationLabels == NavigationLabels.ICON_AND_TEXT) {
-                                "Icon and Text"
-                            } else {
-                                "Icon Only"
-                            },
-                            items = listOf("Icon and Text", "Icon Only"),
+                            title = stringResource(R.string.appearance_bottom_bar_options),
+                            summary = navigationLabelOptions[settings.navigationLabels.ordinal],
+                            items = navigationLabelOptions,
                             selectedIndex = settings.navigationLabels.ordinal,
                             onSelectedIndexChange = { index ->
                                 NavigationLabels.entries.getOrNull(index)?.let(viewModel::setNavigationLabels)
@@ -319,8 +325,8 @@ fun AppearanceSettingsScreen(
 
     WindowDialog(
         show = showDensityDialog,
-        title = "Interface Scale",
-        summary = "Adjust the global display scale (80% - 110%)",
+        title = stringResource(R.string.appearance_interface_scale),
+        summary = stringResource(R.string.appearance_interface_scale_summary),
         onDismissRequest = { showDensityDialog = false },
     ) {
         TextField(
@@ -349,15 +355,15 @@ fun AppearanceSettingsScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             TextButton(
-                text = "Cancel",
+                text = stringResource(R.string.common_cancel),
                 onClick = { showDensityDialog = false },
                 modifier = Modifier.weight(1f),
             )
             TextButton(
-                text = "Confirm",
+                text = stringResource(R.string.common_confirm),
                 onClick = {
                     val percent = densityText.toIntOrNull()
-                        ?.coerceIn(80, 110)
+                        ?.coerceIn(100, 110)
                         ?: densityDraft.roundToInt()
                     densityDraft = percent.toFloat()
                     haptic.performHapticFeedback(HapticFeedbackType.Confirm)
@@ -381,115 +387,115 @@ fun ProfileDisplaySettingsScreen(
     val profileSorts = ProfileSort.entries
     val phoneFormatStrategies = PhoneFormatStrategy.entries
 
-    DetailLazyScaffold(title = "Profile display", onBack = onBack) { _ ->
-        item { SectionHeading("Layout") }
+    DetailLazyScaffold(title = stringResource(R.string.settings_profile_display), onBack = onBack) { _ ->
+        item { SectionHeading(stringResource(R.string.profile_display_layout_section)) }
         item {
             GroupedCard {
                 OverlayDropdownPreference(
-                    items = profileLayouts.map { it.displayName() },
+                    items = profileLayouts.map { stringResource(it.labelResource()) },
                     selectedIndex = profileLayouts.indexOf(settings.profileLayout),
-                    title = "Profile layout",
-                    summary = "Choose a list or responsive waterfall cards",
+                    title = stringResource(R.string.profile_display_layout),
+                    summary = stringResource(R.string.profile_display_layout_summary),
                     onSelectedIndexChange = { viewModel.setProfileLayout(profileLayouts[it]) },
                 )
             }
         }
-        item { SectionHeading("Profile page") }
+        item { SectionHeading(stringResource(R.string.profile_display_page_section)) }
         item {
             GroupedCard {
                 OverlayDropdownPreference(
-                    items = profileSorts.map { it.displayName() },
+                    items = profileSorts.map { stringResource(it.labelResource()) },
                     selectedIndex = profileSorts.indexOf(settings.profileSort),
-                    title = "Sort profiles by",
+                    title = stringResource(R.string.profile_display_sort),
                     onSelectedIndexChange = { viewModel.setProfileSort(profileSorts[it]) },
                 )
                 SwitchPreference(
                     checked = settings.sortAscending,
                     onCheckedChange = viewModel::setSortAscending,
-                    title = "Ascending order",
+                    title = stringResource(R.string.profile_display_ascending),
                 )
                 SwitchPreference(
                     checked = settings.showProfileSearch,
                     onCheckedChange = viewModel::setShowProfileSearch,
-                    title = "Profile search",
-                    summary = "Show the search field below the eUICC selector",
+                    title = stringResource(R.string.profile_display_search),
+                    summary = stringResource(R.string.profile_display_search_summary),
                 )
                 OverlayDropdownPreference(
-                    items = phoneFormatStrategies.map(PhoneFormatStrategy::displayName),
+                    items = phoneFormatStrategies.map { stringResource(it.labelResource()) },
                     selectedIndex = phoneFormatStrategies.indexOf(settings.phoneFormatStrategy),
-                    title = "Phone number format",
-                    summary = "Detect and format phone numbers in profile names",
+                    title = stringResource(R.string.profile_display_phone_format),
+                    summary = stringResource(R.string.profile_display_phone_format_summary),
                     onSelectedIndexChange = { viewModel.setPhoneFormatStrategy(phoneFormatStrategies[it]) },
                 )
             }
         }
-        item { SectionHeading("Homepage cards") }
+        item { SectionHeading(stringResource(R.string.profile_display_home_cards)) }
         item {
             GroupedCard {
                 SwitchPreference(
                     checked = settings.showProfileNameOnHome,
                     onCheckedChange = viewModel::setShowProfileNameOnHome,
-                    title = "Profile name",
-                    summary = "Show the profile name on the homepage",
+                    title = stringResource(R.string.profile_display_name),
+                    summary = stringResource(R.string.profile_display_name_summary),
                 )
                 SwitchPreference(
                     checked = settings.showProfileProviderOnHome,
                     onCheckedChange = viewModel::setShowProfileProviderOnHome,
-                    title = "Provider",
-                    summary = "Show the provider on the homepage",
+                    title = stringResource(R.string.profile_display_provider),
+                    summary = stringResource(R.string.profile_display_provider_summary),
                 )
                 SwitchPreference(
                     checked = settings.showProfileIccidOnHome,
                     onCheckedChange = viewModel::setShowProfileIccidOnHome,
-                    title = "ICCID",
-                    summary = "Show the profile identifier on the homepage",
+                    title = stringResource(R.string.profile_display_iccid),
+                    summary = stringResource(R.string.profile_display_iccid_summary),
                 )
                 SwitchPreference(
                     checked = settings.showProfileIconOnHome,
                     onCheckedChange = viewModel::setShowProfileIconOnHome,
-                    title = "Profile icon",
-                    summary = "Show the profile icon on the homepage",
+                    title = stringResource(R.string.profile_display_icon),
+                    summary = stringResource(R.string.profile_display_icon_summary),
                 )
                 SwitchPreference(
                     checked = settings.showProfileTagsOnHome,
                     onCheckedChange = viewModel::setShowProfileTagsOnHome,
-                    title = "Tags",
-                    summary = "Show profile tags on the homepage",
+                    title = stringResource(R.string.profile_display_tags),
+                    summary = stringResource(R.string.profile_display_tags_summary),
                 )
                 SwitchPreference(
                     checked = settings.showProfileRemindersOnHome,
                     onCheckedChange = viewModel::setShowProfileRemindersOnHome,
-                    title = "Reminders",
-                    summary = "Show scheduled reminder dates on the homepage",
+                    title = stringResource(R.string.profile_display_reminders),
+                    summary = stringResource(R.string.profile_display_reminders_summary),
                 )
                 SwitchPreference(
                     checked = settings.showProfileSizeOnHome,
                     onCheckedChange = viewModel::setShowProfileSizeOnHome,
-                    title = "Profile size",
-                    summary = "Show estimated or measured storage on the homepage",
+                    title = stringResource(R.string.profile_display_size),
+                    summary = stringResource(R.string.profile_display_size_summary),
                 )
                 SwitchPreference(
                     checked = settings.showProfileSwitchOnHome,
                     onCheckedChange = viewModel::setShowProfileSwitchOnHome,
-                    title = "Enable switch",
-                    summary = "Show the profile enable switch on the homepage",
+                    title = stringResource(R.string.profile_display_switch),
+                    summary = stringResource(R.string.profile_display_switch_summary),
                 )
             }
         }
-        item { SectionHeading("Homepage reader") }
+        item { SectionHeading(stringResource(R.string.profile_display_home_reader)) }
         item {
             GroupedCard {
                 SwitchPreference(
                     checked = settings.showReaderSelectorOnHome,
                     onCheckedChange = viewModel::setShowReaderSelectorOnHome,
-                    title = "Reader selector",
-                    summary = "Show the active reader control on the homepage",
+                    title = stringResource(R.string.profile_display_reader_selector),
+                    summary = stringResource(R.string.profile_display_reader_selector_summary),
                 )
                 SwitchPreference(
                     checked = settings.showEidOnHome,
                     onCheckedChange = viewModel::setShowEidOnHome,
                     title = "EID",
-                    summary = "Show the eUICC identifier on the homepage",
+                    summary = stringResource(R.string.profile_display_eid_summary),
                 )
             }
         }
@@ -499,7 +505,10 @@ fun ProfileDisplaySettingsScreen(
 @Composable
 private fun AppearanceBackButton(onBack: () -> Unit) {
     IconButton(onClick = onBack) {
-        Icon(imageVector = MiuixIcons.Back, contentDescription = "Back")
+        Icon(
+            imageVector = MiuixIcons.Back,
+            contentDescription = stringResource(app.hyperlpa.R.string.common_back),
+        )
     }
 }
 
@@ -508,87 +517,287 @@ fun ReaderSettingsScreen(
     state: HyperLpaUiState,
     onBack: () -> Unit,
     viewModel: HyperLpaViewModel,
+    bluetoothReaderState: BluetoothReaderUiState,
+    onDiscoverReaders: () -> Unit,
+    onRequestBluetoothPermission: () -> Unit,
+    onOpenBluetoothSettings: () -> Unit,
 ) {
+    val context = LocalContext.current
     var showRemoteEditor by remember { mutableStateOf(false) }
     var remoteUrls by remember(state.settings.remoteReaderUrls) {
         mutableStateOf(state.settings.remoteReaderUrls.joinToString("\n"))
     }
-
-    DetailLazyScaffold(title = "eUICC readers", onBack = onBack) { _ ->
-        item { SectionHeading("Behaviour") }
+    var remoteInputTooLong by remember { mutableStateOf(false) }
+    var remoteTokenEndpoint by remember { mutableStateOf<String?>(null) }
+    var remoteTokenDraft by remember { mutableStateOf("") }
+    var remoteTokenSaving by remember { mutableStateOf(false) }
+    var remoteUrlsSaving by remember { mutableStateOf(false) }
+    val diagnosticsClipboardLabel = stringResource(R.string.reader_diagnostics_clipboard_label)
+    val diagnosticsCopiedMessage = stringResource(R.string.reader_diagnostics_copied)
+    val remoteSaveFailedMessage = stringResource(R.string.reader_remote_save_failed)
+    val bluetoothAvailability = bluetoothReaderState.availability
+    val usesNearbyDevicesPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    val discoverSummary = when (bluetoothAvailability) {
+        BluetoothReaderAvailability.PERMISSION_REQUIRED -> stringResource(
+            if (usesNearbyDevicesPermission) {
+                R.string.reader_discover_permission_required_summary
+            } else {
+                R.string.reader_discover_location_required_summary
+            },
+        )
+        BluetoothReaderAvailability.BLUETOOTH_OFF -> stringResource(
+            R.string.reader_discover_bluetooth_off_summary,
+        )
+        else -> stringResource(R.string.reader_discover_now_summary)
+    }
+    // The Activity refreshes every backend and handles any BLE remediation separately.
+    val discoverAction = onDiscoverReaders
+    val bluetoothBackendSummary = when (bluetoothAvailability) {
+        BluetoothReaderAvailability.UNSUPPORTED -> stringResource(R.string.reader_bluetooth_unsupported_summary)
+        BluetoothReaderAvailability.PERMISSION_REQUIRED -> stringResource(
+            if (usesNearbyDevicesPermission) {
+                R.string.reader_bluetooth_permission_required_summary
+            } else {
+                R.string.reader_bluetooth_location_required_summary
+            },
+        )
+        BluetoothReaderAvailability.BLUETOOTH_OFF -> stringResource(R.string.reader_bluetooth_off_summary)
+        else -> stringResource(R.string.reader_bluetooth_summary)
+    }
+    val remoteUrlEntries = remember(remoteUrls) {
+        remoteUrls.lineSequence()
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .take(MaximumRemoteReaderEndpoints + 1)
+            .toList()
+    }
+    val remoteValidationError = remember(remoteUrlEntries) {
+        runCatching { validateRemoteReaderSettings(remoteUrlEntries) }
+            .exceptionOrNull() as? RemoteReaderSettingsValidationException
+    }
+    val remoteEditorError = when {
+        remoteInputTooLong -> stringResource(R.string.reader_remote_input_too_long)
+        remoteValidationError?.reason == RemoteReaderSettingsValidationError.TOO_MANY -> stringResource(
+            R.string.reader_remote_too_many_endpoints,
+            MaximumRemoteReaderEndpoints,
+        )
+        remoteValidationError?.reason == RemoteReaderSettingsValidationError.INVALID_ENDPOINT -> stringResource(
+            R.string.reader_remote_invalid_endpoint_line,
+            remoteValidationError.lineNumber ?: 1,
+        )
+        remoteValidationError?.reason == RemoteReaderSettingsValidationError.DUPLICATE_ENDPOINT -> stringResource(
+            R.string.reader_remote_duplicate_endpoint_line,
+            remoteValidationError.lineNumber ?: 1,
+        )
+        else -> null
+    }
+    DetailLazyScaffold(title = stringResource(R.string.reader_settings_title), onBack = onBack) { _ ->
+        item { SectionHeading(stringResource(R.string.reader_settings_behaviour)) }
         item {
             GroupedCard {
                 SwitchPreference(
                     checked = state.settings.autoLoadProfiles,
                     onCheckedChange = viewModel::setAutoLoadProfiles,
-                    title = "Connect automatically",
-                    summary = "Reconnect the last available reader when the app starts",
+                    title = stringResource(R.string.reader_connect_automatically),
+                    summary = stringResource(R.string.reader_connect_automatically_summary),
                 )
                 ArrowPreference(
-                    title = "Discover readers now",
-                    summary = "Refresh NBridge, OMAPI and USB CCID endpoints",
-                    onClick = { viewModel.refreshReaders() },
+                    title = stringResource(R.string.reader_discover_now),
+                    summary = discoverSummary,
+                    onClick = discoverAction,
                 )
+                if (state.lpa.selectedReader != null) {
+                    ArrowPreference(
+                        title = stringResource(R.string.reader_disconnect),
+                        summary = stringResource(R.string.reader_disconnect_summary),
+                        onClick = viewModel::disconnectReader,
+                    )
+                }
             }
         }
 
-        item { SectionHeading("Reader backends") }
+        item { SectionHeading(stringResource(R.string.reader_backends_section)) }
         item {
             GroupedCard {
                 SwitchPreference(
                     checked = state.settings.enableNBridge,
                     onCheckedChange = viewModel::setEnableNBridge,
                     title = "NBridge",
-                    summary = "Use Nekoko-compatible privileged bridge slots",
+                    summary = stringResource(R.string.reader_nbridge_summary),
                 )
                 SwitchPreference(
                     checked = state.settings.enableOmapi,
                     onCheckedChange = viewModel::setEnableOmapi,
-                    title = "Secure Element service",
-                    summary = "Use Android OMAPI readers exposed by the device",
+                    title = stringResource(R.string.reader_omapi_title),
+                    summary = stringResource(R.string.reader_omapi_summary),
                 )
                 SwitchPreference(
                     checked = state.settings.enableUsbCcid,
                     onCheckedChange = viewModel::setEnableUsbCcid,
                     title = "USB CCID",
-                    summary = "Use removable smart-card and eUICC readers",
+                    summary = stringResource(R.string.reader_usb_summary),
                 )
-                SwitchPreference(
-                    checked = state.settings.enableTelephony,
-                    onCheckedChange = viewModel::setEnableTelephony,
-                    title = "Privileged telephony",
-                    summary = "Requires system or carrier privileges on supported ROMs",
-                )
+                if (BuildConfig.HAS_PRIVILEGED_TELEPHONY) {
+                    SwitchPreference(
+                        checked = state.settings.enableTelephony,
+                        onCheckedChange = viewModel::setEnableTelephony,
+                        title = stringResource(R.string.reader_telephony_title),
+                        summary = stringResource(R.string.reader_telephony_summary),
+                    )
+                } else {
+                    ArrowPreference(
+                        title = stringResource(R.string.reader_telephony_title),
+                        summary = stringResource(R.string.reader_telephony_unavailable_summary),
+                        enabled = false,
+                    )
+                }
                 SwitchPreference(
                     checked = state.settings.enableBle,
                     onCheckedChange = viewModel::setEnableBle,
-                    title = "Bluetooth LE readers",
-                    summary = "Discover compatible external APDU reader devices",
+                    title = stringResource(R.string.reader_bluetooth_title),
+                    summary = bluetoothBackendSummary,
+                    // Keep a restored, unsupported checked state switchable so it can be disabled.
+                    enabled = bluetoothReaderState.supported || state.settings.enableBle,
                 )
                 SwitchPreference(
                     checked = state.settings.enableRemote,
                     onCheckedChange = viewModel::setEnableRemote,
-                    title = "Remote readers",
-                    summary = "Use explicitly configured network APDU endpoints",
+                    title = stringResource(R.string.reader_remote_title),
+                    summary = stringResource(R.string.reader_remote_summary),
                 )
                 ArrowPreference(
-                    title = "Remote reader addresses",
-                    summary = state.settings.remoteReaderUrls.takeIf { it.isNotEmpty() }
-                        ?.joinToString() ?: "No remote endpoints configured",
+                    title = stringResource(R.string.reader_remote_addresses),
+                    summary = remoteReaderSummary(state.settings.remoteReaderUrls),
                     enabled = state.settings.enableRemote,
-                    onClick = { showRemoteEditor = true },
+                    onClick = {
+                        remoteInputTooLong = false
+                        showRemoteEditor = true
+                    },
+                )
+                if (state.settings.enableRemote) {
+                    state.settings.remoteReaderUrls.forEach { endpoint ->
+                        ArrowPreference(
+                            title = endpoint.toUri().host ?: endpoint,
+                            summary = if (state.settings.remoteReaderTokens.containsKey(endpoint)) {
+                                stringResource(R.string.reader_remote_credential_stored)
+                            } else {
+                                stringResource(R.string.reader_remote_credential_none)
+                            },
+                            onClick = {
+                                remoteTokenDraft = ""
+                                remoteTokenEndpoint = endpoint
+                            },
+                        )
+                    }
+                }
+            }
+        }
+
+        item { SectionHeading(stringResource(R.string.reader_diagnostics_section)) }
+        item {
+            GroupedCard {
+                ArrowPreference(
+                    title = "HyperLPA",
+                    summary = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                    enabled = false,
+                )
+                ArrowPreference(
+                    title = "Android",
+                    summary = stringResource(
+                        R.string.reader_diagnostics_android_version,
+                        Build.VERSION.RELEASE,
+                        Build.VERSION.SDK_INT,
+                    ),
+                    enabled = false,
+                )
+                ArrowPreference(
+                    title = stringResource(R.string.reader_omapi_title),
+                    summary = if (context.packageManager.hasSystemFeature("android.hardware.se.omapi")) {
+                        stringResource(R.string.reader_omapi_advertised)
+                    } else {
+                        stringResource(R.string.reader_omapi_not_advertised)
+                    },
+                    enabled = false,
+                )
+                ArrowPreference(
+                    title = stringResource(R.string.reader_bluetooth_permission),
+                    summary = stringResource(
+                        if (bluetoothReaderState.permissionGranted) {
+                            R.string.common_granted
+                        } else {
+                            R.string.common_not_granted
+                        },
+                    ),
+                    enabled = state.settings.enableBle &&
+                        bluetoothReaderState.supported &&
+                        !bluetoothReaderState.permissionGranted,
+                    onClick = onRequestBluetoothPermission,
+                )
+                ArrowPreference(
+                    title = stringResource(R.string.reader_bluetooth_adapter),
+                    summary = when {
+                        !bluetoothReaderState.supported -> stringResource(R.string.reader_bluetooth_unsupported)
+                        !bluetoothReaderState.permissionGranted -> stringResource(
+                            R.string.reader_bluetooth_adapter_permission_required,
+                        )
+                        bluetoothReaderState.adapterEnabled -> stringResource(R.string.reader_bluetooth_adapter_on)
+                        else -> stringResource(R.string.reader_bluetooth_adapter_off)
+                    },
+                    enabled = bluetoothReaderState.supported && bluetoothReaderState.permissionGranted,
+                    onClick = onOpenBluetoothSettings,
+                )
+                ArrowPreference(
+                    title = stringResource(R.string.reader_telephony_permission),
+                    summary = privilegedTelephonyStatus(context),
+                    enabled = false,
+                )
+                ArrowPreference(
+                    title = stringResource(R.string.reader_copy_diagnostics),
+                    summary = stringResource(R.string.reader_copy_diagnostics_summary),
+                    onClick = {
+                        val clipboard = context.getSystemService(ClipboardManager::class.java)
+                        clipboard.setPrimaryClip(
+                            ClipData.newPlainText(
+                                diagnosticsClipboardLabel,
+                                buildCompatibilityDiagnostics(state, context),
+                            ),
+                        )
+                        Toast.makeText(context, diagnosticsCopiedMessage, Toast.LENGTH_SHORT).show()
+                    },
                 )
             }
         }
 
-        item { SectionHeading("Available now") }
+        item { SectionHeading(stringResource(R.string.reader_available_now)) }
         if (state.lpa.readers.isEmpty()) {
             item {
                 GroupedCard {
                     ArrowPreference(
-                        title = "No readers found",
-                        summary = "Check permissions, connect a reader, then discover again",
-                        enabled = false,
+                        title = when (bluetoothAvailability) {
+                            BluetoothReaderAvailability.PERMISSION_REQUIRED -> stringResource(
+                                R.string.reader_bluetooth_permission_required_title,
+                            )
+                            BluetoothReaderAvailability.BLUETOOTH_OFF -> stringResource(
+                                R.string.reader_bluetooth_off_title,
+                            )
+                            else -> stringResource(R.string.reader_no_readers_found)
+                        },
+                        summary = when (bluetoothAvailability) {
+                            BluetoothReaderAvailability.PERMISSION_REQUIRED -> stringResource(
+                                if (usesNearbyDevicesPermission) {
+                                    R.string.reader_bluetooth_permission_required_message
+                                } else {
+                                    R.string.reader_bluetooth_location_required_message
+                                },
+                            )
+                            BluetoothReaderAvailability.BLUETOOTH_OFF -> stringResource(
+                                R.string.reader_bluetooth_off_message,
+                            )
+                            else -> stringResource(R.string.reader_no_readers_found_summary)
+                        },
+                        enabled = bluetoothAvailability == BluetoothReaderAvailability.PERMISSION_REQUIRED ||
+                            bluetoothAvailability == BluetoothReaderAvailability.BLUETOOTH_OFF,
+                        onClick = discoverAction,
                     )
                 }
             }
@@ -598,11 +807,14 @@ fun ReaderSettingsScreen(
                     state.lpa.readers.forEach { reader ->
                         ArrowPreference(
                             title = reader.name,
-                            summary = listOfNotNull(reader.kind.displayName(), reader.detail).joinToString(" · "),
+                            summary = listOfNotNull(
+                                stringResource(reader.kind.labelResource()),
+                                reader.detail,
+                            ).joinToString(" · "),
                             endActions = {
                                 if (reader.id == state.lpa.selectedReaderId) {
                                     Text(
-                                        text = "Connected",
+                                        text = stringResource(R.string.common_connected),
                                         style = MiuixTheme.textStyles.body2,
                                         color = MiuixTheme.colorScheme.primary,
                                     )
@@ -618,17 +830,204 @@ fun ReaderSettingsScreen(
 
     TextEditorDialog(
         show = showRemoteEditor,
-        title = "Remote reader addresses",
-        summary = "Enter one HTTPS or WebSocket endpoint per line.",
+        title = stringResource(R.string.reader_remote_addresses),
+        summary = stringResource(R.string.reader_remote_addresses_summary),
         value = remoteUrls,
-        onValueChange = { remoteUrls = it },
-        onDismiss = { showRemoteEditor = false },
+        onValueChange = { value ->
+            remoteInputTooLong = value.length > MaximumRemoteReaderEditorCharacters
+            if (!remoteInputTooLong) remoteUrls = value
+        },
+        error = remoteEditorError,
+        confirmEnabled = remoteEditorError == null && !remoteUrlsSaving,
+        onDismiss = {
+            if (!remoteUrlsSaving) {
+                remoteInputTooLong = false
+                showRemoteEditor = false
+            }
+        },
         onConfirm = {
-            viewModel.setRemoteReaderUrls(remoteUrls.lineSequence().map(String::trim).filter(String::isNotEmpty).toList())
-            showRemoteEditor = false
-            viewModel.refreshReaders()
+            if (!remoteUrlsSaving && remoteEditorError == null) {
+                remoteUrlsSaving = true
+                viewModel.setRemoteReaderUrls(
+                    remoteUrlEntries,
+                ) { success ->
+                    remoteUrlsSaving = false
+                    if (success) {
+                        remoteInputTooLong = false
+                        showRemoteEditor = false
+                    } else {
+                        Toast.makeText(context, remoteSaveFailedMessage, Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
         },
     )
+    OverlayDialog(
+        show = remoteTokenEndpoint != null,
+        title = stringResource(R.string.reader_remote_credential_title),
+        summary = remoteTokenEndpoint?.let { endpoint ->
+            if (state.settings.remoteReaderTokens.containsKey(endpoint)) {
+                stringResource(R.string.reader_remote_credential_replace_summary)
+            } else {
+                stringResource(R.string.reader_remote_credential_summary)
+            }
+        },
+        onDismissRequest = { if (!remoteTokenSaving) remoteTokenEndpoint = null },
+    ) {
+        val tokenValid = remoteTokenDraft.isEmpty() || isValidRemoteReaderToken(remoteTokenDraft)
+        TextField(
+            value = remoteTokenDraft,
+            onValueChange = { value ->
+                remoteTokenDraft = value.filterNot { it == '\r' || it == '\n' }.take(4_096)
+            },
+            label = stringResource(R.string.reader_remote_credential_label),
+            useLabelAsPlaceholder = true,
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (!tokenValid) {
+            Text(
+                text = stringResource(R.string.reader_remote_credential_invalid),
+                style = MiuixTheme.textStyles.footnote1,
+                color = MiuixTheme.colorScheme.error,
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+            )
+        }
+        Spacer(Modifier.height(18.dp))
+        DialogButtons(
+            onDismiss = { if (!remoteTokenSaving) remoteTokenEndpoint = null },
+            confirmEnabled = tokenValid && !remoteTokenSaving,
+            onConfirm = {
+                remoteTokenEndpoint?.let { endpoint ->
+                    remoteTokenSaving = true
+                    viewModel.setRemoteReaderToken(endpoint, remoteTokenDraft) { success ->
+                        remoteTokenSaving = false
+                        if (success) {
+                            remoteTokenDraft = ""
+                            remoteTokenEndpoint = null
+                        } else {
+                            Toast.makeText(context, remoteSaveFailedMessage, Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            },
+        )
+    }
+}
+
+private fun bluetoothPermissionStatus(context: android.content.Context): String =
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+        permissionStatus(context, Manifest.permission.ACCESS_FINE_LOCATION)
+    } else {
+        listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+            .all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
+            .let { granted ->
+                context.getString(if (granted) R.string.common_granted else R.string.common_not_granted)
+            }
+    }
+
+private fun permissionStatus(context: android.content.Context, permission: String): String =
+    if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) {
+        context.getString(R.string.common_granted)
+    } else {
+        context.getString(R.string.common_not_granted)
+    }
+
+private fun privilegedTelephonyStatus(context: android.content.Context): String {
+    if (!BuildConfig.HAS_PRIVILEGED_TELEPHONY) {
+        return context.getString(R.string.reader_telephony_not_in_build)
+    }
+    val runtime = permissionStatus(context, Manifest.permission.READ_PHONE_STATE)
+    val protected = listOf(
+        "android.permission.READ_PRIVILEGED_PHONE_STATE",
+        "android.permission.MODIFY_PHONE_STATE",
+    ).all { permission ->
+        ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+    }
+    return context.getString(
+        R.string.reader_telephony_permission_status,
+        runtime,
+        context.getString(if (protected) R.string.common_granted else R.string.common_not_granted),
+    )
+}
+
+private fun buildCompatibilityDiagnostics(
+    state: HyperLpaUiState,
+    context: android.content.Context,
+): String = buildString {
+    fun yesNo(value: Boolean): String =
+        context.getString(if (value) R.string.support_report_yes else R.string.support_report_no)
+
+    appendLine(context.getString(R.string.reader_diagnostics_app_line, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE))
+    appendLine(context.getString(R.string.reader_diagnostics_android_line, Build.VERSION.RELEASE, Build.VERSION.SDK_INT))
+    appendLine(
+        context.resources.getQuantityString(
+            R.plurals.reader_diagnostics_found_line,
+            state.lpa.readers.size,
+            state.lpa.readers.size,
+        ),
+    )
+    appendLine(
+        context.getString(
+            R.string.reader_diagnostics_selected_type,
+            state.lpa.selectedReader?.kind?.let { context.getString(it.labelResource()) }
+                ?: context.getString(R.string.common_none),
+        ),
+    )
+    appendLine(context.getString(R.string.reader_diagnostics_nbridge, yesNo(state.settings.enableNBridge)))
+    appendLine(context.getString(R.string.reader_diagnostics_omapi, yesNo(state.settings.enableOmapi)))
+    appendLine(context.getString(R.string.reader_diagnostics_usb, yesNo(state.settings.enableUsbCcid)))
+    appendLine(
+        context.getString(
+            R.string.reader_diagnostics_telephony_build,
+            yesNo(BuildConfig.HAS_PRIVILEGED_TELEPHONY),
+        ),
+    )
+    appendLine(
+        context.getString(
+            R.string.reader_diagnostics_telephony_enabled,
+            yesNo(BuildConfig.HAS_PRIVILEGED_TELEPHONY && state.settings.enableTelephony),
+        ),
+    )
+    appendLine(
+        context.getString(
+            R.string.reader_diagnostics_bluetooth,
+            yesNo(state.settings.enableBle),
+            bluetoothPermissionStatus(context),
+        ),
+    )
+    appendLine(
+        context.resources.getQuantityString(
+            R.plurals.reader_diagnostics_remote,
+            state.settings.remoteReaderUrls.size,
+            yesNo(state.settings.enableRemote),
+            state.settings.remoteReaderUrls.size,
+        ),
+    )
+    appendLine(
+        context.getString(
+            R.string.reader_diagnostics_eid,
+            // This action explicitly promises redacted diagnostics regardless
+            // of the user's normal on-screen identifier preference.
+            state.lpa.euiccInfo?.let { redactIdentifier(it.eid, RedactionMode.FULL) }
+                ?: context.getString(R.string.reader_diagnostics_unavailable),
+        ),
+    )
+}
+
+@Composable
+private fun remoteReaderSummary(urls: List<String>): String {
+    if (urls.isEmpty()) return stringResource(R.string.reader_remote_none_configured)
+    val hosts = urls.mapNotNull { raw ->
+        runCatching { raw.toUri().host }
+            .getOrNull()
+            ?.takeIf(String::isNotBlank)
+    }.distinct()
+    val count = pluralStringResource(R.plurals.reader_remote_endpoint_count, urls.size, urls.size)
+    return hosts.takeIf(List<String>::isNotEmpty)
+        ?.joinToString(prefix = "$count · ", limit = 2, truncated = "…")
+        ?: count
 }
 
 @Composable
@@ -637,31 +1036,51 @@ fun NotificationSettingsScreen(
     onBack: () -> Unit,
     viewModel: HyperLpaViewModel,
 ) {
-    DetailLazyScaffold(title = "Notifications", onBack = onBack) { _ ->
-        item { SectionHeading("Check for notifications") }
+    DetailLazyScaffold(title = stringResource(R.string.notification_settings_title), onBack = onBack) { _ ->
+        item { SectionHeading(stringResource(R.string.notification_settings_check_section)) }
         item {
             GroupedCard {
-                SwitchPreference(settings.notificationInitialLoad, viewModel::setNotificationInitialLoad, "After connecting")
-                SwitchPreference(settings.notificationAfterSwitch, viewModel::setNotificationAfterSwitch, "After switching a profile")
-                SwitchPreference(settings.notificationAfterDelete, viewModel::setNotificationAfterDelete, "After deleting a profile")
-                SwitchPreference(settings.notificationBeforeDownload, viewModel::setNotificationBeforeDownload, "Before downloading")
-                SwitchPreference(settings.notificationAfterDownload, viewModel::setNotificationAfterDownload, "After downloading")
+                SwitchPreference(
+                    settings.notificationInitialLoad,
+                    viewModel::setNotificationInitialLoad,
+                    stringResource(R.string.notification_settings_after_connecting),
+                )
+                SwitchPreference(
+                    settings.notificationAfterSwitch,
+                    viewModel::setNotificationAfterSwitch,
+                    stringResource(R.string.notification_settings_after_switching),
+                )
+                SwitchPreference(
+                    settings.notificationAfterDelete,
+                    viewModel::setNotificationAfterDelete,
+                    stringResource(R.string.notification_settings_after_deleting),
+                )
+                SwitchPreference(
+                    settings.notificationBeforeDownload,
+                    viewModel::setNotificationBeforeDownload,
+                    stringResource(R.string.notification_settings_before_downloading),
+                )
+                SwitchPreference(
+                    settings.notificationAfterDownload,
+                    viewModel::setNotificationAfterDownload,
+                    stringResource(R.string.notification_settings_after_downloading),
+                )
             }
         }
-        item { SectionHeading("Processing") }
+        item { SectionHeading(stringResource(R.string.notification_settings_processing)) }
         item {
             GroupedCard {
                 SwitchPreference(
                     checked = settings.notificationAutoSend,
                     onCheckedChange = viewModel::setNotificationAutoSend,
-                    title = "Send automatically",
-                    summary = "Deliver pending eUICC notifications to their SM-DP+ servers",
+                    title = stringResource(R.string.notification_settings_auto_send),
+                    summary = stringResource(R.string.notification_settings_auto_send_summary),
                 )
                 SwitchPreference(
                     checked = settings.notificationAutoRemove,
                     onCheckedChange = viewModel::setNotificationAutoRemove,
-                    title = "Remove after sending",
-                    summary = "Delete a notification from the eUICC only after successful delivery",
+                    title = stringResource(R.string.notification_settings_auto_remove),
+                    summary = stringResource(R.string.notification_settings_auto_remove_summary),
                     enabled = settings.notificationAutoSend,
                 )
             }
@@ -676,49 +1095,49 @@ fun PrivacySettingsScreen(
     viewModel: HyperLpaViewModel,
 ) {
     val redactionModes = RedactionMode.entries
-    DetailLazyScaffold(title = "Privacy", onBack = onBack) { _ ->
-        item { SectionHeading("Sensitive identifiers") }
+    DetailLazyScaffold(title = stringResource(R.string.privacy_title), onBack = onBack) { _ ->
+        item { SectionHeading(stringResource(R.string.privacy_sensitive_identifiers)) }
         item {
             GroupedCard {
                 OverlayDropdownPreference(
-                    items = redactionModes.map { it.displayName() },
+                    items = redactionModes.map { stringResource(it.labelResource()) },
                     selectedIndex = redactionModes.indexOf(settings.eidRedaction),
-                    title = "EID redaction",
-                    summary = "Controls how the eUICC identifier is shown",
+                    title = stringResource(R.string.privacy_eid_redaction),
+                    summary = stringResource(R.string.privacy_eid_redaction_summary),
                     onSelectedIndexChange = { viewModel.setEidRedaction(redactionModes[it]) },
                 )
                 OverlayDropdownPreference(
-                    items = redactionModes.map { it.displayName() },
+                    items = redactionModes.map { stringResource(it.labelResource()) },
                     selectedIndex = redactionModes.indexOf(settings.iccidRedaction),
-                    title = "ICCID redaction",
-                    summary = "Controls how profile identifiers are shown",
+                    title = stringResource(R.string.privacy_iccid_redaction),
+                    summary = stringResource(R.string.privacy_iccid_redaction_summary),
                     onSelectedIndexChange = { viewModel.setIccidRedaction(redactionModes[it]) },
                 )
             }
         }
-        item { SectionHeading("Nekoko Cloud") }
+        item { SectionHeading(stringResource(R.string.privacy_nekoko_cloud)) }
         item {
             GroupedCard {
                 SwitchPreference(
                     checked = settings.loadOperatorIcons,
                     onCheckedChange = viewModel::setLoadOperatorIcons,
-                    title = "Operator icons",
-                    summary = "Resolve and cache profile artwork from operator-icons.pages.dev",
+                    title = stringResource(R.string.privacy_operator_icons),
+                    summary = stringResource(R.string.privacy_operator_icons_summary),
                 )
                 SwitchPreference(
                     checked = settings.estimateProfileSize,
                     onCheckedChange = viewModel::setEstimateProfileSize,
-                    title = "Profile size predictions",
-                    summary = "Use NekokoLPA reference data when a measured size is unavailable",
+                    title = stringResource(R.string.privacy_profile_size),
+                    summary = stringResource(R.string.privacy_profile_size_summary),
                 )
                 ArrowPreference(
-                    title = "Clear icon cache",
-                    summary = "Remove downloaded operator artwork and fetch it again when needed",
-                    onClick = viewModel::clearOperatorIconCache,
+                    title = stringResource(R.string.privacy_clear_cloud_caches),
+                    summary = stringResource(R.string.privacy_clear_cloud_caches_summary),
+                    onClick = viewModel::clearCloudCaches,
                 )
                 ArrowPreference(
-                    title = "Cloud data use",
-                    summary = "Downloads public icon catalogs and size references; HyperLPA does not upload installation reports",
+                    title = stringResource(R.string.privacy_cloud_data_use),
+                    summary = stringResource(R.string.privacy_cloud_data_use_summary),
                     enabled = false,
                 )
             }
@@ -737,54 +1156,58 @@ fun AdvancedSettingsScreen(
     var showImeiEditor by remember { mutableStateOf(false) }
     var imeiText by remember(settings.imei) { mutableStateOf(settings.imei) }
 
-    DetailLazyScaffold(title = "Advanced", onBack = onBack) { _ ->
-        item { SectionHeading("LPA protocol") }
+    DetailLazyScaffold(title = stringResource(R.string.advanced_title), onBack = onBack) { _ ->
+        item { SectionHeading(stringResource(R.string.advanced_lpa_protocol)) }
         item {
             GroupedCard {
                 ArrowPreference(
-                    title = "ES10x maximum segment size",
-                    summary = "${settings.es10xMss} bytes",
+                    title = stringResource(R.string.advanced_mss),
+                    summary = stringResource(R.string.advanced_mss_bytes, settings.es10xMss),
                     onClick = { showMssEditor = true },
                 )
                 ArrowPreference(
                     title = "IMEI",
-                    summary = settings.imei.ifBlank { "Not supplied to SM-DP+ sessions" },
+                    summary = settings.imei.ifBlank { stringResource(R.string.advanced_imei_not_supplied) },
                     onClick = { showImeiEditor = true },
                 )
                 ArrowPreference(
-                    title = "ISD-R application identifiers",
-                    summary = "${settings.isdrAids.size} selection candidates",
+                    title = stringResource(R.string.advanced_isdr_identifiers),
+                    summary = pluralStringResource(
+                        R.plurals.advanced_isdr_candidates,
+                        settings.isdrAids.size,
+                        settings.isdrAids.size,
+                    ),
                     onClick = { viewModel.navigate(AppRoute.AidManager) },
                 )
             }
         }
-        item { SectionHeading("Diagnostics") }
+        item { SectionHeading(stringResource(R.string.advanced_diagnostics)) }
         item {
             GroupedCard {
                 SwitchPreference(
                     checked = settings.developerMode,
                     onCheckedChange = viewModel::setDeveloperMode,
-                    title = "Developer mode",
-                    summary = "Expose protocol details and diagnostic controls",
+                    title = stringResource(R.string.advanced_developer_mode),
+                    summary = stringResource(R.string.advanced_developer_mode_summary),
                 )
                 SwitchPreference(
                     checked = settings.apduLogging,
                     onCheckedChange = viewModel::setApduLogging,
-                    title = "APDU logging",
-                    summary = "May contain sensitive card traffic; use only for debugging",
+                    title = stringResource(R.string.advanced_apdu_logging),
+                    summary = stringResource(R.string.advanced_apdu_logging_summary),
                     enabled = settings.developerMode,
                 )
                 SwitchPreference(
                     checked = settings.hideProfileDeletion,
                     onCheckedChange = viewModel::setHideProfileDeletion,
-                    title = "Hide profile deletion",
-                    summary = "Remove the delete action from profile details",
+                    title = stringResource(R.string.advanced_hide_deletion),
+                    summary = stringResource(R.string.advanced_hide_deletion_summary),
                 )
                 SwitchPreference(
                     checked = settings.hideEuiccMemoryReset,
                     onCheckedChange = viewModel::setHideEuiccMemoryReset,
-                    title = "Hide eUICC memory reset",
-                    summary = "Remove the reset action from eUICC information",
+                    title = stringResource(R.string.advanced_hide_memory_reset),
+                    summary = stringResource(R.string.advanced_hide_memory_reset_summary),
                 )
             }
         }
@@ -792,8 +1215,8 @@ fun AdvancedSettingsScreen(
 
     NumberEditorDialog(
         show = showMssEditor,
-        title = "Maximum segment size",
-        summary = "Enter a value from 32 to 255 bytes.",
+        title = stringResource(R.string.advanced_mss_dialog_title),
+        summary = stringResource(R.string.advanced_mss_dialog_summary),
         value = mssText,
         onValueChange = { mssText = it.filter(Char::isDigit).take(3) },
         onDismiss = { showMssEditor = false },
@@ -805,7 +1228,7 @@ fun AdvancedSettingsScreen(
     NumberEditorDialog(
         show = showImeiEditor,
         title = "IMEI",
-        summary = "Optional. HyperLPA stores it locally and supplies it only during profile downloads.",
+        summary = stringResource(R.string.advanced_imei_dialog_summary),
         value = imeiText,
         onValueChange = { imeiText = it.filter(Char::isDigit).take(16) },
         onDismiss = { showImeiEditor = false },
@@ -821,20 +1244,30 @@ fun BackupRestoreSettingsScreen(
     onBack: () -> Unit,
     viewModel: HyperLpaViewModel,
 ) {
-    val context = LocalContext.current
-    var busy by rememberSaveable { mutableStateOf(false) }
-    var pendingRestoreUri by remember { mutableStateOf<Uri?>(null) }
+    val context = LocalContext.current.applicationContext
+    val backupCreated = stringResource(R.string.backup_created)
+    val backupCreateFailed = stringResource(R.string.backup_create_failed)
+    val backupRestored = stringResource(R.string.backup_restored)
+    val backupRestoreFailed = stringResource(R.string.backup_restore_failed)
+    val backupResetComplete = stringResource(R.string.backup_reset_complete)
+    val backupResetFailed = stringResource(R.string.backup_reset_failed)
+    val busy by viewModel.backupOperationInProgress.collectAsStateWithLifecycle()
+    var showCreatePassword by rememberSaveable { mutableStateOf(false) }
+    var pendingRestoreUri by rememberSaveable { mutableStateOf<String?>(null) }
+    var backupPassword by remember { mutableStateOf("") }
+    var backupPasswordConfirmation by remember { mutableStateOf("") }
+    var restorePassword by remember { mutableStateOf("") }
     var showResetConfirmation by rememberSaveable { mutableStateOf(false) }
     val createBackupLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),
     ) { uri ->
-        uri?.let {
-            busy = true
-            viewModel.createBackup(it) { success ->
-                busy = false
+        if (uri == null) {
+            viewModel.cancelPreparedBackup()
+        } else {
+            viewModel.createPreparedBackup(uri) { success ->
                 Toast.makeText(
                     context,
-                    if (success) "Backup created" else "Could not create backup",
+                    if (success) backupCreated else backupCreateFailed,
                     Toast.LENGTH_SHORT,
                 ).show()
             }
@@ -843,39 +1276,35 @@ fun BackupRestoreSettingsScreen(
     val restoreBackupLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri ->
-        pendingRestoreUri = uri
+        pendingRestoreUri = uri?.toString()
     }
 
-    DetailLazyScaffold(title = "Backup & restore", onBack = onBack) { _ ->
-        item { SectionHeading("Backup") }
+    DetailLazyScaffold(title = stringResource(R.string.backup_title), onBack = onBack) { _ ->
+        item { SectionHeading(stringResource(R.string.backup_section)) }
         item {
             GroupedCard {
                 ArrowPreference(
-                    title = "Create backup",
-                    summary = "Save settings, tags, reminder dates, profile size data and custom icons",
+                    title = stringResource(R.string.backup_create),
+                    summary = stringResource(R.string.backup_create_summary),
                     enabled = !busy,
-                    onClick = {
-                        createBackupLauncher.launch(
-                            "hyperlpa-backup-${LocalDate.now()}.json",
-                        )
-                    },
+                    onClick = { showCreatePassword = true },
                 )
             }
         }
-        item { SectionHeading("Restore") }
+        item { SectionHeading(stringResource(R.string.backup_restore_section)) }
         item {
             GroupedCard {
                 ArrowPreference(
-                    title = "Restore backup",
-                    summary = "Replace local settings and saved profile data from a HyperLPA backup",
+                    title = stringResource(R.string.backup_restore),
+                    summary = stringResource(R.string.backup_restore_summary),
                     enabled = !busy,
                     onClick = {
                         restoreBackupLauncher.launch(arrayOf("application/json", "text/plain"))
                     },
                 )
                 ArrowPreference(
-                    title = "Reset settings",
-                    summary = "Restore every app setting to its default value",
+                    title = stringResource(R.string.backup_reset_settings),
+                    summary = stringResource(R.string.backup_reset_settings_summary),
                     enabled = !busy,
                     titleColor = top.yukonga.miuix.kmp.basic.BasicComponentDefaults.titleColor(
                         color = MiuixTheme.colorScheme.error,
@@ -884,73 +1313,158 @@ fun BackupRestoreSettingsScreen(
                 )
             }
         }
-        item { SectionHeading("Privacy") }
+        item { SectionHeading(stringResource(R.string.backup_privacy_section)) }
         item {
             GroupedCard {
                 ArrowPreference(
-                    title = "Keep backups secure",
-                    summary = "A backup can contain ICCIDs, EID, IMEI, remote reader addresses and custom images",
+                    title = stringResource(R.string.backup_keep_secure),
+                    summary = stringResource(R.string.backup_keep_secure_summary),
                     enabled = false,
                     onClick = {},
                 )
             }
         }
-        item { SectionHeading("Not included") }
+        item { SectionHeading(stringResource(R.string.backup_not_included)) }
         item {
             GroupedCard {
                 ArrowPreference(
-                    title = "eSIM profiles",
-                    summary = "Installed profiles remain on the eUICC and are not copied into the backup",
+                    title = stringResource(R.string.backup_esim_profiles),
+                    summary = stringResource(R.string.backup_esim_profiles_summary),
                     enabled = false,
                     onClick = {},
                 )
             }
+        }
+    }
+
+    OverlayDialog(
+        show = showCreatePassword,
+        title = stringResource(R.string.backup_protect_title),
+        summary = stringResource(R.string.backup_protect_summary),
+        onDismissRequest = {
+            showCreatePassword = false
+            backupPassword = ""
+            backupPasswordConfirmation = ""
+        },
+    ) {
+        Column {
+            TextField(
+                value = backupPassword,
+                onValueChange = { backupPassword = it.take(128) },
+                label = stringResource(R.string.backup_password),
+                useLabelAsPlaceholder = true,
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(12.dp))
+            TextField(
+                value = backupPasswordConfirmation,
+                onValueChange = { backupPasswordConfirmation = it.take(128) },
+                label = stringResource(R.string.backup_confirm_password),
+                useLabelAsPlaceholder = true,
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(18.dp))
+            SettingsConfirmationActions(
+                confirmText = stringResource(R.string.backup_encrypt_save),
+                enabled = backupPassword.length >= 10 && backupPassword == backupPasswordConfirmation,
+                onCancel = {
+                    showCreatePassword = false
+                    backupPassword = ""
+                    backupPasswordConfirmation = ""
+                },
+                onConfirm = {
+                    val password = backupPassword
+                    showCreatePassword = false
+                    backupPassword = ""
+                    backupPasswordConfirmation = ""
+                    if (!viewModel.prepareBackup(password)) {
+                        Toast.makeText(
+                            context,
+                            backupCreateFailed,
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                        return@SettingsConfirmationActions
+                    }
+                    runCatching {
+                        createBackupLauncher.launch(
+                            "hyperlpa-backup-${LocalDate.now()}.json",
+                        )
+                    }.onFailure {
+                        viewModel.cancelPreparedBackup()
+                        Toast.makeText(context, backupCreateFailed, Toast.LENGTH_SHORT).show()
+                    }
+                },
+            )
         }
     }
 
     OverlayDialog(
         show = pendingRestoreUri != null,
-        title = "Restore this backup?",
-        summary = "Current settings and saved profile metadata will be replaced. Installed eSIM profiles will not be changed.",
-        onDismissRequest = { pendingRestoreUri = null },
+        title = stringResource(R.string.backup_restore_dialog_title),
+        summary = stringResource(R.string.backup_restore_dialog_summary),
+        onDismissRequest = {
+            pendingRestoreUri = null
+            restorePassword = ""
+        },
     ) {
-        SettingsConfirmationActions(
-            confirmText = "Restore",
-            onCancel = { pendingRestoreUri = null },
-            onConfirm = {
-                val uri = pendingRestoreUri ?: return@SettingsConfirmationActions
-                pendingRestoreUri = null
-                busy = true
-                viewModel.restoreBackup(uri) { success ->
-                    busy = false
-                    Toast.makeText(
-                        context,
-                        if (success) "Backup restored" else "Could not restore backup",
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                }
-            },
-        )
+        Column {
+            TextField(
+                value = restorePassword,
+                onValueChange = { restorePassword = it.take(128) },
+                label = stringResource(R.string.backup_password),
+                useLabelAsPlaceholder = true,
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(18.dp))
+            SettingsConfirmationActions(
+                confirmText = stringResource(R.string.backup_decrypt_restore),
+                enabled = restorePassword.isNotEmpty(),
+                onCancel = {
+                    pendingRestoreUri = null
+                    restorePassword = ""
+                },
+                onConfirm = {
+                    val uri = pendingRestoreUri?.toUri() ?: return@SettingsConfirmationActions
+                    val password = restorePassword
+                    pendingRestoreUri = null
+                    restorePassword = ""
+                    viewModel.restoreBackup(uri, password) { success ->
+                        Toast.makeText(
+                            context,
+                            if (success) backupRestored else backupRestoreFailed,
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                },
+            )
+        }
     }
 
     OverlayDialog(
         show = showResetConfirmation,
-        title = "Reset all settings?",
-        summary = "App settings will return to their defaults. Saved tags, reminders, profile sizes and icons will be kept.",
+        title = stringResource(R.string.backup_reset_dialog_title),
+        summary = stringResource(R.string.backup_reset_dialog_summary),
         onDismissRequest = { showResetConfirmation = false },
     ) {
         SettingsConfirmationActions(
-            confirmText = "Reset settings",
+            confirmText = stringResource(R.string.backup_reset_settings),
             destructive = true,
             onCancel = { showResetConfirmation = false },
             onConfirm = {
                 showResetConfirmation = false
-                busy = true
                 viewModel.resetSettings { success ->
-                    busy = false
                     Toast.makeText(
                         context,
-                        if (success) "Settings reset" else "Could not reset settings",
+                        if (success) backupResetComplete else backupResetFailed,
                         Toast.LENGTH_SHORT,
                     ).show()
                 }
@@ -963,15 +1477,21 @@ fun BackupRestoreSettingsScreen(
 private fun SettingsConfirmationActions(
     confirmText: String,
     destructive: Boolean = false,
+    enabled: Boolean = true,
     onCancel: () -> Unit,
     onConfirm: () -> Unit,
 ) {
     Row(Modifier.fillMaxWidth()) {
-        TextButton(text = "Cancel", onClick = onCancel, modifier = Modifier.weight(1f))
+        TextButton(
+            text = stringResource(R.string.common_cancel),
+            onClick = onCancel,
+            modifier = Modifier.weight(1f),
+        )
         Spacer(Modifier.width(16.dp))
         TextButton(
             text = confirmText,
             onClick = onConfirm,
+            enabled = enabled,
             colors = if (destructive) {
                 ButtonDefaults.textButtonColors(textColor = MiuixTheme.colorScheme.error)
             } else {
@@ -989,33 +1509,62 @@ fun AidManagerScreen(
     onSave: (List<String>) -> Unit,
 ) {
     var text by remember(aids) { mutableStateOf(aids.joinToString("\n")) }
-    val parsed = text.lineSequence().map { it.trim().uppercase() }.filter(String::isNotEmpty).distinct().toList()
-    val invalid = parsed.filterNot { value -> value.length % 2 == 0 && value.all { it in "0123456789ABCDEF" } }
+    var inputTooLong by remember { mutableStateOf(false) }
+    val entries = remember(text) {
+        text.lineSequence()
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .take(MaximumAidCandidates + 1)
+            .toList()
+    }
+    val validation = remember(entries) { runCatching { validateIsdrAids(entries) } }
+    val parsed = validation.getOrNull().orEmpty()
+    val validationError = validation.exceptionOrNull() as? IsdrAidValidationException
+    val validationMessage = when {
+        inputTooLong -> stringResource(R.string.aid_manager_input_too_long)
+        validationError?.reason == IsdrAidValidationError.EMPTY -> stringResource(R.string.aid_manager_empty)
+        validationError?.reason == IsdrAidValidationError.TOO_MANY -> stringResource(
+            R.string.aid_manager_too_many,
+            MaximumAidCandidates,
+        )
+        validationError?.reason == IsdrAidValidationError.INVALID_AID -> stringResource(
+            R.string.aid_manager_invalid_line,
+            validationError.lineNumber ?: 1,
+        )
+        validationError?.reason == IsdrAidValidationError.DUPLICATE_AID -> stringResource(
+            R.string.aid_manager_duplicate_line,
+            validationError.lineNumber ?: 1,
+        )
+        else -> null
+    }
 
-    DetailLazyScaffold(title = "ISD-R AIDs", onBack = onBack) { _ ->
-        item { SectionHeading("Selection order") }
+    DetailLazyScaffold(title = stringResource(R.string.aid_manager_title), onBack = onBack) { _ ->
+        item { SectionHeading(stringResource(R.string.aid_manager_selection_order)) }
         item {
             GroupedCard {
                 Column(Modifier.padding(16.dp)) {
                     Text(
-                        text = "HyperLPA tries these application identifiers in order until the eUICC accepts one.",
+                        text = stringResource(R.string.aid_manager_summary),
                         style = MiuixTheme.textStyles.body2,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     )
                     Spacer(Modifier.height(14.dp))
                     TextField(
                         value = text,
-                        onValueChange = { text = it },
-                        label = "One hexadecimal AID per line",
+                        onValueChange = { value ->
+                            inputTooLong = value.length > MaximumAidEditorCharacters
+                            if (!inputTooLong) text = value
+                        },
+                        label = stringResource(R.string.aid_manager_input_label),
                         useLabelAsPlaceholder = true,
                         minLines = 7,
                         maxLines = 12,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    if (invalid.isNotEmpty()) {
+                    if (validationMessage != null) {
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            text = "${invalid.size} invalid ${if (invalid.size == 1) "entry" else "entries"}",
+                            text = validationMessage,
                             color = MiuixTheme.colorScheme.error,
                             style = MiuixTheme.textStyles.footnote1,
                         )
@@ -1023,17 +1572,17 @@ fun AidManagerScreen(
                     Spacer(Modifier.height(16.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         TextButton(
-                            text = "Restore defaults",
+                            text = stringResource(R.string.common_restore_defaults),
                             onClick = { text = DefaultIsdrAids.joinToString("\n") },
                             modifier = Modifier.weight(1f),
                         )
                         TextButton(
-                            text = "Save",
+                            text = stringResource(R.string.common_save),
                             onClick = {
                                 onSave(parsed)
                                 onBack()
                             },
-                            enabled = parsed.isNotEmpty() && invalid.isEmpty(),
+                            enabled = validation.isSuccess && !inputTooLong,
                             colors = ButtonDefaults.textButtonColorsPrimary(),
                             modifier = Modifier.weight(1f),
                         )
@@ -1051,6 +1600,8 @@ private fun TextEditorDialog(
     summary: String,
     value: String,
     onValueChange: (String) -> Unit,
+    error: String? = null,
+    confirmEnabled: Boolean = true,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
@@ -1064,14 +1615,26 @@ private fun TextEditorDialog(
             TextField(
                 value = value,
                 onValueChange = onValueChange,
-                label = "Addresses",
+                label = stringResource(R.string.reader_addresses_label),
                 useLabelAsPlaceholder = true,
                 minLines = 4,
                 maxLines = 8,
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (error != null) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = error,
+                    color = MiuixTheme.colorScheme.error,
+                    style = MiuixTheme.textStyles.footnote1,
+                )
+            }
             Spacer(Modifier.height(18.dp))
-            DialogButtons(onDismiss = onDismiss, onConfirm = onConfirm)
+            DialogButtons(
+                onDismiss = onDismiss,
+                onConfirm = onConfirm,
+                confirmEnabled = confirmEnabled,
+            )
         }
     }
 }
@@ -1112,27 +1675,96 @@ private fun NumberEditorDialog(
 private fun DialogButtons(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
+    confirmEnabled: Boolean = true,
 ) {
     Row(Modifier.fillMaxWidth()) {
-        TextButton(text = "Cancel", onClick = onDismiss, modifier = Modifier.weight(1f))
+        TextButton(
+            text = stringResource(R.string.common_cancel),
+            onClick = onDismiss,
+            modifier = Modifier.weight(1f),
+        )
         Spacer(Modifier.width(16.dp))
         TextButton(
-            text = "Confirm",
+            text = stringResource(R.string.common_confirm),
             onClick = onConfirm,
+            enabled = confirmEnabled,
             colors = ButtonDefaults.textButtonColorsPrimary(),
             modifier = Modifier.weight(1f),
         )
     }
 }
 
-private fun Enum<*>.displayName(): String = name
-    .lowercase()
-    .split('_')
-    .joinToString(" ") { word -> word.replaceFirstChar(Char::uppercase) }
+private fun ThemeMode.labelResource(): Int = when (this) {
+    ThemeMode.SYSTEM -> R.string.appearance_theme_system
+    ThemeMode.LIGHT -> R.string.appearance_theme_light
+    ThemeMode.DARK -> R.string.appearance_theme_dark
+}
 
-private fun PhoneFormatStrategy.displayName(): String = when (this) {
-    PhoneFormatStrategy.INTERNATIONAL_ONLY -> "E.164 Int'l Only"
-    PhoneFormatStrategy.INTERNATIONAL_AND_MOBILE -> "Int'l & Mobile"
-    PhoneFormatStrategy.INTERNATIONAL_AND_ALL -> "Int'l & National"
-    PhoneFormatStrategy.OFF -> "Off"
+private fun ThemePalette.labelResource(): Int = when (this) {
+    ThemePalette.TONAL_SPOT -> R.string.appearance_palette_tonal_spot
+    ThemePalette.NEUTRAL -> R.string.appearance_palette_neutral
+    ThemePalette.VIBRANT -> R.string.appearance_palette_vibrant
+    ThemePalette.EXPRESSIVE -> R.string.appearance_palette_expressive
+    ThemePalette.RAINBOW -> R.string.appearance_palette_rainbow
+    ThemePalette.FRUIT_SALAD -> R.string.appearance_palette_fruit_salad
+    ThemePalette.MONOCHROME -> R.string.appearance_palette_monochrome
+    ThemePalette.FIDELITY -> R.string.appearance_palette_fidelity
+    ThemePalette.CONTENT -> R.string.appearance_palette_content
+}
+
+private fun ThemeAccent.labelResource(): Int = when (this) {
+    ThemeAccent.SYSTEM -> R.string.appearance_accent_system
+    ThemeAccent.BLUE -> R.string.appearance_accent_blue
+    ThemeAccent.PURPLE -> R.string.appearance_accent_purple
+    ThemeAccent.PINK -> R.string.appearance_accent_pink
+    ThemeAccent.RED -> R.string.appearance_accent_red
+    ThemeAccent.ORANGE -> R.string.appearance_accent_orange
+    ThemeAccent.YELLOW -> R.string.appearance_accent_yellow
+    ThemeAccent.GREEN -> R.string.appearance_accent_green
+    ThemeAccent.TEAL -> R.string.appearance_accent_teal
+}
+
+private fun FloatingBottomBarStyle.labelResource(): Int = when (this) {
+    FloatingBottomBarStyle.MIUIX -> R.string.appearance_bar_style_miuix
+    FloatingBottomBarStyle.IOS_LIKE -> R.string.appearance_bar_style_ios
+}
+
+private fun NavigationLabels.labelResource(): Int = when (this) {
+    NavigationLabels.ICON_AND_TEXT -> R.string.appearance_bar_icons_text
+    NavigationLabels.ICON_ONLY -> R.string.appearance_bar_icons_only
+}
+
+private fun ProfileLayout.labelResource(): Int = when (this) {
+    ProfileLayout.LIST -> R.string.profile_layout_list
+    ProfileLayout.WATERFALL -> R.string.profile_layout_waterfall
+}
+
+private fun ProfileSort.labelResource(): Int = when (this) {
+    ProfileSort.SLOT_ORDER -> R.string.profile_sort_slot_order
+    ProfileSort.NAME -> R.string.profile_sort_name
+    ProfileSort.PROVIDER -> R.string.profile_sort_provider
+    ProfileSort.ICCID -> R.string.profile_sort_iccid
+    ProfileSort.STATE -> R.string.profile_sort_state
+}
+
+private fun PhoneFormatStrategy.labelResource(): Int = when (this) {
+    PhoneFormatStrategy.INTERNATIONAL_ONLY -> R.string.phone_format_e164_only
+    PhoneFormatStrategy.INTERNATIONAL_AND_MOBILE -> R.string.phone_format_international_mobile
+    PhoneFormatStrategy.INTERNATIONAL_AND_ALL -> R.string.phone_format_international_all
+    PhoneFormatStrategy.OFF -> R.string.phone_format_off
+}
+
+private fun RedactionMode.labelResource(): Int = when (this) {
+    RedactionMode.NONE -> R.string.redaction_none
+    RedactionMode.MIDDLE -> R.string.redaction_middle
+    RedactionMode.FULL -> R.string.redaction_full
+}
+
+private fun ReaderKind.labelResource(): Int = when (this) {
+    ReaderKind.NBRIDGE -> R.string.reader_kind_nbridge
+    ReaderKind.OMAPI -> R.string.reader_kind_omapi
+    ReaderKind.TELEPHONY -> R.string.reader_kind_telephony
+    ReaderKind.USB_CCID -> R.string.reader_kind_usb
+    ReaderKind.BLE -> R.string.reader_kind_bluetooth
+    ReaderKind.REMOTE -> R.string.reader_kind_remote
 }

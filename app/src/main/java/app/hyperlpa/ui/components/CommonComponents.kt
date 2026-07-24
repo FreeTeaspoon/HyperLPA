@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -84,14 +85,19 @@ enum class PageStateKind {
 fun PageStateHost(
     state: PageStateKind,
     modifier: Modifier = Modifier,
-    loadingMessage: String = "Loading",
-    emptyTitle: String = "Nothing here yet",
-    emptyMessage: String = "Content will appear here when available.",
-    errorTitle: String = "Something went wrong",
-    errorMessage: String = "Try again in a moment.",
+    loadingMessage: String? = null,
+    emptyTitle: String? = null,
+    emptyMessage: String? = null,
+    errorTitle: String? = null,
+    errorMessage: String? = null,
     onRetry: (() -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
+    val resolvedLoadingMessage = loadingMessage ?: stringResource(app.hyperlpa.R.string.common_loading)
+    val resolvedEmptyTitle = emptyTitle ?: stringResource(app.hyperlpa.R.string.common_nothing_here)
+    val resolvedEmptyMessage = emptyMessage ?: stringResource(app.hyperlpa.R.string.common_content_available_later)
+    val resolvedErrorTitle = errorTitle ?: stringResource(app.hyperlpa.R.string.common_something_went_wrong)
+    val resolvedErrorMessage = errorMessage ?: stringResource(app.hyperlpa.R.string.common_try_again_later)
     AnimatedContent(
         targetState = state,
         modifier = modifier,
@@ -99,11 +105,11 @@ fun PageStateHost(
         label = "page-state",
     ) { target ->
         when (target) {
-            PageStateKind.LOADING -> LoadingState(message = loadingMessage)
-            PageStateKind.EMPTY -> EmptyState(title = emptyTitle, message = emptyMessage)
+            PageStateKind.LOADING -> LoadingState(message = resolvedLoadingMessage)
+            PageStateKind.EMPTY -> EmptyState(title = resolvedEmptyTitle, message = resolvedEmptyMessage)
             PageStateKind.ERROR -> ErrorState(
-                title = errorTitle,
-                message = errorMessage,
+                title = resolvedErrorTitle,
+                message = resolvedErrorMessage,
                 onRetry = onRetry,
             )
             PageStateKind.CONTENT -> content()
@@ -161,7 +167,7 @@ fun ErrorState(
         message = message,
         modifier = modifier,
         icon = MiuixIcons.Refresh,
-        actionLabel = if (onRetry == null) null else "Try again",
+        actionLabel = if (onRetry == null) null else stringResource(app.hyperlpa.R.string.common_try_again),
         onAction = onRetry,
     )
 }
@@ -175,11 +181,16 @@ private fun MessageState(
     actionLabel: String?,
     onAction: (() -> Unit)?,
 ) {
+    val stateDescription = stringResource(
+        app.hyperlpa.R.string.common_state_description,
+        title,
+        message,
+    )
     Column(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 28.dp, vertical = 48.dp)
-            .semantics(mergeDescendants = true) { contentDescription = "$title. $message" },
+            .semantics(mergeDescendants = true) { contentDescription = stateDescription },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {

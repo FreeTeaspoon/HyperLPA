@@ -7,6 +7,7 @@ import android.se.omapi.Reader
 import android.se.omapi.SEService
 import android.se.omapi.Session
 import android.telephony.TelephonyManager
+import app.hyperlpa.R
 import app.hyperlpa.domain.model.ReaderInfo
 import app.hyperlpa.domain.model.ReaderKind
 import app.hyperlpa.lpa.ReaderEndpoint
@@ -38,9 +39,9 @@ internal class OmapiReaderProvider(context: Context) : ReaderProvider {
                         name = reader.name,
                         kind = ReaderKind.OMAPI,
                         detail = when (cardPresent) {
-                            true -> "Android OMAPI · card detected"
-                            false -> "Android OMAPI · no SIM card"
-                            null -> "Android OMAPI · card status unavailable"
+                            true -> appContext.getString(R.string.reader_omapi_card_detected)
+                            false -> appContext.getString(R.string.reader_omapi_no_card)
+                            null -> appContext.getString(R.string.reader_omapi_status_unavailable)
                         },
                         available = cardPresent != false,
                     ),
@@ -80,13 +81,21 @@ internal class OmapiReaderProvider(context: Context) : ReaderProvider {
 
     private suspend fun ensureService(): SEService = serviceMutex.withLock {
         service?.takeIf(SEService::isConnected)?.let { return@withLock it }
-        val connected = CompletableDeferred<SEService>()
-        lateinit var created: SEService
-        created = SEService(appContext, executor) {
-            if (!connected.isCompleted) connected.complete(created)
+        service?.let { stale -> runCatching { stale.shutdown() } }
+        service = null
+        val connected = CompletableDeferred<Unit>()
+        val created = SEService(appContext, executor) {
+            if (!connected.isCompleted) connected.complete(Unit)
         }
-        service = withTimeout(5_000) { connected.await() }
-        service!!
+        try {
+            withTimeout(5_000) { connected.await() }
+            check(created.isConnected) { "OMAPI service disconnected during startup" }
+            service = created
+            created
+        } catch (error: Throwable) {
+            runCatching { created.shutdown() }
+            throw error
+        }
     }
 
     override fun close() {
@@ -100,6 +109,10 @@ private class OmapiApduInterface(
     private val service: SEService,
     private val reader: Reader,
 ) : ApduInterface {
+    companion object {
+        private const val MaxApduBytes = 1024 * 1024
+    }
+
     private val nextHandle = AtomicInteger(1)
     private val channels = mutableMapOf<Int, Channel>()
     private var session: Session? = null
@@ -126,6 +139,7 @@ private class OmapiApduInterface(
 
     override fun logicalChannelOpen(aid: ByteArray): Int {
         val activeSession = session ?: throw IllegalStateException("OMAPI session is not connected")
+        require(aid.size in 5..16) { "OMAPI AID must be 5 to 16 bytes" }
         val channel = activeSession.openLogicalChannel(aid)
             ?: throw IllegalStateException("Unable to open ISD-R channel ${aid.toHexString()}")
         val handle = nextHandle.getAndIncrement()
@@ -134,14 +148,16 @@ private class OmapiApduInterface(
     }
 
     override fun logicalChannelClose(handle: Int) {
-        val channel = synchronized(channels) { channels.remove(handle) }
+        val channel = synchronized(channels) { channels[handle] }
             ?: throw IllegalArgumentException("Unknown OMAPI channel $handle")
         if (channel.isOpen) channel.close()
+        synchronized(channels) { channels.remove(handle) }
     }
 
     override fun transmit(handle: Int, tx: ByteArray): ByteArray {
         val channel = synchronized(channels) { channels[handle] }
             ?: throw IllegalArgumentException("Unknown OMAPI channel $handle")
+        require(tx.isNotEmpty() && tx.size <= MaxApduBytes) { "Invalid OMAPI APDU length" }
         repeat(10) {
             val response = channel.transmit(tx)
             if (!(response.size == 2 && response[0] == 0x66.toByte() && response[1] == 0x01.toByte())) {

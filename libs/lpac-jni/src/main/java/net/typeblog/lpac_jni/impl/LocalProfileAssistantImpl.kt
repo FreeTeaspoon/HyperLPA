@@ -16,6 +16,8 @@ import net.typeblog.lpac_jni.ProfileDownloadCallback
 import net.typeblog.lpac_jni.ProfileDownloadState
 import net.typeblog.lpac_jni.Version
 import kotlinx.coroutines.CancellationException
+import java.nio.CharBuffer
+import java.nio.charset.CharacterCodingException
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -89,18 +91,31 @@ class LocalProfileAssistantImpl(
     private val httpInterface = HttpInterfaceWrapper(rawHttpInterface)
 
     private var finalized = false
-    private var contextHandle: Long = LpacJni.createContext(isdrAid, apduInterface, httpInterface)
-
-    init {
-        if (LpacJni.euiccInit(contextHandle) < 0) {
-            throw IllegalArgumentException("Failed to initialize LPA")
-        }
-
-        val pkids = euiccInfo2?.euiccCiPKIdListForVerification ?: setOf()
-        httpInterface.usePublicKeyIds(pkids.toTypedArray())
+    private var euiccInitialized = false
+    private var contextHandle: Long = LpacJni.createContext(isdrAid, apduInterface, httpInterface).also {
+        check(it != 0L) { "Failed to allocate the native LPA context" }
     }
 
-    override fun setEs10xMss(mss: Byte) {
+    init {
+        try {
+            if (LpacJni.euiccInit(contextHandle) < 0) {
+                throw IllegalArgumentException("Failed to initialize LPA")
+            }
+            euiccInitialized = true
+
+            val pkids = euiccInfo2?.euiccCiPKIdListForVerification ?: setOf()
+            httpInterface.usePublicKeyIds(pkids.toTypedArray())
+        } catch (error: Throwable) {
+            if (euiccInitialized) runCatching { LpacJni.euiccFini(contextHandle) }
+            LpacJni.destroyContext(contextHandle)
+            contextHandle = 0L
+            finalized = true
+            throw error
+        }
+    }
+
+    override fun setEs10xMss(mss: Byte) = lock.withLock {
+        checkOpen()
         LpacJni.euiccSetMss(contextHandle, mss)
     }
 
@@ -117,40 +132,45 @@ class LocalProfileAssistantImpl(
 
     override val profiles: List<LocalProfileInfo>
         get() = lock.withLock {
+            checkOpen()
             val head = LpacJni.es10cGetProfilesInfo(contextHandle)
             var curr = head
-            val ret = mutableListOf<LocalProfileInfo>()
-            while (curr != 0L) {
-                val state = LocalProfileInfo.State.fromString(LpacJni.profileGetStateString(curr))
-                val clazz = ProfileClass.fromString(LpacJni.profileGetClassString(curr))
-                ret.add(
-                    LocalProfileInfo(
-                        LpacJni.profileGetIccid(curr),
-                        state,
-                        LpacJni.profileGetName(curr),
-                        LpacJni.profileGetNickname(curr),
-                        LpacJni.profileGetServiceProvider(curr),
-                        LpacJni.profileGetIsdpAid(curr),
-                        clazz,
-                        LpacJni.profileGetIcon(curr).takeIf(String::isNotEmpty),
-                        LpacJni.profileGetNotificationAddress(curr).takeIf(String::isNotEmpty),
-                        LpacJni.profileGetMccMnc(curr).takeIf(String::isNotEmpty),
-                        LpacJni.profileGetGid1(curr).takeIf(String::isNotEmpty),
-                        LpacJni.profileGetGid2(curr).takeIf(String::isNotEmpty),
-                        readStringSet(LpacJni.profileGetNotificationOperations(curr)),
-                        LpacJni.profileGetDpOid(curr).takeIf(String::isNotEmpty),
-                        readStringSet(LpacJni.profileGetPolicyRules(curr)),
+            try {
+                val ret = mutableListOf<LocalProfileInfo>()
+                while (curr != 0L) {
+                    val state = LocalProfileInfo.State.fromString(LpacJni.profileGetStateString(curr))
+                    val clazz = ProfileClass.fromString(LpacJni.profileGetClassString(curr))
+                    ret.add(
+                        LocalProfileInfo(
+                            LpacJni.profileGetIccid(curr),
+                            state,
+                            LpacJni.profileGetName(curr),
+                            LpacJni.profileGetNickname(curr),
+                            LpacJni.profileGetServiceProvider(curr),
+                            LpacJni.profileGetIsdpAid(curr),
+                            clazz,
+                            LpacJni.profileGetIcon(curr).takeIf(String::isNotEmpty),
+                            LpacJni.profileGetNotificationAddress(curr).takeIf(String::isNotEmpty),
+                            LpacJni.profileGetMccMnc(curr).takeIf(String::isNotEmpty),
+                            LpacJni.profileGetGid1(curr).takeIf(String::isNotEmpty),
+                            LpacJni.profileGetGid2(curr).takeIf(String::isNotEmpty),
+                            readStringSet(LpacJni.profileGetNotificationOperations(curr)),
+                            LpacJni.profileGetDpOid(curr).takeIf(String::isNotEmpty),
+                            readStringSet(LpacJni.profileGetPolicyRules(curr)),
+                        )
                     )
-                )
-                curr = LpacJni.profilesNext(curr)
-            }
+                    curr = LpacJni.profilesNext(curr)
+                }
 
-            LpacJni.profilesFree(head)
-            return ret
+                ret
+            } finally {
+                LpacJni.profilesFree(head)
+            }
         }
 
     override val notifications: List<LocalProfileNotification>
         get() = lock.withLock {
+            checkOpen()
             val head = LpacJni.es10bListNotification(contextHandle)
             var curr = head
 
@@ -178,10 +198,14 @@ class LocalProfileAssistantImpl(
         }
 
     override val eID: String
-        get() = lock.withLock { LpacJni.es10cGetEid(contextHandle)!! }
+        get() = lock.withLock {
+            checkOpen()
+            LpacJni.es10cGetEid(contextHandle)!!
+        }
 
     override val euiccInfo2: EuiccInfo2?
         get() = lock.withLock {
+            checkOpen()
             val cInfo = LpacJni.es10cexGetEuiccInfo2(contextHandle)
             if (cInfo == 0L) return null
 
@@ -216,6 +240,7 @@ class LocalProfileAssistantImpl(
 
     override val euiccConfiguredAddresses: EuiccConfiguredAddresses?
         get() = lock.withLock {
+            checkOpen()
             val cAddresses = LpacJni.es10aGetEuiccConfiguredAddresses(contextHandle)
             if (cAddresses == 0L) return null
 
@@ -229,39 +254,75 @@ class LocalProfileAssistantImpl(
             }
         }
 
+    override fun setDefaultSmdpAddress(address: String): Boolean = lock.withLock {
+        checkOpen()
+        LpacJni.es10aSetDefaultDpAddress(contextHandle, address) == 0
+    }
+
+    override fun discoverSmdpAddresses(smdsAddress: String, imei: String?): List<String> = lock.withLock {
+        checkOpen()
+        LpacJni.discoverSmdpAddresses(contextHandle, smdsAddress, imei)?.toList()
+            ?: throw LocalProfileAssistant.ProfileDiscoveryException(
+                LpacJni.downloadLastHttpError(contextHandle)
+                    ?: "The SM-DS profile discovery session failed",
+            )
+    }
+
     override fun enableProfile(iccid: String, refresh: Boolean): Boolean = lock.withLock {
+        checkOpen()
         LpacJni.es10cEnableProfile(contextHandle, iccid, refresh) == 0
     }
 
     override fun disableProfile(iccid: String, refresh: Boolean): Boolean = lock.withLock {
+        checkOpen()
         LpacJni.es10cDisableProfile(contextHandle, iccid, refresh) == 0
     }
 
     override fun deleteProfile(iccid: String): Boolean = lock.withLock {
+        checkOpen()
         LpacJni.es10cDeleteProfile(contextHandle, iccid) == 0
     }
 
     override fun downloadProfile(input: ProfileDownloadInput, callback: ProfileDownloadCallback) = lock.withLock {
+        checkOpen()
         var lastState: ProfileDownloadState? = null
         var cancelledByCallback = false
-        val res = LpacJni.downloadProfile(
-            contextHandle,
-            input.address,
-            input.matchingId,
-            input.imei,
-            input.confirmationCode,
-            ProfileDownloadCallback { state ->
-                lastState = state
-                callback.onStatusUpdate(state).also { accepted ->
-                    if (!accepted) cancelledByCallback = true
+        var oidVerificationFailure: SmdpOidVerificationException? = null
+        val res = try {
+            LpacJni.downloadProfile(
+                contextHandle,
+                input.address,
+                input.matchingId,
+                input.imei,
+                input.confirmationCode,
+                ProfileDownloadCallback { state ->
+                    lastState = state
+                    if (state is ProfileDownloadState.Authenticating && input.smdpOid != null) {
+                        try {
+                            verifySmdpCertificateOid(
+                                LpacJni.downloadServerCertificate(contextHandle),
+                                input.smdpOid,
+                            )
+                        } catch (error: SmdpOidVerificationException) {
+                            oidVerificationFailure = error
+                            return@ProfileDownloadCallback false
+                        }
+                    }
+                    callback.onStatusUpdate(state).also { accepted ->
+                        if (!accepted) cancelledByCallback = true
+                    }
                 }
-            }
-        )
+            )
+        } catch (error: Throwable) {
+            throwAfterCancelling(error)
+        }
 
         if (res != 0) {
+            oidVerificationFailure?.let { verificationFailure ->
+                throwAfterCancelling(verificationFailure)
+            }
             if (cancelledByCallback) {
-                LpacJni.cancelSessions(contextHandle)
-                throw CancellationException("Profile download cancelled")
+                throwAfterCancelling(CancellationException("Profile download cancelled"))
             }
             // Construct the error now to store any error information we _can_ access
             val nativeReason = LpacJni.downloadErrCodeToString(-res)
@@ -276,30 +337,32 @@ class LocalProfileAssistantImpl(
             )
 
             // Cancel sessions if possible. This will overwrite recorded errors from HTTP and APDU interfaces.
-            LpacJni.cancelSessions(contextHandle)
-
-            throw err
+            throwAfterCancelling(err)
         }
     }
 
     override fun deleteNotification(seqNumber: Long): Boolean = lock.withLock {
+        checkOpen()
         LpacJni.es10bDeleteNotification(contextHandle, seqNumber) == 0
     }
 
     override fun handleNotification(seqNumber: Long): Boolean = lock.withLock {
+        checkOpen()
         LpacJni.handleNotification(contextHandle, seqNumber).also {
             Log.d(TAG, "handleNotification $seqNumber = $it")
         } == 0
     }
 
     override fun setNickname(iccid: String, nickname: String) = lock.withLock {
+        checkOpen()
         val encoded = try {
-            Charsets.UTF_8.encode(nickname).array()
+            val buffer = Charsets.UTF_8.newEncoder().encode(CharBuffer.wrap(nickname))
+            ByteArray(buffer.remaining()).also(buffer::get)
         } catch (e: CharacterCodingException) {
             throw LocalProfileAssistant.ProfileNameIsInvalidUTF8Exception()
         }
 
-        if (encoded.size >= 64) {
+        if (nickname.codePointCount(0, nickname.length) > 64 || encoded.size > 64 * 4) {
             throw LocalProfileAssistant.ProfileNameTooLongException()
         }
 
@@ -310,17 +373,21 @@ class LocalProfileAssistantImpl(
         }
     }
 
-    override fun euiccMemoryReset() {
-        lock.withLock {
-            LpacJni.es10cEuiccMemoryReset(contextHandle)
-        }
+    override fun euiccMemoryReset(): Boolean = lock.withLock {
+        checkOpen()
+        LpacJni.es10cEuiccMemoryReset(contextHandle) == 0
     }
 
     override fun close() = lock.withLock {
         if (!finalized) {
-            LpacJni.euiccFini(contextHandle)
-            LpacJni.destroyContext(contextHandle)
-            finalized = true
+            try {
+                if (euiccInitialized) LpacJni.euiccFini(contextHandle)
+            } finally {
+                LpacJni.destroyContext(contextHandle)
+                contextHandle = 0L
+                euiccInitialized = false
+                finalized = true
+            }
         }
     }
 
@@ -330,6 +397,19 @@ class LocalProfileAssistantImpl(
             add(LpacJni.stringDeref(cursor))
             cursor = LpacJni.stringArrNext(cursor)
         }
+    }
+
+    private fun checkOpen() {
+        check(!finalized && contextHandle != 0L) { "The local profile assistant is closed" }
+    }
+
+    private fun throwAfterCancelling(error: Throwable): Nothing {
+        try {
+            LpacJni.cancelSessions(contextHandle)
+        } catch (cleanupError: Throwable) {
+            if (cleanupError !== error) error.addSuppressed(cleanupError)
+        }
+        throw error
     }
 }
 

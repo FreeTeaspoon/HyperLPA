@@ -3,8 +3,10 @@ package app.hyperlpa.ui.components
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
-import android.net.Uri
+import androidx.core.net.toUri
 import android.util.Base64
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -14,14 +16,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.hyperlpa.domain.model.ProfileInfo
+import app.hyperlpa.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.Icon
@@ -69,38 +74,65 @@ internal fun rememberProfileArtworkBitmap(
             cloudIcon?.contentHashCode(),
         ) {
             value = withContext(Dispatchers.IO) {
-                val custom = profile?.customIconUri
-                    ?.let { uri -> runCatching { Uri.parse(uri) }.getOrNull() }
-                    ?.let { uri ->
-                        runCatching {
-                            ImageDecoder.decodeBitmap(
-                                ImageDecoder.createSource(context.contentResolver, uri),
-                            ) { decoder, info, _ ->
-                                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-                                val longestEdge = maxOf(info.size.width, info.size.height)
-                                if (longestEdge > 192) {
-                                    val scale = 192f / longestEdge
-                                    decoder.setTargetSize(
-                                        (info.size.width * scale).toInt().coerceAtLeast(1),
-                                        (info.size.height * scale).toInt().coerceAtLeast(1),
-                                    )
-                                }
-                            }
-                        }.getOrNull()
-                    }
-                if (custom != null) return@withContext custom
-
-                val embedded = profile?.iconBase64
-                    ?.let { encoded -> runCatching { Base64.decode(encoded, Base64.DEFAULT) }.getOrNull() }
-                val embeddedBitmap = embedded?.let(::decodeProfileBitmap)
-                when {
-                    embedded != null && embedded.size >= 2_048 && embeddedBitmap != null -> embeddedBitmap
-                    cloudIcon != null -> decodeProfileBitmap(cloudIcon) ?: embeddedBitmap
-                    else -> embeddedBitmap
-                }
+                loadProfileArtworkBitmap(context, profile, cloudIcon)
             }
         }
         bitmap
+    }
+}
+
+@Composable
+internal fun rememberProfileArtworkBitmaps(
+    profiles: List<ProfileInfo>,
+    cloudIcons: Map<String, ByteArray>,
+    sourceKey: String?,
+    enabled: Boolean,
+): ProfileArtworkLoadState {
+    if (!enabled || profiles.isEmpty()) return ProfileArtworkLoadState.ReadyWithoutArtwork
+    val context = LocalContext.current
+    val artworkInputs = remember(profiles, cloudIcons) {
+        profiles.map { profile ->
+            ProfileArtworkInput(
+                iccid = profile.iccid,
+                customIconUri = profile.customIconUri,
+                embeddedIcon = profile.iconBase64,
+                cloudIcon = cloudIcons[profile.iccid],
+            )
+        }
+    }
+    val batchKey = ProfileArtworkBatchKey(sourceKey = sourceKey, inputs = artworkInputs)
+    val cachedState = ProfileArtworkBatchCache.get(batchKey)
+    return key(batchKey) {
+        val loadState by produceState(
+            initialValue = cachedState ?: ProfileArtworkLoadState.Loading,
+        ) {
+            if (cachedState != null) return@produceState
+            val bitmaps = withContext(Dispatchers.IO) {
+                buildMap<String, Bitmap> {
+                    profiles.forEach { profile ->
+                        loadProfileArtworkBitmap(
+                            context = context,
+                            profile = profile,
+                            cloudIcon = cloudIcons[profile.iccid],
+                        )?.let { bitmap -> put(profile.iccid, bitmap) }
+                    }
+                }
+            }
+            val readyState = ProfileArtworkLoadState(bitmaps = bitmaps, ready = true)
+            ProfileArtworkBatchCache.put(batchKey, readyState)
+            value = readyState
+        }
+        loadState
+    }
+}
+
+internal data class ProfileArtworkLoadState(
+    val bitmaps: Map<String, Bitmap>,
+    val ready: Boolean,
+) {
+    companion object {
+        val Loading = ProfileArtworkLoadState(bitmaps = emptyMap(), ready = false)
+        val ReadyWithoutArtwork = ProfileArtworkLoadState(bitmaps = emptyMap(), ready = true)
     }
 }
 
@@ -114,42 +146,117 @@ internal fun ResolvedProfileArtwork(
     cornerRadius: Dp = 12.dp,
 ) {
     val shape = RoundedCornerShape(cornerRadius)
-    if (bitmap != null) {
-        Surface(
-            modifier = modifier.size(size),
-            shape = shape,
-            color = MiuixTheme.colorScheme.secondaryContainer,
-        ) {
-            Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = "${profile.providerName.ifBlank { "Profile" }} icon",
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize().clip(shape),
-            )
+    Crossfade(
+        targetState = bitmap,
+        modifier = modifier.size(size),
+        animationSpec = tween(durationMillis = ProfileArtworkCrossfadeMillis),
+        label = "Profile artwork",
+    ) { resolvedBitmap ->
+        if (resolvedBitmap != null) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                shape = shape,
+                color = MiuixTheme.colorScheme.secondaryContainer,
+            ) {
+                Image(
+                    bitmap = resolvedBitmap.asImageBitmap(),
+                    contentDescription = stringResource(
+                        R.string.profile_artwork_description,
+                        profile.providerName.ifBlank { stringResource(R.string.profile_default_name) },
+                    ),
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize().clip(shape),
+                )
+            }
+        } else {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                shape = shape,
+                color = if (isEnabled) {
+                    MiuixTheme.colorScheme.primaryContainer
+                } else {
+                    MiuixTheme.colorScheme.secondaryContainer
+                },
+                contentColor = if (isEnabled) {
+                    MiuixTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MiuixTheme.colorScheme.onSecondaryContainer
+                },
+            ) {
+                Icon(
+                    imageVector = MiuixIcons.BankCards,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .padding(size * 0.24f)
+                        .size(size * 0.52f),
+                )
+            }
         }
-    } else {
-        Surface(
-            modifier = modifier.size(size),
-            shape = shape,
-            color = if (isEnabled) {
-                MiuixTheme.colorScheme.primaryContainer
-            } else {
-                MiuixTheme.colorScheme.secondaryContainer
-            },
-            contentColor = if (isEnabled) {
-                MiuixTheme.colorScheme.onPrimaryContainer
-            } else {
-                MiuixTheme.colorScheme.onSecondaryContainer
-            },
-        ) {
-            Icon(
-                imageVector = MiuixIcons.BankCards,
-                contentDescription = null,
-                modifier = Modifier
-                    .padding(size * 0.24f)
-                    .size(size * 0.52f),
-            )
+    }
+}
+
+private const val MaxEmbeddedIconBase64Characters = 1_500_000
+private const val ProfileArtworkCrossfadeMillis = 140
+
+private data class ProfileArtworkInput(
+    val iccid: String,
+    val customIconUri: String?,
+    val embeddedIcon: String?,
+    val cloudIcon: ByteArray?,
+)
+
+private data class ProfileArtworkBatchKey(
+    val sourceKey: String?,
+    val inputs: List<ProfileArtworkInput>,
+)
+
+private object ProfileArtworkBatchCache {
+    private var cached: Pair<ProfileArtworkBatchKey, ProfileArtworkLoadState>? = null
+
+    @Synchronized
+    fun get(key: ProfileArtworkBatchKey): ProfileArtworkLoadState? =
+        cached?.takeIf { (cachedKey, _) -> cachedKey == key }?.second
+
+    @Synchronized
+    fun put(key: ProfileArtworkBatchKey, state: ProfileArtworkLoadState) {
+        cached = key to state
+    }
+}
+
+private fun loadProfileArtworkBitmap(
+    context: android.content.Context,
+    profile: ProfileInfo?,
+    cloudIcon: ByteArray?,
+): Bitmap? {
+    val custom = profile?.customIconUri
+        ?.let { uri -> runCatching { uri.toUri() }.getOrNull() }
+        ?.let { uri ->
+            runCatching {
+                ImageDecoder.decodeBitmap(
+                    ImageDecoder.createSource(context.contentResolver, uri),
+                ) { decoder, info, _ ->
+                    decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                    val longestEdge = maxOf(info.size.width, info.size.height)
+                    if (longestEdge > 192) {
+                        val scale = 192f / longestEdge
+                        decoder.setTargetSize(
+                            (info.size.width * scale).toInt().coerceAtLeast(1),
+                            (info.size.height * scale).toInt().coerceAtLeast(1),
+                        )
+                    }
+                }
+            }.getOrNull()
         }
+    if (custom != null) return custom
+
+    val embedded = profile?.iconBase64
+        ?.takeIf { encoded -> encoded.length <= MaxEmbeddedIconBase64Characters }
+        ?.let { encoded -> runCatching { Base64.decode(encoded, Base64.DEFAULT) }.getOrNull() }
+    val embeddedBitmap = embedded?.let(::decodeProfileBitmap)
+    return when {
+        embedded != null && embedded.size >= 2_048 && embeddedBitmap != null -> embeddedBitmap
+        cloudIcon != null -> decodeProfileBitmap(cloudIcon) ?: embeddedBitmap
+        else -> embeddedBitmap
     }
 }
 

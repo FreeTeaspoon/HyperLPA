@@ -7,6 +7,7 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattConnectionSettings
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
@@ -31,7 +32,10 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets
 import java.util.UUID
+import java.util.Locale
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
@@ -44,14 +48,22 @@ private val RedTxUuid = shortUuid("6d65")
 private val SimLinkServiceUuid = UUID.fromString("6e400001-b5a3-f393-e0a9-e50e24dcca9e")
 private val SimLinkTxUuid = UUID.fromString("6e400002-b5a3-f393-e0a9-e50e24dcca9e")
 private val SimLinkRxUuid = UUID.fromString("6e400003-b5a3-f393-e0a9-e50e24dcca9e")
+private const val MaxBleMessageBytes = 1024 * 1024
+private const val MaxRedMessageBytes = 65_538
+private const val MaxBeeSimMessageBytes = 255 * 18
+private const val MaxPendingNotifications = 256
+private const val MaxDiscoveredBleReaders = 64
 
 private fun shortUuid(value: String): UUID = UUID.fromString("0000${value.lowercase()}$BluetoothBaseSuffix")
 
-private enum class BleProtocol(val label: String) {
-    RED("ESTKme RED"),
-    RED_2("ESTKme RED 2"),
-    SIM_LINK("SimLink"),
-    BEE_SIM("BeeSIM"),
+private enum class BleProtocol(
+    val label: String,
+    val requiresProfileSwitchRefresh: Boolean,
+) {
+    RED("ESTKme RED", false),
+    RED_2("ESTKme RED 2", false),
+    SIM_LINK("SimLink", false),
+    BEE_SIM("BeeSIM", true),
 }
 
 private data class BleReader(
@@ -69,13 +81,20 @@ internal class BluetoothLeReaderProvider(context: Context) : ReaderProvider {
         if (!hasScanPermission() || adapter?.isEnabled != true) return emptyList()
         val scanner = adapter.bluetoothLeScanner ?: return emptyList()
         val found = linkedMapOf<String, BleReader>()
+        fun remember(reader: BleReader) {
+            synchronized(found) {
+                if (reader.device.address in found || found.size < MaxDiscoveredBleReaders) {
+                    found[reader.device.address] = reader
+                }
+            }
+        }
         val callback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
-                result.toBleReader()?.let { found[it.device.address] = it }
+                result.toBleReader()?.let(::remember)
             }
 
             override fun onBatchScanResults(results: MutableList<ScanResult>) {
-                results.forEach { result -> result.toBleReader()?.let { found[it.device.address] = it } }
+                results.forEach { result -> result.toBleReader()?.let(::remember) }
             }
         }
         scanner.startScan(
@@ -88,7 +107,9 @@ internal class BluetoothLeReaderProvider(context: Context) : ReaderProvider {
         } finally {
             runCatching { scanner.stopScan(callback) }
         }
-        return found.values.map { reader ->
+        return synchronized(found) { found.values.toList() }
+            .sortedBy { it.device.address }
+            .map { reader ->
             ReaderEndpoint(
                 info = ReaderInfo(
                     id = "ble:${reader.protocol.name}:${reader.device.address}",
@@ -96,7 +117,11 @@ internal class BluetoothLeReaderProvider(context: Context) : ReaderProvider {
                     kind = ReaderKind.BLE,
                     detail = "${reader.protocol.label} · ${reader.device.address}",
                 ),
+                requiresProfileSwitchRefresh = reader.protocol.requiresProfileSwitchRefresh,
                 openApduInterface = {
+                    check(isBondedBleDevice(reader.device)) {
+                        "Bluetooth reader is no longer paired; pair it in Android settings before reconnecting"
+                    }
                     LogicalChannelBleApduInterface(
                         when (reader.protocol) {
                             BleProtocol.RED -> RedBleTransport(appContext, reader.device, false)
@@ -119,8 +144,9 @@ internal class BluetoothLeReaderProvider(context: Context) : ReaderProvider {
 
     @SuppressLint("MissingPermission")
     private fun ScanResult.toBleReader(): BleReader? {
+        if (!isBondedBleDevice(device)) return null
         val displayName = scanRecord?.deviceName.orEmpty().ifBlank { runCatching { device.name }.getOrNull().orEmpty() }
-        val lowerName = displayName.lowercase()
+        val lowerName = displayName.lowercase(Locale.ROOT)
         val serviceUuids = scanRecord?.serviceUuids.orEmpty().map { it.uuid }
         val protocol = when {
             lowerName.contains("beesim") -> BleProtocol.BEE_SIM
@@ -129,9 +155,20 @@ internal class BluetoothLeReaderProvider(context: Context) : ReaderProvider {
             lowerName.contains("estkme") || RedServiceUuid in serviceUuids -> BleProtocol.RED
             else -> null
         } ?: return null
-        return BleReader(device, displayName.ifBlank { protocol.label }, protocol)
+        val safeName = displayName
+            .filterNot(Char::isISOControl)
+            .trim()
+            .take(96)
+            .ifBlank { protocol.label }
+        return BleReader(device, safeName, protocol)
     }
 }
+
+@SuppressLint("MissingPermission")
+internal fun isBondedBleDevice(device: BluetoothDevice): Boolean =
+    runCatching { isBondedBleState(device.bondState) }.getOrDefault(false)
+
+internal fun isBondedBleState(bondState: Int): Boolean = bondState == BluetoothDevice.BOND_BONDED
 
 private interface BleApduTransport {
     val connected: Boolean
@@ -161,6 +198,7 @@ private class LogicalChannelBleApduInterface(
 
     override fun logicalChannelOpen(aid: ByteArray): Int = synchronized(transport) {
         check(transport.connected) { "Bluetooth reader is not connected" }
+        require(aid.size in 5..16) { "Bluetooth reader AID must be 5 to 16 bytes" }
         runCatching {
             transport.transceive("80AA00000AA9088100820101830107".hexToByteArray())
         }
@@ -200,6 +238,7 @@ private class LogicalChannelBleApduInterface(
         val channel = synchronized(channels) { channels[handle] }
             ?: throw IllegalArgumentException("Unknown Bluetooth channel $handle")
         val mapped = tx.copyOf()
+        require(mapped.isNotEmpty() && mapped.size <= MaxBleMessageBytes) { "Invalid Bluetooth APDU length" }
         mapped[0] = mapCla(mapped[0].toUByte().toInt(), channel).toByte()
         transport.transceive(mapped)
     }
@@ -263,6 +302,7 @@ private class RedBleTransport(
     }
 
     private fun exchangeRed(command: Int, payload: ByteArray): ByteArray {
+        require(payload.size <= 0xFFFF) { "RED BLE request is too large" }
         val request = byteArrayOf(command.toByte(), payload.size.toByte(), (payload.size ushr 8).toByte()) + payload
         gatt.clearNotifications()
         gatt.writeChunks(tx, request)
@@ -271,16 +311,19 @@ private class RedBleTransport(
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
         while (System.nanoTime() < deadline) {
             val packet = gatt.takeNotification(deadline) ?: continue
+            require(output.size + packet.size <= MaxRedMessageBytes) { "RED BLE response is too large" }
             output.addAll(packet.toList())
             if (expected < 0 && output.size >= 3) {
                 expected = 3 + output[1].toUByte().toInt() + (output[2].toUByte().toInt() shl 8)
             }
+            if (expected >= 0) require(output.size <= expected) { "RED BLE response exceeded its declared length" }
             if (expected >= 0 && output.size >= expected) return output.take(expected).toByteArray()
         }
         throw TimeoutException("RED BLE response timed out")
     }
 
     private fun exchangeCcid(messageType: Int, payload: ByteArray): ByteArray {
+        require(payload.size <= MaxBleMessageBytes) { "RED BLE 2 request is too large" }
         val request = ByteBuffer.allocate(10 + payload.size).order(ByteOrder.LITTLE_ENDIAN)
             .put(messageType.toByte())
             .putInt(payload.size)
@@ -297,11 +340,15 @@ private class RedBleTransport(
             if (packet.size >= 10 && packet[7].toInt() and 0x80 != 0 && packet.sliceArray(1..4).all { it == 0.toByte() }) {
                 continue
             }
+            require(output.size + packet.size <= 10 + MaxBleMessageBytes) { "RED BLE 2 response is too large" }
             output.addAll(packet.toList())
             if (expected < 0 && output.size >= 10) {
                 val header = output.take(10).toByteArray()
-                expected = 10 + ByteBuffer.wrap(header, 1, 4).order(ByteOrder.LITTLE_ENDIAN).int
+                val length = ByteBuffer.wrap(header, 1, 4).order(ByteOrder.LITTLE_ENDIAN).int
+                require(length in 0..MaxBleMessageBytes) { "RED BLE 2 returned an invalid CCID length" }
+                expected = 10 + length
             }
+            if (expected >= 0) require(output.size <= expected) { "RED BLE 2 response exceeded its declared length" }
             if (expected >= 0 && output.size >= expected) {
                 val response = output.take(expected).toByteArray()
                 val length = ByteBuffer.wrap(response, 1, 4).order(ByteOrder.LITTLE_ENDIAN).int
@@ -341,6 +388,7 @@ private class SimLinkBleTransport(
     }
 
     override fun transceive(apdu: ByteArray): ByteArray {
+        require(apdu.isNotEmpty() && apdu.size <= MaxBleMessageBytes) { "Invalid SimLink APDU length" }
         var command = apdu.toHexString()
         if (apdu.size == 5 && apdu[1] == 0xC0.toByte()) {
             val le = apdu.last().toUByte().toInt()
@@ -351,11 +399,14 @@ private class SimLinkBleTransport(
 
     private fun sendJson(request: JSONObject, retryChannel: Boolean): String {
         gatt.clearNotifications()
-        gatt.writeChunks(tx, request.toString().toByteArray(StandardCharsets.UTF_8))
+        val requestBytes = request.toString().toByteArray(StandardCharsets.UTF_8)
+        require(requestBytes.size <= MaxBleMessageBytes) { "SimLink request is too large" }
+        gatt.writeChunks(tx, requestBytes)
         val text = StringBuilder()
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
         while (System.nanoTime() < deadline) {
             val packet = gatt.takeNotification(deadline) ?: continue
+            require(text.length + packet.size <= MaxBleMessageBytes) { "SimLink response is too large" }
             text.append(String(packet, StandardCharsets.UTF_8))
             val response = runCatching { JSONObject(text.toString()) }.getOrNull() ?: continue
             if (response.has("error")) {
@@ -366,7 +417,11 @@ private class SimLinkBleTransport(
                 }
                 throw IllegalStateException(error.ifBlank { "SimLink APDU failed" })
             }
-            return response.optString("data")
+            return response.optString("data").also { data ->
+                require(data.length <= MaxBleMessageBytes * 2 && data.length % 2 == 0) {
+                    "SimLink returned an invalid APDU response"
+                }
+            }
         }
         throw TimeoutException("SimLink response timed out")
     }
@@ -402,8 +457,10 @@ private class BeeSimBleTransport(
     override fun transceive(apdu: ByteArray): ByteArray = exchange(apdu)
 
     private fun exchange(data: ByteArray): ByteArray {
+        require(data.size <= MaxBeeSimMessageBytes) { "BeeSIM request is too large" }
         gatt.clearNotifications()
         val total = maxOf(1, (data.size + 17) / 18)
+        require(total <= 255) { "BeeSIM request has too many frames" }
         repeat(total) { index ->
             val start = index * 18
             val end = minOf(start + 18, data.size)
@@ -421,11 +478,15 @@ private class BeeSimBleTransport(
             if (packet.size < 2) continue
             val totalFrames = packet[0].toUByte().toInt()
             val frame = packet[1].toUByte().toInt()
+            if (totalFrames !in 1..255 || frame !in 1..totalFrames) continue
             if (frame == 1) {
                 assembled.clear()
                 expectedFrames = totalFrames
+                lastFrame = 0
             }
+            if (expectedFrames != totalFrames) continue
             if (frame != lastFrame + 1 && frame != 1) continue
+            require(assembled.size + packet.size - 2 <= MaxBeeSimMessageBytes) { "BeeSIM response is too large" }
             assembled.addAll(packet.copyOfRange(2, packet.size).toList())
             lastFrame = frame
             if (expectedFrames > 0 && frame == expectedFrames) return assembled.toByteArray()
@@ -439,13 +500,15 @@ private class BleGattClient(
     private val context: Context,
     private val device: BluetoothDevice,
 ) {
-    private val notifications = LinkedBlockingQueue<ByteArray>()
+    private val notifications = LinkedBlockingQueue<ByteArray>(MaxPendingNotifications)
     private var connectionFuture: CompletableFuture<Unit>? = null
     private var servicesFuture: CompletableFuture<Unit>? = null
     private var writeFuture: CompletableFuture<Unit>? = null
     private var descriptorFuture: CompletableFuture<Unit>? = null
     private var mtuFuture: CompletableFuture<Int>? = null
     private var gatt: BluetoothGatt? = null
+    private var callbackExecutor: ExecutorService? = null
+    @Volatile
     var connected: Boolean = false
         private set
     var mtu: Int = 23
@@ -460,10 +523,15 @@ private class BleGattClient(
                 connected = true
                 connectionFuture?.complete(Unit)
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                connected = false
-                connectionFuture?.completeExceptionally(IllegalStateException("Bluetooth disconnected (status $status)"))
+                disposeUnexpectedConnection(
+                    callbackGatt = gatt,
+                    error = IllegalStateException("Bluetooth disconnected (status $status)"),
+                )
             } else if (status != BluetoothGatt.GATT_SUCCESS) {
-                connectionFuture?.completeExceptionally(IllegalStateException("Bluetooth connection failed with status $status"))
+                disposeUnexpectedConnection(
+                    callbackGatt = gatt,
+                    error = IllegalStateException("Bluetooth connection failed with status $status"),
+                )
             }
         }
 
@@ -478,8 +546,9 @@ private class BleGattClient(
         }
 
         @Deprecated("Deprecated in Android")
+        @Suppress("DEPRECATION")
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-            notifications.offer(characteristic.value?.copyOf() ?: byteArrayOf())
+            enqueueNotification(characteristic.value?.copyOf() ?: byteArrayOf())
         }
 
         override fun onCharacteristicChanged(
@@ -487,7 +556,7 @@ private class BleGattClient(
             characteristic: BluetoothGattCharacteristic,
             value: ByteArray,
         ) {
-            notifications.offer(value.copyOf())
+            enqueueNotification(value.copyOf())
         }
 
         override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
@@ -503,15 +572,42 @@ private class BleGattClient(
 
     fun connect() {
         if (connected) return
-        connectionFuture = CompletableFuture()
-        gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
-        connectionFuture!!.get(20, TimeUnit.SECONDS)
-        servicesFuture = CompletableFuture()
-        check(gatt?.discoverServices() == true) { "Bluetooth service discovery could not start" }
-        servicesFuture!!.get(20, TimeUnit.SECONDS)
-        mtuFuture = CompletableFuture()
-        if (gatt?.requestMtu(247) == true) runCatching { mtuFuture!!.get(8, TimeUnit.SECONDS) }
+        try {
+            connectionFuture = CompletableFuture()
+            gatt = startGattConnection() ?: error("Bluetooth connection could not start")
+            connectionFuture!!.get(20, TimeUnit.SECONDS)
+            servicesFuture = CompletableFuture()
+            check(gatt?.discoverServices() == true) { "Bluetooth service discovery could not start" }
+            servicesFuture!!.get(20, TimeUnit.SECONDS)
+            mtuFuture = CompletableFuture()
+            if (gatt?.requestMtu(247) == true) runCatching { mtuFuture!!.get(8, TimeUnit.SECONDS) }
+        } catch (error: Throwable) {
+            close()
+            throw error
+        }
     }
+
+    private fun startGattConnection(): BluetoothGatt? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.CINNAMON_BUN) {
+            val executor = Executors.newSingleThreadExecutor { runnable ->
+                Thread(runnable, "HyperLPA-BLE-GATT").apply { isDaemon = true }
+            }.also { callbackExecutor = it }
+            val settings = BluetoothGattConnectionSettings.Builder()
+                .setAutoConnectEnabled(false)
+                .setAutomaticMtuEnabled(false)
+                .setTransport(BluetoothDevice.TRANSPORT_LE)
+                .build()
+            device.connectGatt(settings, executor, callback)
+        } else {
+            @Suppress("DEPRECATION")
+            device.connectGatt(
+                context,
+                false,
+                callback,
+                BluetoothDevice.TRANSPORT_LE,
+                BluetoothDevice.PHY_LE_1M_MASK,
+            )
+        }
 
     fun requireService(uuid: UUID): BluetoothGattService = services.firstOrNull { it.uuid == uuid }
         ?: error("Bluetooth service $uuid was not found")
@@ -572,6 +668,46 @@ private class BleGattClient(
 
     fun clearNotifications() = notifications.clear()
 
+    private fun enqueueNotification(value: ByteArray) {
+        if (value.size > MaxBleMessageBytes) return
+        if (!notifications.offer(value)) {
+            notifications.poll()
+            notifications.offer(value)
+        }
+    }
+
+    private fun failPending(error: Throwable) {
+        connectionFuture?.completeExceptionally(error)
+        servicesFuture?.completeExceptionally(error)
+        writeFuture?.completeExceptionally(error)
+        descriptorFuture?.completeExceptionally(error)
+        mtuFuture?.completeExceptionally(error)
+    }
+
+    private fun disposeUnexpectedConnection(callbackGatt: BluetoothGatt, error: Throwable) {
+        val (ownsConnection, executor) = synchronized(this) {
+            if (gatt !== callbackGatt) {
+                false to null
+            } else {
+                gatt = null
+                true to callbackExecutor.also { callbackExecutor = null }
+            }
+        }
+        if (!ownsConnection) {
+            // A delayed callback from an already-replaced connection must not invalidate the
+            // replacement. The callback-owned object still needs to be released below.
+            runCatching { callbackGatt.close() }
+            return
+        }
+        connected = false
+        failPending(error)
+        notifications.clear()
+        // A disconnected BluetoothGatt cannot be reused. Closing it here also ensures the
+        // ApduInterface reports invalid immediately and a later repository refresh reconnects.
+        runCatching { callbackGatt.close() }
+        executor?.shutdown()
+    }
+
     fun takeNotification(deadlineNanos: Long): ByteArray? {
         val remaining = deadlineNanos - System.nanoTime()
         if (remaining <= 0) return null
@@ -580,9 +716,12 @@ private class BleGattClient(
 
     fun close() {
         connected = false
+        failPending(IllegalStateException("Bluetooth connection closed"))
         runCatching { gatt?.disconnect() }
         runCatching { gatt?.close() }
         gatt = null
+        callbackExecutor?.shutdownNow()
+        callbackExecutor = null
         notifications.clear()
     }
 }

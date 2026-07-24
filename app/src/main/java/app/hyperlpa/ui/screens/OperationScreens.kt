@@ -6,6 +6,8 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.ImageDecoder
+import android.net.Uri
 import android.text.format.DateFormat
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -34,25 +36,40 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
+import com.google.mlkit.vision.barcode.BarcodeScannerOptions
+import com.google.mlkit.vision.barcode.BarcodeScanning
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.common.InputImage
+import app.hyperlpa.R
 import app.hyperlpa.data.metadata.normalizeProfileTags
 import app.hyperlpa.data.metadata.providerIconKey
 import app.hyperlpa.data.settings.AppSettings
 import app.hyperlpa.data.settings.RedactionMode
 import app.hyperlpa.domain.model.ActivityLogEntry
 import app.hyperlpa.domain.model.DownloadRequest
+import app.hyperlpa.domain.model.DownloadRequestError
+import app.hyperlpa.domain.model.DownloadRequestException
 import app.hyperlpa.domain.model.EuiccInfo
 import app.hyperlpa.domain.model.LogLevel
 import app.hyperlpa.domain.model.LpaNotification
@@ -64,9 +81,9 @@ import app.hyperlpa.domain.model.ProfileState
 import app.hyperlpa.domain.model.ReaderInfo
 import app.hyperlpa.domain.model.ReaderKind
 import app.hyperlpa.domain.model.analyzeIccid
+import app.hyperlpa.domain.model.takeUnicodeCodePoints
 import app.hyperlpa.ui.components.EmptyState
 import app.hyperlpa.ui.components.GroupedCard
-import app.hyperlpa.ui.components.ProfileArtwork
 import app.hyperlpa.ui.components.ResolvedProfileArtwork
 import app.hyperlpa.ui.components.SectionHeading
 import app.hyperlpa.ui.components.DetailLazyScaffold
@@ -74,7 +91,16 @@ import app.hyperlpa.ui.components.FormattedProfileDisplayName
 import app.hyperlpa.ui.components.formatProfileDisplayName
 import app.hyperlpa.ui.components.rememberProfileArtworkBitmap
 import app.hyperlpa.ui.components.redactIdentifier
+import app.hyperlpa.ui.components.effect.AccentGradientBackdrop
 import app.hyperlpa.ui.components.effect.ProfileGradientBackdrop
+import app.hyperlpa.provisioning.BatchDownloadError
+import app.hyperlpa.provisioning.BatchDownloadStatus
+import app.hyperlpa.provisioning.BatchDownloadUiState
+import app.hyperlpa.provisioning.MaxProvisioningQueueItems
+import app.hyperlpa.provisioning.parseBatchDownloadLine
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
+import java.nio.ByteBuffer
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
@@ -82,14 +108,16 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
-import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
-import top.yukonga.miuix.kmp.basic.ProgressIndicatorDefaults
+import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.Surface
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
@@ -129,8 +157,8 @@ fun ProfileDetailsScreen(
     onSetTags: (Set<String>) -> Unit,
     onSetReminder: (String, Instant?) -> Unit,
     onRequestNotificationPermission: ((Boolean) -> Unit) -> Unit,
-    onSetIcon: (uri: String?, applyToProvider: Boolean) -> Unit,
-    onApplyIconToProvider: () -> Unit,
+    onSetIcon: (uri: String?, applyToProvider: Boolean, onComplete: (Boolean) -> Unit) -> Unit,
+    onApplyIconToProvider: (onComplete: (Boolean) -> Unit) -> Unit,
 ) {
     var showRename by remember { mutableStateOf(false) }
     var nickname by remember(profile?.nickname) { mutableStateOf(profile?.nickname.orEmpty()) }
@@ -142,16 +170,27 @@ fun ProfileDetailsScreen(
     var showReminder by remember { mutableStateOf(false) }
     var showIconOptions by remember { mutableStateOf(false) }
     var showRemoveProfileIconConfirmation by remember { mutableStateOf(false) }
-    var pickForProvider by remember { mutableStateOf(false) }
+    var pickForProvider by rememberSaveable(profile?.iccid) { mutableStateOf(false) }
     var technicalDetailsExpanded by rememberSaveable(profile?.iccid) { mutableStateOf(false) }
     val context = LocalContext.current
-    val providerLabel = profile?.providerName?.trim().orEmpty().ifBlank { "this provider" }
+    val reminderPermissionRequired = stringResource(R.string.profile_reminder_permission_required)
+    val iconImportFailed = stringResource(R.string.profile_icon_import_failed)
+    val reportIconResult: (Boolean) -> Unit = { success ->
+        if (!success) {
+            Toast.makeText(context.applicationContext, iconImportFailed, Toast.LENGTH_LONG).show()
+        }
+    }
+    val providerFallback = stringResource(R.string.profile_provider_fallback)
+    val providerLabel = profile?.providerName?.trim().orEmpty().ifBlank { providerFallback }
     val canShareByProvider = providerIconKey(profile?.providerName) != null
     val pickIcon = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        uri?.let { onSetIcon(it.toString(), pickForProvider) }
+        val applyToProvider = pickForProvider
+        pickForProvider = false
+        uri?.let { onSetIcon(it.toString(), applyToProvider, reportIconResult) }
     }
-    val displayName = remember(profile, settings.phoneFormatStrategy) {
-        profile?.let { formatProfileDisplayName(it, settings.phoneFormatStrategy) }
+    val fallbackName = stringResource(app.hyperlpa.R.string.profile_default_name)
+    val displayName = remember(profile, settings.phoneFormatStrategy, fallbackName) {
+        profile?.let { formatProfileDisplayName(it, settings.phoneFormatStrategy, fallbackName) }
     }
     val formattedNickname = remember(profile, settings.phoneFormatStrategy) {
         profile?.nickname?.takeIf(String::isNotBlank)?.let { nicknameValue ->
@@ -169,7 +208,7 @@ fun ProfileDetailsScreen(
     val collapsedTitle = displayName?.nameText
         ?.takeIf(String::isNotBlank)
         ?: profile?.providerName?.takeIf(String::isNotBlank)
-        ?: "Profile"
+        ?: stringResource(R.string.profile_collapsed_title)
 
     DetailLazyScaffold(
         title = "",
@@ -183,8 +222,8 @@ fun ProfileDetailsScreen(
         if (profile == null) {
             item {
                 EmptyState(
-                    title = "Profile unavailable",
-                    message = "Reconnect the eUICC reader and refresh the profile list.",
+                    title = stringResource(R.string.profile_unavailable_title),
+                    message = stringResource(R.string.profile_unavailable_message),
                     icon = MiuixIcons.BankCards,
                 )
             }
@@ -197,36 +236,40 @@ fun ProfileDetailsScreen(
                     displayName = requireNotNull(displayName),
                 )
             }
-            item { SectionHeading("Profile") }
+            item { SectionHeading(stringResource(R.string.profile_section)) }
             item {
                 GroupedCard {
                     SwitchPreference(
                         checked = profile.state == ProfileState.ENABLED,
                         onCheckedChange = onEnableChange,
-                        title = "Enabled",
+                        title = stringResource(R.string.profile_enabled),
                         summary = if (profile.state == ProfileState.ENABLED) {
-                            "This profile is currently active"
+                            stringResource(R.string.profile_enabled_summary)
                         } else {
-                            "Enable this profile on the connected eUICC"
+                            stringResource(R.string.profile_disabled_summary)
                         },
                     )
                     ArrowPreference(
-                        title = "Display name",
-                        summary = formattedNickname ?: "Use profile name",
+                        title = stringResource(R.string.profile_detail_display_name),
+                        summary = formattedNickname ?: stringResource(R.string.profile_use_profile_name),
                         onClick = { showRename = true },
                     )
                     ArrowPreference(
-                        title = "Custom icon",
+                        title = stringResource(R.string.profile_custom_icon),
                         summary = when {
-                            hasProfileIcon -> "Using a custom image for this profile"
-                            hasProviderIcon -> "Using a shared icon for $providerLabel"
-                            else -> "Choose a photo to replace the operator icon"
+                            hasProfileIcon -> stringResource(R.string.profile_custom_icon_profile_summary)
+                            hasProviderIcon -> stringResource(
+                                R.string.profile_custom_icon_provider_summary,
+                                providerLabel,
+                            )
+                            else -> stringResource(R.string.profile_custom_icon_choose_summary)
                         },
                         onClick = { showIconOptions = true },
                     )
                     ArrowPreference(
-                        title = "Tags",
-                        summary = profile.tags.takeIf { it.isNotEmpty() }?.joinToString() ?: "No tags",
+                        title = stringResource(R.string.profile_tags),
+                        summary = profile.tags.takeIf { it.isNotEmpty() }?.joinToString()
+                            ?: stringResource(R.string.profile_no_tags),
                         onClick = {
                             editableTags = profile.tags
                             newTag = ""
@@ -234,13 +277,14 @@ fun ProfileDetailsScreen(
                         },
                     )
                     ArrowPreference(
-                        title = "Reminder",
-                        summary = profile.reminderAt?.formatDateTime() ?: "No reminder scheduled",
+                        title = stringResource(R.string.profile_reminder),
+                        summary = profile.reminderAt?.formatDateTime()
+                            ?: stringResource(R.string.profile_no_reminder),
                         onClick = { showReminder = true },
                     )
                 }
             }
-            item { SectionHeading("Identifiers") }
+            item { SectionHeading(stringResource(R.string.profile_identifiers_section)) }
             item {
                 GroupedCard {
                     ValuePreference(
@@ -248,57 +292,90 @@ fun ProfileDetailsScreen(
                         value = redactIdentifier(profile.iccid, settings.iccidRedaction),
                     )
                     ValuePreference(
-                        title = "ICCID checksum",
+                        title = stringResource(R.string.profile_iccid_checksum),
                         value = when (iccidDetails?.checksumValid) {
-                            true -> "Valid"
-                            false -> "Invalid"
-                            null -> "Unavailable"
+                            true -> stringResource(R.string.profile_checksum_valid)
+                            false -> stringResource(R.string.profile_checksum_invalid)
+                            null -> stringResource(R.string.common_unavailable)
                         },
                     )
                     if (settings.iccidRedaction == RedactionMode.NONE) {
                         iccidDetails?.issuerPrefix?.let { prefix ->
-                            ValuePreference(title = "Issuer prefix", value = prefix)
+                            ValuePreference(title = stringResource(R.string.profile_issuer_prefix), value = prefix)
                         }
                     }
-                    ValuePreference(title = "ISD-P AID", value = profile.isdPAid.ifBlank { "Unavailable" })
+                    ValuePreference(
+                        title = "ISD-P AID",
+                        value = profile.isdPAid.ifBlank { stringResource(R.string.common_unavailable) },
+                    )
                 }
             }
-            item { SectionHeading("Metadata") }
+            item { SectionHeading(stringResource(R.string.profile_metadata_section)) }
             item {
                 GroupedCard {
-                    ValuePreference(title = "Profile name", value = profile.name.ifBlank { "Unavailable" })
-                    ValuePreference(title = "eUICC nickname", value = profile.nickname.ifBlank { "Not set" })
-                    ValuePreference(title = "Profile class", value = profile.profileClass.displayName())
-                    ValuePreference(title = "Provider", value = profile.providerName.ifBlank { "Unknown" })
+                    ValuePreference(
+                        title = stringResource(R.string.profile_name),
+                        value = profile.name.ifBlank { stringResource(R.string.common_unavailable) },
+                    )
+                    ValuePreference(
+                        title = stringResource(R.string.profile_euicc_nickname),
+                        value = profile.nickname.ifBlank { stringResource(R.string.profile_not_set) },
+                    )
+                    ValuePreference(
+                        title = stringResource(R.string.profile_class),
+                        value = stringResource(profile.profileClass.labelResource()),
+                    )
+                    ValuePreference(
+                        title = stringResource(R.string.profile_provider),
+                        value = profile.providerName.ifBlank { stringResource(R.string.profile_unknown_value) },
+                    )
                     if (!profile.mcc.isNullOrBlank() || !profile.mnc.isNullOrBlank()) {
                         ValuePreference(
-                            title = "Network",
+                            title = stringResource(R.string.profile_network),
                             value = listOfNotNull(
-                                profile.mcc?.let { "MCC $it" },
-                                profile.mnc?.let { "MNC $it" },
+                                profile.mcc?.let { stringResource(R.string.profile_mcc, it) },
+                                profile.mnc?.let { stringResource(R.string.profile_mnc, it) },
                             ).joinToString(" · "),
                         )
                     }
                     profile.estimatedBytes?.takeIf { it > 0 }?.let { bytes ->
                         ValuePreference(
-                            title = if (profile.sizeIsEstimated) "Estimated profile storage" else "Measured profile storage",
-                            value = "${if (profile.sizeIsEstimated) "~" else ""}${formatBytes(bytes.toInt())}",
+                            title = stringResource(
+                                if (profile.sizeIsEstimated) {
+                                    R.string.profile_estimated_storage
+                                } else {
+                                    R.string.profile_measured_storage
+                                },
+                            ),
+                            value = if (profile.sizeIsEstimated) {
+                                stringResource(R.string.profile_size_estimated, formatBytes(bytes.toInt()))
+                            } else {
+                                formatBytes(bytes.toInt())
+                            },
                         )
                     }
                 }
             }
-            item { SectionHeading("Advanced") }
+            item { SectionHeading(stringResource(R.string.profile_advanced_section)) }
             item {
                 GroupedCard {
                     BasicComponent(
-                        title = "Technical profile data",
-                        summary = if (technicalDetailsExpanded) "Hide technical fields" else {
-                            "Group identifiers, notification configuration and policy rules"
+                        title = stringResource(R.string.profile_technical_data),
+                        summary = if (technicalDetailsExpanded) {
+                            stringResource(R.string.profile_technical_hide)
+                        } else {
+                            stringResource(R.string.profile_technical_summary)
                         },
                         endActions = {
                             Icon(
                                 imageVector = if (technicalDetailsExpanded) MiuixIcons.ExpandLess else MiuixIcons.ExpandMore,
-                                contentDescription = if (technicalDetailsExpanded) "Show less" else "Show more",
+                                contentDescription = stringResource(
+                                    if (technicalDetailsExpanded) {
+                                        R.string.accessibility_show_less
+                                    } else {
+                                        R.string.accessibility_show_more
+                                    },
+                                ),
                                 modifier = Modifier.size(22.dp),
                             )
                         },
@@ -313,18 +390,18 @@ fun ProfileDetailsScreen(
                             profile.gid1?.takeIf(String::isNotBlank)?.let { ValuePreference("GID1", it) }
                             profile.gid2?.takeIf(String::isNotBlank)?.let { ValuePreference("GID2", it) }
                             profile.smdpAddress?.takeIf(String::isNotBlank)?.let {
-                                ValuePreference("Notification address", it)
+                                ValuePreference(stringResource(R.string.profile_notification_address), it)
                             }
                             if (profile.notificationOperations.isNotEmpty()) {
                                 ValuePreference(
-                                    "Notification events",
+                                    stringResource(R.string.profile_notification_events),
                                     formatTechnicalValues(profile.notificationOperations),
                                 )
                             }
                             profile.dpOid?.takeIf(String::isNotBlank)?.let { ValuePreference("DP OID", it) }
                             if (profile.profilePolicyRules.isNotEmpty()) {
                                 ValuePreference(
-                                    "Profile policy rules",
+                                    stringResource(R.string.profile_policy_rules),
                                     formatTechnicalValues(profile.profilePolicyRules),
                                 )
                             }
@@ -335,19 +412,22 @@ fun ProfileDetailsScreen(
                                 profile.dpOid.isNullOrBlank() &&
                                 profile.profilePolicyRules.isEmpty()
                             ) {
-                                ValuePreference("Technical data", "No additional fields reported")
+                                ValuePreference(
+                                    stringResource(R.string.profile_technical_data_label),
+                                    stringResource(R.string.profile_technical_empty),
+                                )
                             }
                         }
                     }
                 }
             }
             if (!settings.hideProfileDeletion) {
-                item { SectionHeading("Danger zone") }
+                item { SectionHeading(stringResource(R.string.profile_danger_zone)) }
                 item {
                     GroupedCard {
                         ArrowPreference(
-                            title = "Delete profile",
-                            summary = "Permanently remove this profile from the eUICC",
+                            title = stringResource(R.string.profile_delete),
+                            summary = stringResource(R.string.profile_delete_summary),
                             titleColor = top.yukonga.miuix.kmp.basic.BasicComponentDefaults.titleColor(
                                 color = MiuixTheme.colorScheme.error,
                             ),
@@ -361,15 +441,15 @@ fun ProfileDetailsScreen(
 
     OverlayDialog(
         show = showRename,
-        title = "Rename profile",
-        summary = "The nickname is stored on the eUICC.",
+        title = stringResource(R.string.profile_rename),
+        summary = stringResource(R.string.profile_rename_summary),
         onDismissRequest = { showRename = false },
     ) {
         Column {
             TextField(
                 value = nickname,
-                onValueChange = { nickname = it.take(64) },
-                label = "Profile name",
+                onValueChange = { nickname = it.takeUnicodeCodePoints(64) },
+                label = stringResource(R.string.profile_name),
                 useLabelAsPlaceholder = true,
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
@@ -377,7 +457,7 @@ fun ProfileDetailsScreen(
             Spacer(Modifier.height(18.dp))
             DialogActionRow(
                 onCancel = { showRename = false },
-                confirmText = "Rename",
+                confirmText = stringResource(R.string.profile_rename_action),
                 onConfirm = {
                     onRename(nickname.trim())
                     showRename = false
@@ -388,13 +468,13 @@ fun ProfileDetailsScreen(
 
     OverlayDialog(
         show = showDelete && !settings.hideProfileDeletion,
-        title = "Delete this profile?",
-        summary = "This cannot be undone. You may need the original activation code to install it again.",
+        title = stringResource(R.string.profile_delete_first_title),
+        summary = stringResource(R.string.profile_delete_first_summary),
         onDismissRequest = { showDelete = false },
     ) {
         DialogActionRow(
             onCancel = { showDelete = false },
-            confirmText = "Continue",
+            confirmText = stringResource(R.string.common_continue),
             destructive = true,
             onConfirm = {
                 showDelete = false
@@ -405,13 +485,13 @@ fun ProfileDetailsScreen(
 
     OverlayDialog(
         show = showDeleteConfirmation && !settings.hideProfileDeletion,
-        title = "Delete profile permanently?",
-        summary = "This is your final confirmation. The profile will be permanently removed from the eUICC.",
+        title = stringResource(R.string.profile_delete_final_title),
+        summary = stringResource(R.string.profile_delete_final_summary),
         onDismissRequest = { showDeleteConfirmation = false },
     ) {
         DialogActionRow(
             onCancel = { showDeleteConfirmation = false },
-            confirmText = "Delete profile",
+            confirmText = stringResource(R.string.profile_delete),
             destructive = true,
             onConfirm = {
                 showDeleteConfirmation = false
@@ -423,7 +503,7 @@ fun ProfileDetailsScreen(
 
     OverlayBottomSheet(
         show = showTags,
-        title = "Profile tags",
+        title = stringResource(R.string.profile_tags_title),
         onDismissRequest = { showTags = false },
     ) {
         ProfileTagsEditor(
@@ -442,11 +522,11 @@ fun ProfileDetailsScreen(
 
     OverlayBottomSheet(
         show = showReminder,
-        title = "Profile reminder",
+        title = stringResource(R.string.profile_reminder_title_sheet),
         onDismissRequest = { showReminder = false },
     ) {
         Column {
-            val label = profile?.nickname?.ifBlank { profile.name }.orEmpty().ifBlank { "eSIM profile" }
+            val label = profile?.nickname?.ifBlank { profile.name }.orEmpty().ifBlank { fallbackName }
             val setReminder: (Instant) -> Unit = { reminderAt ->
                 onRequestNotificationPermission { granted ->
                     if (granted) {
@@ -455,27 +535,42 @@ fun ProfileDetailsScreen(
                     } else {
                         Toast.makeText(
                             context,
-                            "Notification permission is required for reminders",
+                            reminderPermissionRequired,
                             Toast.LENGTH_LONG,
                         ).show()
                     }
                 }
             }
-            ReminderOption("Tomorrow", "In 24 hours") {
+            ReminderOption(
+                stringResource(R.string.reminder_tomorrow),
+                stringResource(R.string.reminder_tomorrow_summary),
+            ) {
                 setReminder(Instant.now().plus(Duration.ofDays(1)))
             }
-            ReminderOption("In one week", "Seven days from now") {
+            ReminderOption(
+                stringResource(R.string.reminder_week),
+                stringResource(R.string.reminder_week_summary),
+            ) {
                 setReminder(Instant.now().plus(Duration.ofDays(7)))
             }
-            ReminderOption("In one month", "Thirty days from now") {
+            ReminderOption(
+                stringResource(R.string.reminder_month),
+                stringResource(R.string.reminder_month_summary),
+            ) {
                 setReminder(Instant.now().plus(Duration.ofDays(30)))
             }
-            ReminderOption("Custom", "Choose a date and time") {
+            ReminderOption(
+                stringResource(R.string.reminder_custom),
+                stringResource(R.string.reminder_custom_summary),
+            ) {
                 showCustomReminderPicker(context, profile?.reminderAt) { reminderAt ->
                     setReminder(reminderAt)
                 }
             }
-            ReminderOption("Clear reminder", profile?.reminderAt?.formatDateTime() ?: "No reminder scheduled") {
+            ReminderOption(
+                stringResource(R.string.reminder_clear),
+                profile?.reminderAt?.formatDateTime() ?: stringResource(R.string.profile_no_reminder),
+            ) {
                 onSetReminder(label, null)
                 showReminder = false
             }
@@ -485,41 +580,46 @@ fun ProfileDetailsScreen(
 
     OverlayBottomSheet(
         show = showIconOptions,
-        title = "Custom icon",
+        title = stringResource(R.string.profile_custom_icon),
         onDismissRequest = { showIconOptions = false },
     ) {
         Column {
             ReminderOption(
-                "Choose photo for this profile",
-                "Only this profile uses the selected image",
+                stringResource(R.string.profile_icon_choose_profile),
+                stringResource(R.string.profile_icon_choose_profile_summary),
             ) {
                 pickForProvider = false
                 showIconOptions = false
-                pickIcon.launch("image/*")
+                runCatching { pickIcon.launch("image/*") }
+                    .onFailure { reportIconResult(false) }
             }
             if (canShareByProvider) {
                 ReminderOption(
-                    "Choose photo for all $providerLabel profiles",
-                    "Any profile with this provider name will use the same image",
+                    stringResource(R.string.profile_icon_choose_provider, providerLabel),
+                    stringResource(R.string.profile_icon_choose_provider_summary),
                 ) {
                     pickForProvider = true
                     showIconOptions = false
-                    pickIcon.launch("image/*")
+                    runCatching { pickIcon.launch("image/*") }
+                        .onFailure {
+                            pickForProvider = false
+                            reportIconResult(false)
+                        }
                 }
             }
             if (canShareByProvider && (hasProfileIcon || hasProviderIcon)) {
                 ReminderOption(
-                    "Use current icon for all $providerLabel profiles",
-                    "Share the artwork already shown on this profile",
+                    stringResource(R.string.profile_icon_use_provider, providerLabel),
+                    stringResource(R.string.profile_icon_use_provider_summary),
                 ) {
-                    onApplyIconToProvider()
+                    onApplyIconToProvider(reportIconResult)
                     showIconOptions = false
                 }
             }
             if (hasProfileIcon) {
                 ReminderOption(
-                    "Remove icon for this profile",
-                    "Restore the shared provider icon or operator artwork",
+                    stringResource(R.string.profile_icon_remove_profile),
+                    stringResource(R.string.profile_icon_remove_profile_summary),
                 ) {
                     showIconOptions = false
                     showRemoveProfileIconConfirmation = true
@@ -527,10 +627,10 @@ fun ProfileDetailsScreen(
             }
             if (hasProviderIcon) {
                 ReminderOption(
-                    "Remove shared $providerLabel icon",
-                    "Clear the icon used by every profile with this provider name",
+                    stringResource(R.string.profile_icon_remove_provider, providerLabel),
+                    stringResource(R.string.profile_icon_remove_provider_summary),
                 ) {
-                    onSetIcon(null, true)
+                    onSetIcon(null, true, reportIconResult)
                     showIconOptions = false
                 }
             }
@@ -540,17 +640,17 @@ fun ProfileDetailsScreen(
 
     OverlayDialog(
         show = showRemoveProfileIconConfirmation,
-        title = "Remove icon for this profile?",
-        summary = "The shared provider icon or operator artwork will be shown instead.",
+        title = stringResource(R.string.profile_icon_remove_title),
+        summary = stringResource(R.string.profile_icon_remove_summary),
         onDismissRequest = { showRemoveProfileIconConfirmation = false },
     ) {
         DialogActionRow(
             onCancel = { showRemoveProfileIconConfirmation = false },
-            confirmText = "Remove",
+            confirmText = stringResource(R.string.common_remove),
             destructive = true,
             onConfirm = {
                 showRemoveProfileIconConfirmation = false
-                onSetIcon(null, false)
+                onSetIcon(null, false, reportIconResult)
             },
         )
     }
@@ -563,29 +663,93 @@ fun DownloadProfileScreen(
     busy: Boolean,
     onBack: () -> Unit,
     onValueChange: (String) -> Unit,
-    onScanQr: ((String?) -> Unit) -> Unit,
+    onScanQr: () -> Unit,
     onContinue: (DownloadRequest) -> Unit,
 ) {
     var localValue by remember(initialValue) { mutableStateOf(initialValue) }
-    val requestResult = remember(localValue, imei) {
+    var confirmationCode by remember(initialValue) { mutableStateOf("") }
+    var validationAttempted by rememberSaveable { mutableStateOf(false) }
+    var imageScanError by rememberSaveable { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    val activationTooLong = stringResource(R.string.activation_error_too_long)
+    val imageOpenError = stringResource(R.string.activation_error_image_open)
+    val noQrError = stringResource(R.string.activation_error_no_qr)
+    val qrReadError = stringResource(R.string.activation_error_qr_read)
+    val imageDecodeScope = rememberCoroutineScope()
+    val barcodeScanner = remember {
+        BarcodeScanning.getClient(
+            BarcodeScannerOptions.Builder()
+                .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+                .build(),
+        )
+    }
+    DisposableEffect(barcodeScanner) {
+        onDispose(barcodeScanner::close)
+    }
+    fun acceptActivationCode(value: CharSequence?) {
+        if (value == null || value.length > MaxActivationInputCharacters) {
+            imageScanError = activationTooLong
+            return
+        }
+        val code = normalizeActivationInput(value.toString())
+        if (code.isBlank()) return
+        if (code != localValue) confirmationCode = ""
+        localValue = code
+        onValueChange(code)
+        imageScanError = null
+    }
+    val pickQrImage = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        imageScanError = null
+        imageDecodeScope.launch {
+            val decoded = try {
+                withContext(Dispatchers.IO) { decodeBoundedQrImage(context, uri) }
+            } catch (_: Exception) {
+                imageScanError = imageOpenError
+                return@launch
+            }
+            try {
+                barcodeScanner.process(decoded.image)
+                    .addOnSuccessListener { barcodes ->
+                        val rawValue = barcodes.firstNotNullOfOrNull(Barcode::getRawValue)
+                        if (rawValue == null) {
+                            imageScanError = noQrError
+                        } else {
+                            acceptActivationCode(rawValue)
+                        }
+                    }
+                    .addOnFailureListener {
+                        imageScanError = qrReadError
+                    }
+                    .addOnCompleteListener {
+                        decoded.bitmap.recycle()
+                    }
+            } catch (_: RuntimeException) {
+                decoded.bitmap.recycle()
+                imageScanError = qrReadError
+            }
+        }
+    }
+    val parsedRequest = remember(localValue, imei) {
         runCatching { DownloadRequest.parse(localValue, imei.takeIf(String::isNotBlank)) }
+    }
+    val requestResult = remember(parsedRequest, confirmationCode) {
+        parsedRequest.map { request ->
+            if (request.confirmationCodeRequired) request.withConfirmationCode(confirmationCode) else request
+        }
     }
 
     DetailLazyScaffold(
-        title = "Download profile",
+        title = stringResource(R.string.action_download_profile),
         onBack = onBack,
         actions = {
             IconButton(
-                onClick = {
-                    onScanQr { scanned ->
-                        scanned?.let {
-                            localValue = it
-                            onValueChange(it)
-                        }
-                    }
-                },
+                onClick = onScanQr,
             ) {
-                Icon(MiuixIcons.Scan, contentDescription = "Scan QR code")
+                Icon(
+                    MiuixIcons.Scan,
+                    contentDescription = stringResource(R.string.activation_scan_qr),
+                )
             }
         },
     ) { _ ->
@@ -593,7 +757,7 @@ fun DownloadProfileScreen(
             Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
                 Spacer(Modifier.height(14.dp))
                 Text(
-                    text = "Paste an LPA activation code or enter an SM-DP+ address.",
+                    text = stringResource(R.string.activation_entry_summary),
                     style = MiuixTheme.textStyles.body1,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     modifier = Modifier.padding(horizontal = 4.dp),
@@ -602,28 +766,120 @@ fun DownloadProfileScreen(
                 TextField(
                     value = localValue,
                     onValueChange = {
-                        localValue = it
-                        onValueChange(it)
+                        val bounded = it.take(MaxActivationInputCharacters)
+                        if (bounded != localValue) confirmationCode = ""
+                        localValue = bounded
+                        onValueChange(bounded)
                     },
-                    label = "LPA:1\$address\$matching-id or SM-DP+ address",
+                    label = stringResource(R.string.activation_entry_label),
                     useLabelAsPlaceholder = true,
                     minLines = 2,
                     maxLines = 6,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(10.dp))
+                if (parsedRequest.getOrNull()?.confirmationCodeRequired == true) {
+                    TextField(
+                        value = confirmationCode,
+                        onValueChange = { confirmationCode = it.trim().take(128) },
+                        label = stringResource(app.hyperlpa.R.string.activation_confirmation_code),
+                        useLabelAsPlaceholder = true,
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        text = stringResource(app.hyperlpa.R.string.activation_confirmation_help),
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+                    )
+                }
+            }
+        }
+        item {
+            GroupedCard {
+                ArrowPreference(
+                    title = stringResource(app.hyperlpa.R.string.activation_paste),
+                    summary = stringResource(app.hyperlpa.R.string.activation_paste_summary),
+                    onClick = {
+                        val clipboard = context.getSystemService(ClipboardManager::class.java)
+                        val item = clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)
+                        acceptActivationCode(item?.coerceToText(context))
+                    },
+                )
+                ArrowPreference(
+                    title = stringResource(app.hyperlpa.R.string.activation_image),
+                    summary = stringResource(app.hyperlpa.R.string.activation_image_summary),
+                    onClick = { pickQrImage.launch("image/*") },
+                )
             }
         }
         item {
             GroupedCard {
                 val request = requestResult.getOrNull()
-                ValuePreference(title = "SM-DP+", value = request?.smdpAddress ?: "Waiting for a valid code")
-                ValuePreference(title = "Matching ID", value = request?.matchingId ?: "Not included")
-                ValuePreference(title = "Confirmation code", value = if (request?.confirmationCode.isNullOrBlank()) "Not included" else "Included")
-                ValuePreference(title = "IMEI", value = imei.ifBlank { "Not supplied" })
+                ValuePreference(
+                    title = "SM-DP+",
+                    value = request?.smdpAddress ?: stringResource(R.string.activation_waiting_valid),
+                )
+                ValuePreference(
+                    title = stringResource(R.string.activation_matching_id),
+                    value = stringResource(
+                        if (request?.matchingId.isNullOrEmpty()) {
+                            R.string.activation_not_included
+                        } else {
+                            R.string.activation_included
+                        },
+                    ),
+                )
+                request?.smdpOid?.takeIf(String::isNotBlank)?.let { smdpOid ->
+                    ValuePreference(
+                        title = "SM-DP+ OID",
+                        value = smdpOid,
+                    )
+                }
+                ValuePreference(
+                    title = stringResource(R.string.activation_confirmation_code),
+                    value = when {
+                        request == null -> stringResource(R.string.activation_not_required)
+                        !request.confirmationCodeRequired -> stringResource(R.string.activation_not_required)
+                        request.confirmationCode.isNullOrBlank() -> stringResource(R.string.activation_required)
+                        else -> stringResource(R.string.activation_entered)
+                    },
+                )
+                ValuePreference(
+                    title = "IMEI",
+                    value = imei.ifBlank { stringResource(R.string.activation_not_supplied) },
+                )
             }
         }
-        requestResult.exceptionOrNull()?.message?.let { message ->
+        requestResult.exceptionOrNull()?.takeIf { validationAttempted }?.let { error ->
+            item {
+                Text(
+                    text = localizedDownloadRequestError(error),
+                    color = MiuixTheme.colorScheme.error,
+                    style = MiuixTheme.textStyles.body2,
+                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 6.dp),
+                )
+            }
+        }
+        if (
+            validationAttempted &&
+            requestResult.getOrNull()?.let { request ->
+                request.confirmationCodeRequired && request.confirmationCode.isNullOrBlank()
+            } == true
+        ) {
+            item {
+                Text(
+                    text = stringResource(R.string.failure_confirmation_code_required),
+                    color = MiuixTheme.colorScheme.error,
+                    style = MiuixTheme.textStyles.body2,
+                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 6.dp),
+                )
+            }
+        }
+        imageScanError?.let { message ->
             item {
                 Text(
                     text = message,
@@ -636,16 +892,14 @@ fun DownloadProfileScreen(
         item {
             val primaryColors = ButtonDefaults.buttonColorsPrimary()
             Button(
-                onClick = { requestResult.getOrNull()?.let(onContinue) },
-                enabled = requestResult.isSuccess && localValue.isNotBlank() && !busy,
-                colors = primaryColors.copy(
-                    disabledColor = if (busy) primaryColors.color else primaryColors.disabledColor,
-                    disabledContentColor = if (busy) {
-                        primaryColors.contentColor
-                    } else {
-                        primaryColors.disabledContentColor
-                    },
-                ),
+                onClick = {
+                    validationAttempted = true
+                    requestResult.getOrNull()
+                        ?.takeIf(DownloadRequest::hasRequiredConfirmationCode)
+                        ?.let(onContinue)
+                },
+                enabled = !busy,
+                colors = primaryColors,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(start = 12.dp, top = 10.dp, end = 12.dp, bottom = 18.dp)
@@ -656,28 +910,116 @@ fun DownloadProfileScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center,
                     ) {
-                        CircularProgressIndicator(
-                            colors = ProgressIndicatorDefaults.progressIndicatorColors(
-                                foregroundColor = primaryColors.contentColor,
-                                disabledForegroundColor = primaryColors.contentColor,
-                                backgroundColor = primaryColors.contentColor.copy(alpha = 0.24f),
-                            ),
-                            size = 22.dp,
+                        InfiniteProgressIndicator(
+                            color = primaryColors.disabledContentColor,
+                            size = 20.dp,
                         )
                         Spacer(Modifier.width(10.dp))
-                        Text("Checking profile…")
+                        Text(stringResource(R.string.activation_checking_profile))
                     }
                 } else {
-                    Text("Continue")
+                    Text(stringResource(R.string.common_continue))
                 }
             }
         }
     }
 }
 
+private data class DecodedQrImage(
+    val image: InputImage,
+    val bitmap: Bitmap,
+)
+
+private fun decodeBoundedQrImage(context: Context, uri: Uri): DecodedQrImage {
+    val encoded = context.contentResolver.openInputStream(uri)?.use { input ->
+        input.readBytesLimited(MaxQrEncodedImageBytes)
+    } ?: throw IllegalArgumentException("The selected image could not be opened")
+    try {
+        val source = ImageDecoder.createSource(ByteBuffer.wrap(encoded))
+        val bitmap = ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+            val sourceWidth = info.size.width
+            val sourceHeight = info.size.height
+            require(sourceWidth in 1..MaxQrSourceDimension)
+            require(sourceHeight in 1..MaxQrSourceDimension)
+            val longestEdge = maxOf(sourceWidth, sourceHeight)
+            if (longestEdge > MaxQrDecodedEdge) {
+                val scale = MaxQrDecodedEdge.toDouble() / longestEdge.toDouble()
+                decoder.setTargetSize(
+                    maxOf(1, (sourceWidth * scale).roundToInt()),
+                    maxOf(1, (sourceHeight * scale).roundToInt()),
+                )
+            }
+            decoder.setAllocator(ImageDecoder.ALLOCATOR_SOFTWARE)
+            decoder.setMemorySizePolicy(ImageDecoder.MEMORY_POLICY_LOW_RAM)
+        }
+        return DecodedQrImage(
+            image = InputImage.fromBitmap(bitmap, 0),
+            bitmap = bitmap,
+        )
+    } finally {
+        encoded.fill(0)
+    }
+}
+
+private fun InputStream.readBytesLimited(maxBytes: Int): ByteArray {
+    val output = ByteArrayOutputStream(minOf(32 * 1024, maxBytes))
+    val buffer = ByteArray(32 * 1024)
+    var total = 0
+    while (true) {
+        val count = read(buffer)
+        if (count < 0) break
+        if (count == 0) continue
+        require(total <= maxBytes - count) { "The selected image is too large" }
+        output.write(buffer, 0, count)
+        total += count
+    }
+    return output.toByteArray()
+}
+
+private fun normalizeActivationInput(value: String): String {
+    if (value.length > MaxActivationInputCharacters) return ""
+    val trimmed = value.trim()
+    if (trimmed.startsWith("LPA:", ignoreCase = true)) return trimmed
+    val uri = runCatching { trimmed.toUri() }.getOrNull() ?: return trimmed
+    return runCatching {
+        listOf("carddata", "activationCode", "activation_code", "code")
+            .firstNotNullOfOrNull(uri::getQueryParameter)
+    }.getOrNull()
+        ?.trim()
+        ?.takeIf { it.startsWith("LPA:", ignoreCase = true) }
+        ?: trimmed
+}
+
+@Composable
+private fun localizedDownloadRequestError(error: Throwable): String {
+    val resource = when ((error as? DownloadRequestException)?.reason) {
+        DownloadRequestError.CONFIRMATION_CODE_TOO_LONG -> R.string.activation_error_confirmation_too_long
+        DownloadRequestError.CONFIRMATION_CODE_INVALID -> R.string.activation_error_confirmation_invalid
+        DownloadRequestError.SMDP_ADDRESS_REQUIRED -> R.string.activation_error_address_required
+        DownloadRequestError.ACTIVATION_CODE_TOO_LONG -> R.string.activation_error_too_long
+        DownloadRequestError.ACTIVATION_CODE_FIELDS -> R.string.activation_error_fields
+        DownloadRequestError.ACTIVATION_CODE_VERSION -> R.string.activation_error_version
+        DownloadRequestError.ACTIVATION_CODE_ADDRESS_MISSING -> R.string.activation_error_address_missing
+        DownloadRequestError.MATCHING_ID_TOO_LONG -> R.string.activation_error_matching_too_long
+        DownloadRequestError.MATCHING_ID_INVALID -> R.string.activation_error_matching_invalid
+        DownloadRequestError.SMDP_OID_INVALID -> R.string.activation_error_oid_invalid
+        DownloadRequestError.CONFIRMATION_FLAG_INVALID -> R.string.activation_error_confirmation_flag
+        DownloadRequestError.RSP_ADDRESS_REQUIRED -> R.string.activation_error_rsp_required
+        DownloadRequestError.RSP_ADDRESS_TOO_LONG -> R.string.activation_error_rsp_too_long
+        DownloadRequestError.RSP_ADDRESS_HAS_SCHEME -> R.string.activation_error_rsp_scheme
+        DownloadRequestError.RSP_ADDRESS_WHITESPACE -> R.string.activation_error_rsp_whitespace
+        DownloadRequestError.RSP_ADDRESS_UNSUPPORTED_CHARACTERS -> R.string.activation_error_rsp_characters
+        DownloadRequestError.RSP_ADDRESS_INVALID -> R.string.activation_error_rsp_invalid
+        DownloadRequestError.RSP_PORT_INVALID -> R.string.activation_error_rsp_port
+        null -> R.string.activation_error_invalid
+    }
+    return stringResource(resource)
+}
+
 @Composable
 fun ProfileDownloadConfirmationScreen(
     preview: ProfileDownloadPreview,
+    iccidRedaction: RedactionMode,
     cloudIcon: ByteArray?,
     estimatedDownloadBytes: Long?,
     enrichmentLoading: Boolean,
@@ -689,22 +1031,36 @@ fun ProfileDownloadConfirmationScreen(
 ) {
     val profile = preview.profile
     val artworkProfile = if (cloudIcon != null) profile.copy(iconBase64 = null) else profile
-    val displayName = profile.name.ifBlank { profile.providerName }.ifBlank { "eSIM profile" }
+    val artworkBitmap = rememberProfileArtworkBitmap(artworkProfile, cloudIcon)
+    val displayName = profile.name.ifBlank { profile.providerName }
+        .ifBlank { stringResource(R.string.profile_default_name) }
     val network = listOfNotNull(profile.mcc, profile.mnc)
         .filter(String::isNotBlank)
         .joinToString(" ")
-        .ifBlank { "Unavailable" }
+        .ifBlank { stringResource(R.string.common_unavailable) }
     var moreExpanded by rememberSaveable { mutableStateOf(false) }
 
-    DetailLazyScaffold(title = "Download profile", onBack = onBack) { _ ->
+    DetailLazyScaffold(
+        title = "",
+        onBack = onBack,
+        collapsedTitle = displayName,
+        collapsedBarRevealStart = 132.dp,
+        background = {
+            if (artworkBitmap != null) {
+                ProfileGradientBackdrop(bitmap = artworkBitmap)
+            } else {
+                AccentGradientBackdrop()
+            }
+        },
+    ) { _ ->
         item {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 18.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                ProfileArtwork(
+                ResolvedProfileArtwork(
                     profile = artworkProfile,
-                    cloudIcon = cloudIcon,
+                    bitmap = artworkBitmap,
                     isEnabled = true,
                     size = 72.dp,
                     cornerRadius = 18.dp,
@@ -731,36 +1087,54 @@ fun ProfileDownloadConfirmationScreen(
                     }
             }
         }
-        item { SectionHeading("Profile information") }
+        item { SectionHeading(stringResource(R.string.download_profile_information)) }
         item {
             GroupedCard {
                 ValuePreference(
-                    title = "Provider",
-                    value = profile.providerName.ifBlank { "Unavailable" },
-                )
-                ValuePreference(title = "ICCID", value = profile.iccid.ifBlank { "Unavailable" })
-                ValuePreference(
-                    title = "Available storage",
-                    value = preview.freeNonVolatileMemory?.let { "${formatBytes(it)} free" }
-                        ?: "Unavailable",
+                    title = stringResource(R.string.profile_provider),
+                    value = profile.providerName.ifBlank { stringResource(R.string.common_unavailable) },
                 )
                 ValuePreference(
-                    title = "Estimated download size",
+                    title = "ICCID",
+                    value = profile.iccid
+                        .takeIf(String::isNotBlank)
+                        ?.let { redactIdentifier(it, iccidRedaction) }
+                        ?: stringResource(R.string.common_unavailable),
+                )
+                ValuePreference(
+                    title = stringResource(R.string.download_available_storage),
+                    value = preview.freeNonVolatileMemory?.let {
+                        stringResource(R.string.download_storage_free, formatBytes(it))
+                    } ?: stringResource(R.string.common_unavailable),
+                )
+                ValuePreference(
+                    title = stringResource(R.string.download_estimated_size),
                     value = when {
-                        estimatedDownloadBytes != null -> "~${formatBytes(estimatedDownloadBytes)}"
-                        enrichmentLoading -> "Checking Nekoko Cloud…"
-                        else -> "Unavailable"
+                        estimatedDownloadBytes != null -> stringResource(
+                            R.string.profile_size_estimated,
+                            formatBytes(estimatedDownloadBytes),
+                        )
+                        enrichmentLoading -> stringResource(R.string.download_checking_cloud)
+                        else -> stringResource(R.string.common_unavailable)
                     },
                 )
                 BasicComponent(
-                    title = "More",
-                    summary = if (moreExpanded) "Hide technical profile information" else {
-                        "Network, profile class and group identifiers"
+                    title = stringResource(R.string.download_more),
+                    summary = if (moreExpanded) {
+                        stringResource(R.string.download_hide_technical)
+                    } else {
+                        stringResource(R.string.download_more_summary)
                     },
                     endActions = {
                         Icon(
                             imageVector = if (moreExpanded) MiuixIcons.ExpandLess else MiuixIcons.ExpandMore,
-                            contentDescription = if (moreExpanded) "Show less" else "Show more",
+                            contentDescription = stringResource(
+                                if (moreExpanded) {
+                                    R.string.accessibility_show_less
+                                } else {
+                                    R.string.accessibility_show_more
+                                },
+                            ),
                             modifier = Modifier.size(22.dp),
                         )
                     },
@@ -772,8 +1146,11 @@ fun ProfileDownloadConfirmationScreen(
                     exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
                 ) {
                     Column {
-                        ValuePreference(title = "Network", value = network)
-                        ValuePreference(title = "Profile class", value = profile.profileClass.displayName())
+                        ValuePreference(title = stringResource(R.string.profile_network), value = network)
+                        ValuePreference(
+                            title = stringResource(R.string.profile_class),
+                            value = stringResource(profile.profileClass.labelResource()),
+                        )
                         profile.gid1?.takeIf(String::isNotBlank)?.let { ValuePreference("GID1", it) }
                         profile.gid2?.takeIf(String::isNotBlank)?.let { ValuePreference("GID2", it) }
                     }
@@ -791,21 +1168,21 @@ fun ProfileDownloadConfirmationScreen(
             ) {
                 Icon(MiuixIcons.Download, contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Download")
+                Text(stringResource(R.string.common_download))
             }
         }
     }
 
     OverlayDialog(
         show = showCancelConfirmation,
-        title = "Cancel profile download?",
-        summary = "Going back will close the secure provisioning session. You can return to the activation code and try again.",
+        title = stringResource(R.string.download_cancel_title),
+        summary = stringResource(R.string.download_cancel_summary),
         onDismissRequest = onDismissCancelConfirmation,
     ) {
         DialogActionRow(
             onCancel = onDismissCancelConfirmation,
-            cancelText = "Stay here",
-            confirmText = "Go back",
+            cancelText = stringResource(R.string.download_stay_here),
+            confirmText = stringResource(R.string.download_go_back),
             destructive = true,
             onConfirm = onConfirmCancel,
         )
@@ -827,7 +1204,7 @@ fun ProfileDownloadResultScreen(
         mutableStateOf(profile.nickname.ifBlank { profile.name })
     }
 
-    DetailLazyScaffold(title = "Download profile", onBack = onBack) { _ ->
+    DetailLazyScaffold(title = stringResource(R.string.action_download_profile), onBack = onBack) { _ ->
         item {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 28.dp),
@@ -846,29 +1223,36 @@ fun ProfileDownloadResultScreen(
                 }
                 Spacer(Modifier.height(20.dp))
                 Text(
-                    text = "Installation successful",
+                    text = stringResource(R.string.download_success_title),
                     style = MiuixTheme.textStyles.title1,
                     fontWeight = FontWeight.Bold,
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "${profile.providerName.ifBlank { "The profile" }} was installed on your eUICC.",
+                    text = stringResource(
+                        R.string.download_success_summary,
+                        profile.providerName.ifBlank {
+                            stringResource(R.string.download_success_profile_fallback)
+                        },
+                    ),
                     style = MiuixTheme.textStyles.body1,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     textAlign = TextAlign.Center,
                 )
             }
         }
-        item { SectionHeading("Storage") }
+        item { SectionHeading(stringResource(R.string.download_storage_section)) }
         item {
             GroupedCard {
                 ValuePreference(
-                    title = "Used by this profile",
-                    value = result.installedBytes?.let(::formatBytes) ?: "Unavailable",
+                    title = stringResource(R.string.download_storage_used),
+                    value = result.installedBytes?.let { formatBytes(it) }
+                        ?: stringResource(R.string.common_unavailable),
                 )
                 ValuePreference(
-                    title = "Free storage",
-                    value = result.freeNonVolatileMemory?.let(::formatBytes) ?: "Unavailable",
+                    title = stringResource(R.string.download_storage_free_title),
+                    value = result.freeNonVolatileMemory?.let { formatBytes(it) }
+                        ?: stringResource(R.string.common_unavailable),
                 )
             }
         }
@@ -883,7 +1267,7 @@ fun ProfileDownloadResultScreen(
                         .padding(horizontal = 12.dp, vertical = 5.dp)
                         .defaultMinSize(minHeight = 52.dp),
                 ) {
-                    Text("Enable profile")
+                    Text(stringResource(R.string.download_enable_profile))
                 }
             }
         }
@@ -899,7 +1283,7 @@ fun ProfileDownloadResultScreen(
                 ) {
                     Icon(MiuixIcons.Edit, contentDescription = null, modifier = Modifier.size(19.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Rename profile")
+                    Text(stringResource(R.string.profile_rename))
                 }
             }
         }
@@ -912,22 +1296,22 @@ fun ProfileDownloadResultScreen(
                     .padding(start = 12.dp, top = 5.dp, end = 12.dp, bottom = 18.dp)
                     .defaultMinSize(minHeight = 52.dp),
             ) {
-                Text("Done")
+                Text(stringResource(R.string.common_done))
             }
         }
     }
 
     OverlayDialog(
         show = showRename,
-        title = "Rename profile",
-        summary = "The nickname is stored on the eUICC.",
+        title = stringResource(R.string.profile_rename),
+        summary = stringResource(R.string.profile_rename_summary),
         onDismissRequest = { showRename = false },
     ) {
         Column {
             TextField(
                 value = nickname,
-                onValueChange = { nickname = it.take(64) },
-                label = "Profile name",
+                onValueChange = { nickname = it.takeUnicodeCodePoints(64) },
+                label = stringResource(R.string.profile_name),
                 useLabelAsPlaceholder = true,
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
@@ -935,7 +1319,7 @@ fun ProfileDownloadResultScreen(
             Spacer(Modifier.height(18.dp))
             DialogActionRow(
                 onCancel = { showRename = false },
-                confirmText = "Rename",
+                confirmText = stringResource(R.string.profile_rename_action),
                 onConfirm = {
                     onRename(nickname.trim())
                     showRename = false
@@ -948,28 +1332,43 @@ fun ProfileDownloadResultScreen(
 @Composable
 fun BatchDownloadScreen(
     imei: String,
+    state: BatchDownloadUiState,
     onBack: () -> Unit,
-    onDownload: (DownloadRequest) -> Unit,
+    onDownload: (List<DownloadRequest>) -> Unit,
+    onResume: () -> Unit,
+    onRetry: () -> Unit,
+    onCancel: () -> Unit,
+    onClear: () -> Unit,
 ) {
     var values by remember { mutableStateOf("") }
-    var queued by remember { mutableIntStateOf(0) }
-    val lines = values.lineSequence().map(String::trim).filter(String::isNotEmpty).toList()
-    val parsed = lines.map { line -> runCatching { DownloadRequest.parse(line, imei.takeIf(String::isNotBlank)) } }
-    val validCount = parsed.count(Result<DownloadRequest>::isSuccess)
+    val lines = values.lineSequence()
+        .map(String::trim)
+        .filter(String::isNotEmpty)
+        .take(MaxProvisioningQueueItems + 1)
+        .toList()
+    val parsed = lines.map { line ->
+        runCatching { parseBatchDownloadLine(line, imei.takeIf(String::isNotBlank)) }
+    }
+    val parsedRequests = parsed.mapNotNull(Result<DownloadRequest>::getOrNull)
+    val validCount = parsedRequests.size
+    val duplicateCount = parsedRequests.size - parsedRequests.distinctBy { request ->
+        Triple(request.smdpAddress, request.matchingId, request.smdpOid)
+    }.size
+    val withinQueueLimit = lines.size <= MaxProvisioningQueueItems
 
-    DetailLazyScaffold(title = "Batch download", onBack = onBack) { _ ->
+    DetailLazyScaffold(title = stringResource(R.string.batch_download_title), onBack = onBack) { _ ->
         item {
             Column(Modifier.fillMaxWidth().padding(12.dp)) {
                 Text(
-                    text = "Enter one activation code per line. Downloads are submitted in order and serialized by the LPA engine.",
+                    text = stringResource(R.string.batch_download_instructions),
                     style = MiuixTheme.textStyles.body1,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
                 )
                 TextField(
                     value = values,
-                    onValueChange = { values = it },
-                    label = "Activation codes",
+                    onValueChange = { values = it.take(MaxBatchInputCharacters) },
+                    label = stringResource(R.string.batch_download_codes_label),
                     useLabelAsPlaceholder = true,
                     minLines = 8,
                     maxLines = 16,
@@ -979,26 +1378,154 @@ fun BatchDownloadScreen(
         }
         item {
             GroupedCard {
-                ValuePreference(title = "Codes", value = lines.size.toString())
-                ValuePreference(title = "Valid", value = validCount.toString())
-                ValuePreference(title = "Invalid", value = (lines.size - validCount).toString())
-                AnimatedVisibility(visible = queued > 0) {
-                    ValuePreference(title = "Submitted", value = queued.toString())
+                ValuePreference(title = stringResource(R.string.batch_codes), value = lines.size.toString())
+                ValuePreference(title = stringResource(R.string.batch_valid), value = validCount.toString())
+                ValuePreference(
+                    title = stringResource(R.string.batch_invalid),
+                    value = (lines.size - validCount).toString(),
+                )
+                ValuePreference(
+                    title = stringResource(R.string.batch_queue_limit),
+                    value = stringResource(
+                        R.string.batch_queue_limit_value,
+                        lines.size,
+                        MaxProvisioningQueueItems,
+                    ),
+                )
+                if (duplicateCount > 0) {
+                    ValuePreference(
+                        title = stringResource(R.string.batch_duplicates),
+                        value = duplicateCount.toString(),
+                    )
+                }
+            }
+        }
+        state.notice?.let { notice ->
+            item {
+                Text(
+                    text = notice,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    style = MiuixTheme.textStyles.body2,
+                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 6.dp),
+                )
+            }
+        }
+        if (state.items.isNotEmpty()) {
+            item {
+                SectionHeading(
+                    stringResource(
+                        if (state.restored) R.string.batch_saved_queue else R.string.batch_queue,
+                    ),
+                )
+            }
+            item {
+                GroupedCard {
+                    state.items.forEach { item ->
+                        ValuePreference(
+                            title = "${item.index + 1}. ${item.address}",
+                            value = when (item.error) {
+                                BatchDownloadError.DOWNLOAD_FAILED -> stringResource(
+                                    app.hyperlpa.R.string.provisioning_error_download_failed,
+                                )
+                                BatchDownloadError.INTERRUPTED_UNVERIFIED ->
+                                    stringResource(app.hyperlpa.R.string.provisioning_error_interrupted)
+                                BatchDownloadError.CANCELLED_UNVERIFIED ->
+                                    stringResource(
+                                        app.hyperlpa.R.string.provisioning_error_cancelled_unverified,
+                                    )
+                                BatchDownloadError.OUTCOME_UNVERIFIED ->
+                                    stringResource(
+                                        app.hyperlpa.R.string.provisioning_error_outcome_unverified,
+                                    )
+                                null -> when (item.status) {
+                                    BatchDownloadStatus.WAITING -> stringResource(R.string.batch_status_waiting)
+                                    BatchDownloadStatus.DOWNLOADING -> stringResource(R.string.batch_status_downloading)
+                                    BatchDownloadStatus.SUCCEEDED -> stringResource(R.string.batch_status_installed)
+                                    BatchDownloadStatus.FAILED -> stringResource(R.string.batch_status_failed)
+                                    BatchDownloadStatus.CANCELLED -> stringResource(R.string.batch_status_cancelled)
+                                    BatchDownloadStatus.INTERRUPTED ->
+                                        stringResource(app.hyperlpa.R.string.provisioning_error_interrupted)
+                                }
+                            },
+                        )
+                    }
+                    ValuePreference(
+                        title = stringResource(R.string.batch_progress),
+                        value = stringResource(
+                            R.string.batch_progress_value,
+                            state.completedCount,
+                            state.failedCount,
+                        ),
+                    )
                 }
             }
         }
         item {
             Button(
                 onClick = {
-                    val requests = parsed.mapNotNull(Result<DownloadRequest>::getOrNull)
-                    queued = requests.size
-                    requests.forEach(onDownload)
+                    onDownload(parsedRequests)
                 },
-                enabled = lines.isNotEmpty() && validCount == lines.size,
+                enabled = !state.running &&
+                    !state.loading &&
+                    !state.requiresClearBeforeNewBatch &&
+                    lines.isNotEmpty() &&
+                    withinQueueLimit &&
+                    validCount == lines.size &&
+                    duplicateCount == 0,
                 colors = ButtonDefaults.buttonColorsPrimary(),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 18.dp),
             ) {
-                Text("Queue $validCount ${if (validCount == 1) "profile" else "profiles"}")
+                Text(
+                    if (state.running) {
+                        stringResource(R.string.batch_download_in_progress)
+                    } else {
+                        pluralStringResource(
+                            R.plurals.batch_download_profiles,
+                            validCount,
+                            validCount,
+                        )
+                    },
+                )
+            }
+        }
+        if (state.items.isNotEmpty()) {
+            if (state.running) item {
+                TextButton(
+                    text = stringResource(R.string.batch_cancel_remaining),
+                    onClick = onCancel,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                )
+            }
+            if (!state.running && state.resumableCount > 0) item {
+                TextButton(
+                    text = pluralStringResource(
+                        R.plurals.batch_resume_pending,
+                        state.resumableCount,
+                        state.resumableCount,
+                    ),
+                    onClick = onResume,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                )
+            }
+            if (!state.running && state.retryableCount > 0) item {
+                TextButton(
+                    text = pluralStringResource(
+                        R.plurals.batch_retry_failed,
+                        state.retryableCount,
+                        state.retryableCount,
+                    ),
+                    onClick = onRetry,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                )
+            }
+        }
+        if (!state.running && state.hasSavedQueue) {
+            item {
+                TextButton(
+                    text = stringResource(R.string.batch_clear_saved),
+                    onClick = onClear,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                )
             }
         }
     }
@@ -1010,25 +1537,37 @@ fun EuiccDetailsScreen(
     reader: ReaderInfo?,
     installedProfileCount: Int,
     enabledProfileCount: Int,
+    discoveredSmdpAddresses: List<String>,
     settings: AppSettings,
     onBack: () -> Unit,
     onReset: () -> Unit,
+    onSetDefaultSmdpAddress: (String) -> Unit,
+    onDiscoverProfiles: (String?) -> Unit,
+    onUseDiscoveredAddress: (String) -> Unit,
 ) {
     var showReset by remember { mutableStateOf(false) }
     var showResetConfirmation by remember { mutableStateOf(false) }
     var showFinalResetConfirmation by remember { mutableStateOf(false) }
     var advancedDetailsExpanded by rememberSaveable(info?.eid) { mutableStateOf(false) }
-    DetailLazyScaffold(title = "eUICC information", onBack = onBack) { _ ->
+    var showDefaultSmdpEditor by remember { mutableStateOf(false) }
+    var defaultSmdpDraft by remember(info?.defaultSmdpAddress) {
+        mutableStateOf(info?.defaultSmdpAddress.orEmpty())
+    }
+    var showSmdsEditor by remember { mutableStateOf(false) }
+    var smdsDraft by remember(info?.rootSmdsAddress) {
+        mutableStateOf(info?.rootSmdsAddress.orEmpty())
+    }
+    DetailLazyScaffold(title = stringResource(R.string.euicc_information_title), onBack = onBack) { _ ->
         if (info == null) {
             item {
                 EmptyState(
-                    title = "No eUICC connected",
-                    message = "Select a reader before opening eUICC information.",
+                    title = stringResource(R.string.euicc_not_connected),
+                    message = stringResource(R.string.euicc_not_connected_message),
                     icon = MiuixIcons.Info,
                 )
             }
         } else {
-            item { SectionHeading("Identity") }
+            item { SectionHeading(stringResource(R.string.euicc_identity)) }
             item {
                 GroupedCard {
                     ValuePreference(
@@ -1036,98 +1575,168 @@ fun EuiccDetailsScreen(
                         value = redactIdentifier(info.eid, settings.eidRedaction),
                     )
                     ValuePreference(
-                        title = "eUICC category",
+                        title = stringResource(R.string.euicc_category),
                         value = info.euiccCategory.takeIf(String::isNotBlank)
-                            ?.let(::formatTechnicalValue)
-                            ?: "Unavailable",
+                            ?.let { value -> formatTechnicalValue(value) }
+                            ?: stringResource(R.string.common_unavailable),
                     )
-                    ValuePreference(title = "SAS accreditation", value = info.sasAccreditationNumber.ifBlank { "Unavailable" })
-                    ValuePreference(title = "Firmware", value = info.firmwareVersion.ifBlank { "Unavailable" })
+                    ValuePreference(
+                        title = stringResource(R.string.euicc_sas_accreditation),
+                        value = info.sasAccreditationNumber.ifBlank {
+                            stringResource(R.string.common_unavailable)
+                        },
+                    )
+                    ValuePreference(
+                        title = stringResource(R.string.euicc_firmware),
+                        value = info.firmwareVersion.ifBlank { stringResource(R.string.common_unavailable) },
+                    )
                 }
             }
-            item { SectionHeading("Connection") }
+            item { SectionHeading(stringResource(R.string.euicc_connection)) }
             item {
                 GroupedCard {
-                    ValuePreference(title = "Reader", value = reader?.name ?: "Unavailable")
                     ValuePreference(
-                        title = "Access type",
-                        value = reader?.kind?.displayName() ?: "Unavailable",
+                        title = stringResource(R.string.euicc_reader),
+                        value = reader?.name ?: stringResource(R.string.common_unavailable),
+                    )
+                    ValuePreference(
+                        title = stringResource(R.string.euicc_access_type),
+                        value = reader?.kind?.let { stringResource(it.labelResource()) }
+                            ?: stringResource(R.string.common_unavailable),
                     )
                     reader?.detail?.takeIf(String::isNotBlank)?.let { detail ->
-                        ValuePreference(title = "Reader details", value = detail)
+                        ValuePreference(title = stringResource(R.string.euicc_reader_details), value = detail)
                     }
-                    ValuePreference(title = "Last refreshed", value = info.refreshedAt.formatDateTime())
-                }
-            }
-            item { SectionHeading("Profiles and storage") }
-            item {
-                GroupedCard {
-                    ValuePreference(title = "Installed profiles", value = installedProfileCount.toString())
-                    ValuePreference(title = "Enabled profiles", value = enabledProfileCount.toString())
                     ValuePreference(
-                        title = "Installed applications",
-                        value = info.installedApplicationCount?.toString() ?: "Unavailable",
+                        title = stringResource(R.string.euicc_last_refreshed),
+                        value = info.refreshedAt.formatDateTime(),
                     )
-                    ValuePreference(title = "Free non-volatile memory", value = info.freeNonVolatileMemory?.let(::formatBytes) ?: "Unavailable")
-                    ValuePreference(title = "Free volatile memory", value = info.freeVolatileMemory?.let(::formatBytes) ?: "Unavailable")
                 }
             }
-            item { SectionHeading("Specifications") }
-            item {
-                GroupedCard {
-                    ValuePreference(title = "SGP.22", value = info.sgp22Version.ifBlank { "Unavailable" })
-                    ValuePreference(title = "Profile package", value = info.profileVersion.ifBlank { "Unavailable" })
-                    ValuePreference(title = "GlobalPlatform", value = info.globalPlatformVersion.ifBlank { "Unavailable" })
-                    ValuePreference(title = "ETSI TS 102 241", value = info.ts102241Version.ifBlank { "Unavailable" })
-                    ValuePreference(title = "Protection profile", value = info.protectionProfileVersion.ifBlank { "Unavailable" })
-                }
-            }
-            item { SectionHeading("Capabilities") }
+            item { SectionHeading(stringResource(R.string.euicc_profiles_storage)) }
             item {
                 GroupedCard {
                     ValuePreference(
-                        title = "UICC capabilities",
+                        title = stringResource(R.string.euicc_installed_profiles),
+                        value = installedProfileCount.toString(),
+                    )
+                    ValuePreference(
+                        title = stringResource(R.string.euicc_enabled_profiles),
+                        value = enabledProfileCount.toString(),
+                    )
+                    ValuePreference(
+                        title = stringResource(R.string.euicc_installed_apps),
+                        value = info.installedApplicationCount?.toString()
+                            ?: stringResource(R.string.common_unavailable),
+                    )
+                    ValuePreference(
+                        title = stringResource(R.string.euicc_free_nonvolatile),
+                        value = info.freeNonVolatileMemory?.let { formatBytes(it) }
+                            ?: stringResource(R.string.common_unavailable),
+                    )
+                    ValuePreference(
+                        title = stringResource(R.string.euicc_free_volatile),
+                        value = info.freeVolatileMemory?.let { formatBytes(it) }
+                            ?: stringResource(R.string.common_unavailable),
+                    )
+                }
+            }
+            item { SectionHeading(stringResource(R.string.euicc_specifications)) }
+            item {
+                GroupedCard {
+                    ValuePreference(title = "SGP.22", value = info.sgp22Version.ifBlank { stringResource(R.string.common_unavailable) })
+                    ValuePreference(
+                        title = stringResource(R.string.euicc_profile_package),
+                        value = info.profileVersion.ifBlank { stringResource(R.string.common_unavailable) },
+                    )
+                    ValuePreference(title = "GlobalPlatform", value = info.globalPlatformVersion.ifBlank { stringResource(R.string.common_unavailable) })
+                    ValuePreference(title = "ETSI TS 102 241", value = info.ts102241Version.ifBlank { stringResource(R.string.common_unavailable) })
+                    ValuePreference(
+                        title = stringResource(R.string.euicc_protection_profile),
+                        value = info.protectionProfileVersion.ifBlank {
+                            stringResource(R.string.common_unavailable)
+                        },
+                    )
+                }
+            }
+            item { SectionHeading(stringResource(R.string.euicc_capabilities)) }
+            item {
+                GroupedCard {
+                    ValuePreference(
+                        title = stringResource(R.string.euicc_uicc_capabilities),
                         value = formatTechnicalValues(info.uiccCapabilities),
                     )
                     ValuePreference(
-                        title = "Remote provisioning",
+                        title = stringResource(R.string.euicc_remote_provisioning),
                         value = formatTechnicalValues(info.rspCapabilities),
                     )
                 }
             }
-            item { SectionHeading("Provisioning") }
+            item { SectionHeading(stringResource(R.string.euicc_provisioning)) }
             item {
                 GroupedCard {
-                    ValuePreference(
-                        title = "Default SM-DP+",
-                        value = info.defaultSmdpAddress.ifBlank { "Not configured" },
+                    ArrowPreference(
+                        title = stringResource(R.string.euicc_default_smdp),
+                        summary = info.defaultSmdpAddress.ifBlank {
+                            stringResource(R.string.euicc_not_configured)
+                        },
+                        onClick = { showDefaultSmdpEditor = true },
+                    )
+                    ArrowPreference(
+                        title = stringResource(R.string.euicc_root_smds),
+                        summary = info.rootSmdsAddress.ifBlank {
+                            stringResource(R.string.euicc_not_configured)
+                        },
+                        onClick = { showSmdsEditor = true },
                     )
                     ValuePreference(
-                        title = "Root SM-DS",
-                        value = info.rootSmdsAddress.ifBlank { "Not configured" },
+                        title = stringResource(R.string.euicc_platform_label),
+                        value = info.platformLabel.ifBlank { stringResource(R.string.common_unavailable) },
                     )
                     ValuePreference(
-                        title = "Platform label",
-                        value = info.platformLabel.ifBlank { "Unavailable" },
-                    )
-                    ValuePreference(
-                        title = "Discovery service",
-                        value = info.discoveryBaseUrl.ifBlank { "Unavailable" },
+                        title = stringResource(R.string.euicc_discovery_service),
+                        value = info.discoveryBaseUrl.ifBlank { stringResource(R.string.common_unavailable) },
                     )
                 }
             }
-            item { SectionHeading("Advanced") }
+            if (discoveredSmdpAddresses.isNotEmpty()) {
+                item { SectionHeading(stringResource(R.string.euicc_discovered_profiles)) }
+                item {
+                    GroupedCard {
+                        discoveredSmdpAddresses.forEach { address ->
+                            ArrowPreference(
+                                title = address,
+                                summary = stringResource(R.string.euicc_open_discovered_summary),
+                                onClick = { onUseDiscoveredAddress(address) },
+                            )
+                        }
+                    }
+                }
+            }
+            item { SectionHeading(stringResource(R.string.profile_advanced_section)) }
             item {
                 GroupedCard {
                     BasicComponent(
-                        title = "Keys and policy",
-                        summary = if (advancedDetailsExpanded) "Hide key IDs and policy rules" else {
-                            "${info.signingKeyIds.size} signing · ${info.verificationKeyIds.size} verification keys"
+                        title = stringResource(R.string.euicc_keys_policy),
+                        summary = if (advancedDetailsExpanded) {
+                            stringResource(R.string.euicc_keys_policy_hide)
+                        } else {
+                            stringResource(
+                                R.string.euicc_key_counts,
+                                info.signingKeyIds.size,
+                                info.verificationKeyIds.size,
+                            )
                         },
                         endActions = {
                             Icon(
                                 imageVector = if (advancedDetailsExpanded) MiuixIcons.ExpandLess else MiuixIcons.ExpandMore,
-                                contentDescription = if (advancedDetailsExpanded) "Show less" else "Show more",
+                                contentDescription = stringResource(
+                                    if (advancedDetailsExpanded) {
+                                        R.string.accessibility_show_less
+                                    } else {
+                                        R.string.accessibility_show_more
+                                    },
+                                ),
                                 modifier = Modifier.size(22.dp),
                             )
                         },
@@ -1140,15 +1749,18 @@ fun EuiccDetailsScreen(
                     ) {
                         Column {
                             ValuePreference(
-                                title = "Signing key IDs (${info.signingKeyIds.size})",
+                                title = stringResource(R.string.euicc_signing_keys, info.signingKeyIds.size),
                                 value = formatKeyIds(info.signingKeyIds),
                             )
                             ValuePreference(
-                                title = "Verification key IDs (${info.verificationKeyIds.size})",
+                                title = stringResource(
+                                    R.string.euicc_verification_keys,
+                                    info.verificationKeyIds.size,
+                                ),
                                 value = formatKeyIds(info.verificationKeyIds),
                             )
                             ValuePreference(
-                                title = "Forbidden policy rules",
+                                title = stringResource(R.string.euicc_forbidden_rules),
                                 value = formatTechnicalValues(info.forbiddenProfilePolicyRules),
                             )
                         }
@@ -1156,12 +1768,12 @@ fun EuiccDetailsScreen(
                 }
             }
             if (!settings.hideEuiccMemoryReset) {
-                item { SectionHeading("Maintenance") }
+                item { SectionHeading(stringResource(R.string.euicc_maintenance)) }
                 item {
                     GroupedCard {
                         ArrowPreference(
-                            title = "Reset eUICC memory",
-                            summary = "Remove test data and reset supported memory areas",
+                            title = stringResource(R.string.euicc_reset_memory),
+                            summary = stringResource(R.string.euicc_reset_memory_summary),
                             onClick = { showReset = true },
                         )
                     }
@@ -1169,15 +1781,43 @@ fun EuiccDetailsScreen(
             }
         }
     }
+    ProvisioningAddressDialog(
+        show = showDefaultSmdpEditor,
+        title = stringResource(R.string.euicc_default_smdp_dialog),
+        summary = stringResource(R.string.euicc_default_smdp_dialog_summary),
+        value = defaultSmdpDraft,
+        allowBlank = false,
+        confirmText = stringResource(R.string.common_save),
+        onValueChange = { defaultSmdpDraft = it },
+        onDismiss = { showDefaultSmdpEditor = false },
+        onConfirm = {
+            onSetDefaultSmdpAddress(defaultSmdpDraft)
+            showDefaultSmdpEditor = false
+        },
+    )
+    ProvisioningAddressDialog(
+        show = showSmdsEditor,
+        title = stringResource(R.string.euicc_discover_profiles),
+        summary = stringResource(R.string.euicc_discover_profiles_summary),
+        value = smdsDraft,
+        allowBlank = info?.rootSmdsAddress?.isNotBlank() == true,
+        confirmText = stringResource(R.string.common_discover),
+        onValueChange = { smdsDraft = it },
+        onDismiss = { showSmdsEditor = false },
+        onConfirm = {
+            onDiscoverProfiles(smdsDraft.trim().takeIf(String::isNotBlank))
+            showSmdsEditor = false
+        },
+    )
     OverlayDialog(
         show = showReset,
-        title = "Reset eUICC memory?",
-        summary = "This low-level operation can remove profiles or provisioning state, depending on the eUICC implementation.",
+        title = stringResource(R.string.euicc_reset_first_title),
+        summary = stringResource(R.string.euicc_reset_first_summary),
         onDismissRequest = { showReset = false },
     ) {
         DialogActionRow(
             onCancel = { showReset = false },
-            confirmText = "Continue",
+            confirmText = stringResource(R.string.common_continue),
             destructive = true,
             onConfirm = {
                 showReset = false
@@ -1187,13 +1827,13 @@ fun EuiccDetailsScreen(
     }
     OverlayDialog(
         show = showResetConfirmation,
-        title = "Reset eUICC memory now?",
-        summary = "The reset may permanently remove profiles or provisioning state.",
+        title = stringResource(R.string.euicc_reset_second_title),
+        summary = stringResource(R.string.euicc_reset_second_summary),
         onDismissRequest = { showResetConfirmation = false },
     ) {
         DialogActionRow(
             onCancel = { showResetConfirmation = false },
-            confirmText = "Continue",
+            confirmText = stringResource(R.string.common_continue),
             destructive = true,
             onConfirm = {
                 showResetConfirmation = false
@@ -1203,18 +1843,67 @@ fun EuiccDetailsScreen(
     }
     OverlayDialog(
         show = showFinalResetConfirmation,
-        title = "Permanently reset eUICC memory?",
-        summary = "This is your final confirmation. Any profiles or provisioning state removed by the reset cannot be recovered.",
+        title = stringResource(R.string.euicc_reset_final_title),
+        summary = stringResource(R.string.euicc_reset_final_summary),
         onDismissRequest = { showFinalResetConfirmation = false },
     ) {
         DialogActionRow(
             onCancel = { showFinalResetConfirmation = false },
-            confirmText = "Reset memory",
+            confirmText = stringResource(R.string.euicc_reset_action),
             destructive = true,
             onConfirm = {
                 showFinalResetConfirmation = false
                 onReset()
             },
+        )
+    }
+}
+
+@Composable
+private fun ProvisioningAddressDialog(
+    show: Boolean,
+    title: String,
+    summary: String,
+    value: String,
+    allowBlank: Boolean,
+    confirmText: String,
+    onValueChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    var rejectedLongInput by remember(show) { mutableStateOf(false) }
+    val addressTooLong = value.length > MaxProvisioningAddressCharacters
+    OverlayDialog(
+        show = show,
+        title = title,
+        summary = summary,
+        onDismissRequest = onDismiss,
+    ) {
+        TextField(
+            value = value,
+            onValueChange = { updated ->
+                rejectedLongInput = updated.length > MaxProvisioningAddressCharacters
+                if (!rejectedLongInput) onValueChange(updated)
+            },
+            label = stringResource(R.string.euicc_server_address_label),
+            useLabelAsPlaceholder = true,
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (rejectedLongInput || addressTooLong) {
+            Text(
+                text = stringResource(R.string.euicc_server_address_too_long),
+                color = MiuixTheme.colorScheme.error,
+                style = MiuixTheme.textStyles.footnote1,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        }
+        Spacer(Modifier.height(18.dp))
+        DialogActionRow(
+            onCancel = onDismiss,
+            confirmText = confirmText,
+            onConfirm = onConfirm,
+            confirmEnabled = !addressTooLong && !rejectedLongInput && (allowBlank || value.isNotBlank()),
         )
     }
 }
@@ -1232,7 +1921,7 @@ fun TagsAndRemindersScreen(
     onTestNotification: () -> Unit,
 ) {
     val context = LocalContext.current
-    val permissionRequiredMessage = "Notification permission is required for reminders"
+    val permissionRequiredMessage = stringResource(R.string.profile_reminder_permission_required)
     val manageNotificationPermission = {
         if (notificationPermissionGranted) {
             onOpenNotificationSettings()
@@ -1245,13 +1934,13 @@ fun TagsAndRemindersScreen(
         }
     }
 
-    DetailLazyScaffold(title = "Tags & reminders", onBack = onBack) { _ ->
-        item { SectionHeading("General") }
+    DetailLazyScaffold(title = stringResource(R.string.tags_reminders_title), onBack = onBack) { _ ->
+        item { SectionHeading(stringResource(R.string.tags_reminders_general)) }
         item {
             GroupedCard {
                 ArrowPreference(
-                    title = "Tag manager",
-                    summary = "View, search and edit profile tags",
+                    title = stringResource(R.string.tags_manager),
+                    summary = stringResource(R.string.tags_manager_summary),
                     onClick = onOpenTagManager,
                 )
                 SwitchPreference(
@@ -1269,21 +1958,27 @@ fun TagsAndRemindersScreen(
                             }
                         }
                     },
-                    title = "Profile reminders",
-                    summary = "Schedule notifications for profile dates and events",
+                    title = stringResource(R.string.reminders_profile),
+                    summary = stringResource(R.string.reminders_profile_summary),
                 )
             }
         }
-        item { SectionHeading("Notifications") }
+        item { SectionHeading(stringResource(R.string.reminders_notifications)) }
         item {
             GroupedCard {
                 ArrowPreference(
-                    title = "Notification permission",
-                    summary = if (notificationPermissionGranted) "Permissions active" else "Permissions required",
+                    title = stringResource(R.string.reminders_permission),
+                    summary = stringResource(
+                        if (notificationPermissionGranted) {
+                            R.string.reminders_permissions_active
+                        } else {
+                            R.string.reminders_permissions_required
+                        },
+                    ),
                     endActions = {
                         if (!notificationPermissionGranted) {
                             TextButton(
-                                text = "Enable",
+                                text = stringResource(R.string.common_enable),
                                 onClick = manageNotificationPermission,
                             )
                         }
@@ -1291,8 +1986,8 @@ fun TagsAndRemindersScreen(
                     onClick = manageNotificationPermission,
                 )
                 ArrowPreference(
-                    title = "Test notification",
-                    summary = "Verify reminder notification delivery",
+                    title = stringResource(R.string.reminders_test),
+                    summary = stringResource(R.string.reminders_test_summary),
                     onClick = {
                         onRequestNotificationPermission { granted ->
                             if (granted) {
@@ -1304,8 +1999,8 @@ fun TagsAndRemindersScreen(
                     },
                 )
                 ArrowPreference(
-                    title = "View scheduled reminders",
-                    summary = "Manage upcoming profile notifications",
+                    title = stringResource(R.string.reminders_view_scheduled),
+                    summary = stringResource(R.string.reminders_view_scheduled_summary),
                     onClick = onOpenScheduledReminders,
                 )
             }
@@ -1340,44 +2035,62 @@ fun TagManagerScreen(
         ).any { it.contains(searchQuery, ignoreCase = true) }
     }
 
-    DetailLazyScaffold(title = "Profile tags", onBack = onBack) { _ ->
+    DetailLazyScaffold(title = stringResource(R.string.profile_tags_title), onBack = onBack) { _ ->
         if (profiles.isEmpty()) {
-            item { EmptyState("No profiles", "Connect an eUICC to organise its profiles.", icon = MiuixIcons.BankCards) }
+            item {
+                EmptyState(
+                    stringResource(R.string.tags_no_profiles),
+                    stringResource(R.string.tags_no_profiles_message),
+                    icon = MiuixIcons.BankCards,
+                )
+            }
         } else {
             item {
                 TextField(
                     value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    label = "Search tags or profiles",
+                    onValueChange = { searchQuery = it.take(MaxSearchQueryCharacters) },
+                    label = stringResource(R.string.tags_search),
                     useLabelAsPlaceholder = true,
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
                 )
             }
-            item { SectionHeading("Active tags") }
+            item { SectionHeading(stringResource(R.string.tags_active)) }
             item {
                 GroupedCard {
                     if (allTags.isEmpty()) {
-                        ArrowPreference(title = "No tags yet", summary = "Open a profile below to add tags", enabled = false)
+                        ArrowPreference(
+                            title = stringResource(R.string.tags_none_yet),
+                            summary = stringResource(R.string.tags_none_yet_summary),
+                            enabled = false,
+                        )
                     } else if (visibleTags.isEmpty()) {
-                        ArrowPreference(title = "No matching tags", summary = "Profile matches may still appear below", enabled = false)
+                        ArrowPreference(
+                            title = stringResource(R.string.tags_no_matching),
+                            summary = stringResource(R.string.tags_no_matching_summary),
+                            enabled = false,
+                        )
                     } else {
                         visibleTags.forEach { (tag, count) ->
                             ArrowPreference(
                                 title = tag,
-                                summary = "$count ${if (count == 1) "profile" else "profiles"}",
+                                summary = pluralStringResource(
+                                    R.plurals.tags_profile_count,
+                                    count,
+                                    count,
+                                ),
                                 onClick = { searchQuery = tag },
                             )
                         }
                     }
                 }
             }
-            item { SectionHeading("Profiles") }
+            item { SectionHeading(stringResource(R.string.tags_profiles_section)) }
             if (filteredProfiles.isEmpty()) {
                 item {
                     EmptyState(
-                        title = "No tags found",
-                        message = "Try a different tag or profile name.",
+                        title = stringResource(R.string.tags_none_found),
+                        message = stringResource(R.string.tags_none_found_message),
                         icon = MiuixIcons.Search,
                     )
                 }
@@ -1386,8 +2099,11 @@ fun TagManagerScreen(
                     GroupedCard {
                         filteredProfiles.forEach { profile ->
                             ArrowPreference(
-                                title = profile.nickname.ifBlank { profile.name.ifBlank { "eSIM profile" } },
-                                summary = profile.tags.takeIf { it.isNotEmpty() }?.joinToString() ?: "No tags",
+                                title = profile.nickname.ifBlank {
+                                    profile.name.ifBlank { stringResource(R.string.profile_default_name) }
+                                },
+                                summary = profile.tags.takeIf { it.isNotEmpty() }?.joinToString()
+                                    ?: stringResource(R.string.profile_no_tags),
                                 onClick = {
                                     selected = profile
                                     editableTags = profile.tags
@@ -1402,7 +2118,8 @@ fun TagManagerScreen(
     }
     OverlayBottomSheet(
         show = selected != null,
-        title = selected?.nickname?.ifBlank { selected?.name.orEmpty() }?.ifBlank { "Profile tags" },
+        title = selected?.nickname?.ifBlank { selected?.name.orEmpty() }
+            ?.ifBlank { stringResource(R.string.profile_tags_title) },
         onDismissRequest = { selected = null },
     ) {
         ProfileTagsEditor(
@@ -1431,18 +2148,18 @@ fun ScheduledRemindersScreen(
     val now = Instant.now()
     val upcoming = scheduled.filter { it.reminderAt?.isAfter(now) == true }
     val pastDue = scheduled.filterNot { it.reminderAt?.isAfter(now) == true }
-    DetailLazyScaffold(title = "Scheduled reminders", onBack = onBack) { _ ->
+    DetailLazyScaffold(title = stringResource(R.string.reminders_scheduled_title), onBack = onBack) { _ ->
         if (scheduled.isEmpty()) {
             item {
                 EmptyState(
-                    title = "No reminders",
-                    message = "Open a profile and schedule a reminder for a preset or custom date.",
+                    title = stringResource(R.string.reminders_none),
+                    message = stringResource(R.string.reminders_none_message),
                     icon = MiuixIcons.Messages,
                 )
             }
         } else {
             if (upcoming.isNotEmpty()) {
-                item { SectionHeading("Upcoming") }
+                item { SectionHeading(stringResource(R.string.reminders_upcoming)) }
                 item {
                     GroupedCard {
                         upcoming.forEach { profile ->
@@ -1452,7 +2169,7 @@ fun ScheduledRemindersScreen(
                 }
             }
             if (pastDue.isNotEmpty()) {
-                item { SectionHeading("Past due") }
+                item { SectionHeading(stringResource(R.string.reminders_past_due)) }
                 item {
                     GroupedCard {
                         pastDue.forEach { profile ->
@@ -1472,10 +2189,12 @@ private fun ReminderManagerPreference(
     onClear: (ProfileInfo) -> Unit,
 ) {
     ArrowPreference(
-        title = profile.nickname.ifBlank { profile.name.ifBlank { "eSIM profile" } },
+        title = profile.nickname.ifBlank {
+            profile.name.ifBlank { stringResource(R.string.profile_default_name) }
+        },
         summary = profile.reminderAt?.formatDateTime(),
         endActions = {
-            TextButton(text = "Clear", onClick = { onClear(profile) })
+            TextButton(text = stringResource(R.string.common_clear), onClick = { onClear(profile) })
         },
         onClick = { onOpen(profile) },
     )
@@ -1490,25 +2209,44 @@ fun StatisticsScreen(
     val enabled = profiles.count { it.state == ProfileState.ENABLED }
     val tagged = profiles.count { it.tags.isNotEmpty() }
     val estimatedBytes = profiles.mapNotNull(ProfileInfo::estimatedBytes).sum()
-    DetailLazyScaffold(title = "Statistics", onBack = onBack) { _ ->
-        item { SectionHeading("Profiles") }
+    DetailLazyScaffold(title = stringResource(R.string.statistics_title), onBack = onBack) { _ ->
+        item { SectionHeading(stringResource(R.string.tags_profiles_section)) }
         item {
             GroupedCard {
-                StatRow("Total profiles", profiles.size.toString())
-                StatRow("Enabled", enabled.toString())
-                StatRow("Disabled", (profiles.size - enabled).toString())
-                StatRow("Tagged", tagged.toString())
-                StatRow("Testing", profiles.count { it.profileClass == ProfileClass.TESTING }.toString())
-                StatRow("Provisioning", profiles.count { it.profileClass == ProfileClass.PROVISIONING }.toString())
+                StatRow(stringResource(R.string.statistics_total_profiles), profiles.size.toString())
+                StatRow(stringResource(R.string.statistics_enabled), enabled.toString())
+                StatRow(stringResource(R.string.statistics_disabled), (profiles.size - enabled).toString())
+                StatRow(stringResource(R.string.statistics_tagged), tagged.toString())
+                StatRow(
+                    stringResource(R.string.statistics_testing),
+                    profiles.count { it.profileClass == ProfileClass.TESTING }.toString(),
+                )
+                StatRow(
+                    stringResource(R.string.statistics_provisioning),
+                    profiles.count { it.profileClass == ProfileClass.PROVISIONING }.toString(),
+                )
             }
         }
-        item { SectionHeading("eUICC activity") }
+        item { SectionHeading(stringResource(R.string.statistics_euicc_activity)) }
         item {
             GroupedCard {
-                StatRow("Pending notifications", notifications.size.toString())
-                StatRow("Estimated profile data", if (estimatedBytes > 0) formatBytes(estimatedBytes.toInt()) else "Not available")
-                StatRow("Unique providers", profiles.map(ProfileInfo::providerName).filter(String::isNotBlank).distinct().size.toString())
-                StatRow("Unique tags", profiles.flatMap(ProfileInfo::tags).map(String::lowercase).distinct().size.toString())
+                StatRow(stringResource(R.string.statistics_pending_notifications), notifications.size.toString())
+                StatRow(
+                    stringResource(R.string.statistics_estimated_data),
+                    if (estimatedBytes > 0) {
+                        formatBytes(estimatedBytes)
+                    } else {
+                        stringResource(R.string.statistics_not_available)
+                    },
+                )
+                StatRow(
+                    stringResource(R.string.statistics_unique_providers),
+                    profiles.map(ProfileInfo::providerName).filter(String::isNotBlank).distinct().size.toString(),
+                )
+                StatRow(
+                    stringResource(R.string.statistics_unique_tags),
+                    profiles.flatMap(ProfileInfo::tags).map(String::lowercase).distinct().size.toString(),
+                )
             }
         }
     }
@@ -1518,29 +2256,82 @@ fun StatisticsScreen(
 fun LogsScreen(
     logs: List<ActivityLogEntry>,
     onBack: () -> Unit,
+    onExportSupportReport: (Uri, (Boolean) -> Unit) -> Unit,
 ) {
+    val context = LocalContext.current
+    val logsExported = stringResource(R.string.logs_exported)
+    val logsExportFailed = stringResource(R.string.logs_export_failed)
+    val exportSupportReport = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        onExportSupportReport(uri) { success ->
+            Toast.makeText(
+                context,
+                if (success) logsExported else logsExportFailed,
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
     val levels = listOf<LogLevel?>(null) + LogLevel.entries
     var selectedLevel by remember { mutableIntStateOf(0) }
-    val visibleLogs = logs.asReversed().filter { levels[selectedLevel] == null || it.level == levels[selectedLevel] }
-    DetailLazyScaffold(title = "Activity logs", onBack = onBack) { _ ->
-        item { SectionHeading("Filter") }
+    val visibleLogs = logs
+        .mapIndexed { index, entry -> index to entry }
+        .asReversed()
+        .filter { (_, entry) -> levels[selectedLevel] == null || entry.level == levels[selectedLevel] }
+    DetailLazyScaffold(title = stringResource(R.string.logs_title), onBack = onBack) { _ ->
+        item { SectionHeading(stringResource(R.string.logs_support_report)) }
+        item {
+            GroupedCard {
+                Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                    Text(
+                        text = stringResource(R.string.logs_support_included),
+                        style = MiuixTheme.textStyles.body2,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = stringResource(R.string.logs_support_excluded),
+                        style = MiuixTheme.textStyles.body2,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    TextButton(
+                        text = stringResource(R.string.logs_export_report),
+                        onClick = { exportSupportReport.launch("hyperlpa-support-report.txt") },
+                        colors = ButtonDefaults.textButtonColorsPrimary(),
+                    )
+                }
+            }
+        }
+        item { SectionHeading(stringResource(R.string.logs_filter)) }
         item {
             GroupedCard {
                 OverlayDropdownPreference(
-                    items = listOf("All levels") + LogLevel.entries.map { it.displayName() },
+                    items = listOf(stringResource(R.string.logs_all_levels)) +
+                        LogLevel.entries.map { stringResource(it.labelResource()) },
                     selectedIndex = selectedLevel,
-                    title = "Log level",
-                    summary = "${visibleLogs.size} visible ${if (visibleLogs.size == 1) "entry" else "entries"}",
+                    title = stringResource(R.string.logs_level),
+                    summary = pluralStringResource(
+                        R.plurals.logs_visible_entries,
+                        visibleLogs.size,
+                        visibleLogs.size,
+                    ),
                     onSelectedIndexChange = { selectedLevel = it },
                 )
             }
         }
         if (visibleLogs.isEmpty()) {
-            item { EmptyState("No log entries", "LPA activity and errors will appear here.", icon = MiuixIcons.Search) }
+            item {
+                EmptyState(
+                    stringResource(R.string.logs_empty),
+                    stringResource(R.string.logs_empty_message),
+                    icon = MiuixIcons.Search,
+                )
+            }
         } else {
-            item { SectionHeading("Recent") }
-            visibleLogs.forEach { entry ->
-                item(key = "${entry.timestamp}-${entry.tag}-${entry.message}") {
+            item { SectionHeading(stringResource(R.string.logs_recent)) }
+            visibleLogs.forEach { (sourceIndex, entry) ->
+                item(key = sourceIndex) {
                     LogCard(entry)
                 }
             }
@@ -1556,6 +2347,9 @@ private fun ProfileHero(
     displayName: FormattedProfileDisplayName,
 ) {
     val context = LocalContext.current
+    val copyPhoneLabel = stringResource(R.string.profile_copy_phone)
+    val phoneClipboardLabel = stringResource(R.string.profile_phone_clipboard_label)
+    val phoneCopiedMessage = stringResource(R.string.profile_phone_copied)
     val phoneNumberInteractionSource = remember { MutableInteractionSource() }
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 24.dp),
@@ -1590,13 +2384,13 @@ private fun ProfileHero(
                 modifier = Modifier.clickable(
                     interactionSource = phoneNumberInteractionSource,
                     indication = null,
-                    onClickLabel = "Copy phone number",
+                    onClickLabel = copyPhoneLabel,
                 ) {
                     context.getSystemService(ClipboardManager::class.java)
                         ?.setPrimaryClip(
-                            ClipData.newPlainText("Phone number", displayName.phoneText),
+                            ClipData.newPlainText(phoneClipboardLabel, displayName.phoneText),
                         )
-                    Toast.makeText(context, "Phone number copied", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, phoneCopiedMessage, Toast.LENGTH_SHORT).show()
                 },
             )
         } else {
@@ -1611,7 +2405,7 @@ private fun ProfileHero(
         }
         Spacer(Modifier.height(4.dp))
         Text(
-            text = profile.providerName.ifBlank { "Unknown operator" },
+            text = profile.providerName.ifBlank { stringResource(R.string.profile_unknown_operator) },
             style = MiuixTheme.textStyles.body1,
             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
         )
@@ -1662,20 +2456,20 @@ private fun ProfileTagsEditor(
 
     Column {
         Text(
-            text = "Tags stay on this device and make profiles easier to find and organise.",
+            text = stringResource(R.string.tags_editor_summary),
             style = MiuixTheme.textStyles.body2,
             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
         )
         Spacer(Modifier.height(14.dp))
         Text(
-            text = "Active tags",
+            text = stringResource(R.string.tags_active),
             style = MiuixTheme.textStyles.body1,
             fontWeight = FontWeight.SemiBold,
         )
         Spacer(Modifier.height(8.dp))
         if (tags.isEmpty()) {
             Text(
-                text = "No tags assigned to this profile",
+                text = stringResource(R.string.tags_none_assigned),
                 style = MiuixTheme.textStyles.body2,
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
@@ -1685,10 +2479,10 @@ private fun ProfileTagsEditor(
                 tags.sortedBy(String::lowercase).forEach { tag ->
                     BasicComponent(
                         title = tag,
-                        summary = "Text tag",
+                        summary = stringResource(R.string.tags_text_tag),
                         endActions = {
                             TextButton(
-                                text = "Remove",
+                                text = stringResource(R.string.common_remove),
                                 onClick = { onTagsChange(tags.filterNot { it == tag }.toSet()) },
                             )
                         },
@@ -1700,14 +2494,14 @@ private fun ProfileTagsEditor(
         TextField(
             value = newTag,
             onValueChange = { onNewTagChange(it.take(256)) },
-            label = "Text tag (e.g. Work, Travel)",
+            label = stringResource(R.string.tags_input_label),
             useLabelAsPlaceholder = true,
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(8.dp))
         TextButton(
-            text = "Add tag",
+            text = stringResource(R.string.tags_add),
             enabled = canAddTag,
             onClick = {
                 onTagsChange(tags.withTagInput(newTag))
@@ -1719,7 +2513,7 @@ private fun ProfileTagsEditor(
         if (availableSuggestions.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
             Text(
-                text = "Existing tags",
+                text = stringResource(R.string.tags_existing),
                 style = MiuixTheme.textStyles.body1,
                 fontWeight = FontWeight.SemiBold,
             )
@@ -1728,16 +2522,16 @@ private fun ProfileTagsEditor(
                 availableSuggestions.forEach { suggestion ->
                     ArrowPreference(
                         title = suggestion,
-                        summary = "Add to this profile",
+                        summary = stringResource(R.string.tags_add_to_profile),
                         onClick = { onTagsChange(tags.withTagInput(suggestion)) },
                     )
                 }
             }
         }
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(8.dp))
         DialogActionRow(
             onCancel = onCancel,
-            confirmText = "Save",
+            confirmText = stringResource(R.string.common_save),
             onConfirm = { onSave(tags.withTagInput(newTag)) },
         )
         BottomSheetFooterSpacer()
@@ -1765,7 +2559,11 @@ private fun showCustomReminderPicker(
                     if (selectedAt.isAfter(Instant.now())) {
                         onReminderSelected(selectedAt)
                     } else {
-                        Toast.makeText(context, "Choose a future date and time", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.reminders_choose_future),
+                            Toast.LENGTH_SHORT,
+                        ).show()
                     }
                 },
                 initialDateTime.hour,
@@ -1845,7 +2643,7 @@ private fun LogCard(entry: ActivityLogEntry) {
                     )
                 }
                 Text(
-                    entry.level.displayName(),
+                    stringResource(entry.level.labelResource()),
                     style = MiuixTheme.textStyles.footnote1,
                     color = MiuixTheme.colorScheme.onSurfaceVariantActions,
                 )
@@ -1859,17 +2657,20 @@ private fun LogCard(entry: ActivityLogEntry) {
 @Composable
 private fun DialogActionRow(
     onCancel: () -> Unit,
-    cancelText: String = "Cancel",
+    cancelText: String? = null,
     confirmText: String,
     destructive: Boolean = false,
+    confirmEnabled: Boolean = true,
     onConfirm: () -> Unit,
 ) {
+    val resolvedCancelText = cancelText ?: stringResource(R.string.common_cancel)
     Row(Modifier.fillMaxWidth()) {
-        TextButton(text = cancelText, onClick = onCancel, modifier = Modifier.weight(1f))
+        TextButton(text = resolvedCancelText, onClick = onCancel, modifier = Modifier.weight(1f))
         Spacer(Modifier.width(16.dp))
         TextButton(
             text = confirmText,
             onClick = onConfirm,
+            enabled = confirmEnabled,
             colors = if (destructive) {
                 ButtonDefaults.textButtonColors(
                     textColor = MiuixTheme.colorScheme.error,
@@ -1890,91 +2691,115 @@ private fun Instant.formatDateTime(): String = DateTimeFormatter
     .withZone(ZoneId.systemDefault())
     .format(this)
 
-private fun Enum<*>.displayName(): String = name
-    .lowercase()
-    .split('_')
-    .joinToString(" ") { word -> word.replaceFirstChar(Char::uppercase) }
-
-private fun ReaderKind.displayName(): String = when (this) {
-    ReaderKind.NBRIDGE -> "NBridge"
-    ReaderKind.OMAPI -> "OMAPI"
-    ReaderKind.TELEPHONY -> "Telephony"
-    ReaderKind.USB_CCID -> "USB CCID"
-    ReaderKind.BLE -> "Bluetooth LE"
-    ReaderKind.REMOTE -> "Remote"
+private fun ProfileClass.labelResource(): Int = when (this) {
+    ProfileClass.OPERATIONAL -> R.string.profile_class_operational
+    ProfileClass.TESTING -> R.string.profile_class_testing
+    ProfileClass.PROVISIONING -> R.string.profile_class_provisioning
+    ProfileClass.UNKNOWN -> R.string.profile_class_unknown
 }
 
-private fun formatTechnicalValues(values: Set<String>): String = values
-    .takeIf { it.isNotEmpty() }
-    ?.map(::formatTechnicalValue)
-    ?.sorted()
-    ?.joinToString()
-    ?: "Unavailable"
+private fun ReaderKind.labelResource(): Int = when (this) {
+    ReaderKind.NBRIDGE -> R.string.reader_kind_nbridge
+    ReaderKind.OMAPI -> R.string.reader_kind_omapi
+    ReaderKind.TELEPHONY -> R.string.reader_kind_telephony
+    ReaderKind.USB_CCID -> R.string.reader_kind_usb
+    ReaderKind.BLE -> R.string.reader_kind_bluetooth
+    ReaderKind.REMOTE -> R.string.reader_kind_remote
+}
 
+private fun LogLevel.labelResource(): Int = when (this) {
+    LogLevel.DEBUG -> R.string.log_level_debug
+    LogLevel.INFO -> R.string.log_level_info
+    LogLevel.WARNING -> R.string.log_level_warning
+    LogLevel.ERROR -> R.string.log_level_error
+}
+
+@Composable
+private fun formatTechnicalValues(values: Set<String>): String = if (values.isEmpty()) {
+    stringResource(R.string.common_unavailable)
+} else {
+    values.map { value -> formatTechnicalValue(value) }.sorted().joinToString()
+}
+
+@Composable
 private fun formatTechnicalValue(value: String): String = when (value) {
-    "notificationInstall" -> "Install"
-    "notificationLocalEnable" -> "Local enable"
-    "notificationLocalDisable" -> "Local disable"
-    "notificationLocalDelete" -> "Local delete"
-    "notificationRpmEnable" -> "Remote enable"
-    "notificationRpmDisable" -> "Remote disable"
-    "notificationRpmDelete" -> "Remote delete"
-    "loadRpmPackageResult" -> "Remote package result"
-    "pprUpdateControl" -> "PPR update control"
-    "ppr1" -> "PPR1"
-    "ppr2" -> "PPR2"
-    "ppr3" -> "PPR3"
-    "contactlessSupport" -> "Contactless"
-    "usimSupport" -> "USIM"
-    "isimSupport" -> "ISIM"
-    "csimSupport" -> "CSIM"
-    "akaMilenage" -> "AKA Milenage"
-    "akaCave" -> "AKA CAVE"
-    "akaTuak128" -> "AKA TUAK-128"
-    "akaTuak256" -> "AKA TUAK-256"
-    "gbaAuthenUsim" -> "GBA authentication (USIM)"
-    "gbaAuthenISim" -> "GBA authentication (ISIM)"
-    "mbmsAuthenUsim" -> "MBMS authentication"
-    "eapClient" -> "EAP client"
-    "javacard" -> "Java Card"
-    "multos" -> "MULTOS"
-    "multipleUsimSupport" -> "Multiple USIMs"
-    "multipleIsimSupport" -> "Multiple ISIMs"
-    "multipleCsimSupport" -> "Multiple CSIMs"
-    "berTlvFileSupport" -> "BER-TLV files"
-    "dfLinkSupport" -> "DF links"
-    "catTp" -> "CAT-TP"
-    "getIdentity" -> "Get Identity"
-    "profile-a-x25519" -> "Profile A (X25519)"
-    "profile-b-p256" -> "Profile B (P-256)"
-    "suciCalculatorApi" -> "SUCI calculator API"
-    "additionalProfile" -> "Additional profiles"
-    "crlSupport" -> "Certificate revocation lists"
-    "rpmSupport" -> "Remote profile management"
-    "testProfileSupport" -> "Test profiles"
-    "deviceInfoExtensibilitySupport" -> "Extensible device information"
-    "basicEuicc" -> "Basic"
-    "mediumEuicc" -> "Medium"
-    "contactlessEuicc" -> "Contactless"
-    "other" -> "Other"
+    "notificationInstall" -> stringResource(R.string.technical_notification_install)
+    "notificationLocalEnable" -> stringResource(R.string.technical_notification_local_enable)
+    "notificationLocalDisable" -> stringResource(R.string.technical_notification_local_disable)
+    "notificationLocalDelete" -> stringResource(R.string.technical_notification_local_delete)
+    "notificationRpmEnable" -> stringResource(R.string.technical_notification_remote_enable)
+    "notificationRpmDisable" -> stringResource(R.string.technical_notification_remote_disable)
+    "notificationRpmDelete" -> stringResource(R.string.technical_notification_remote_delete)
+    "loadRpmPackageResult" -> stringResource(R.string.technical_remote_package_result)
+    "pprUpdateControl" -> stringResource(R.string.technical_ppr_update_control)
+    "ppr1" -> stringResource(R.string.technical_ppr1)
+    "ppr2" -> stringResource(R.string.technical_ppr2)
+    "ppr3" -> stringResource(R.string.technical_ppr3)
+    "contactlessSupport" -> stringResource(R.string.technical_contactless)
+    "usimSupport" -> stringResource(R.string.technical_usim)
+    "isimSupport" -> stringResource(R.string.technical_isim)
+    "csimSupport" -> stringResource(R.string.technical_csim)
+    "akaMilenage" -> stringResource(R.string.technical_aka_milenage)
+    "akaCave" -> stringResource(R.string.technical_aka_cave)
+    "akaTuak128" -> stringResource(R.string.technical_aka_tuak_128)
+    "akaTuak256" -> stringResource(R.string.technical_aka_tuak_256)
+    "gbaAuthenUsim" -> stringResource(R.string.technical_gba_authentication_usim)
+    "gbaAuthenISim" -> stringResource(R.string.technical_gba_authentication_isim)
+    "mbmsAuthenUsim" -> stringResource(R.string.technical_mbms_authentication)
+    "eapClient" -> stringResource(R.string.technical_eap_client)
+    "javacard" -> stringResource(R.string.technical_java_card)
+    "multos" -> stringResource(R.string.technical_multos)
+    "multipleUsimSupport" -> stringResource(R.string.technical_multiple_usims)
+    "multipleIsimSupport" -> stringResource(R.string.technical_multiple_isims)
+    "multipleCsimSupport" -> stringResource(R.string.technical_multiple_csims)
+    "berTlvFileSupport" -> stringResource(R.string.technical_ber_tlv_files)
+    "dfLinkSupport" -> stringResource(R.string.technical_df_links)
+    "catTp" -> stringResource(R.string.technical_cat_tp)
+    "getIdentity" -> stringResource(R.string.technical_get_identity)
+    "profile-a-x25519" -> stringResource(R.string.technical_profile_a_x25519)
+    "profile-b-p256" -> stringResource(R.string.technical_profile_b_p256)
+    "suciCalculatorApi" -> stringResource(R.string.technical_suci_calculator_api)
+    "additionalProfile" -> stringResource(R.string.technical_additional_profiles)
+    "crlSupport" -> stringResource(R.string.technical_certificate_revocation_lists)
+    "rpmSupport" -> stringResource(R.string.technical_remote_profile_management)
+    "testProfileSupport" -> stringResource(R.string.technical_test_profiles)
+    "deviceInfoExtensibilitySupport" -> stringResource(
+        R.string.technical_extensible_device_information,
+    )
+    "basicEuicc" -> stringResource(R.string.technical_basic)
+    "mediumEuicc" -> stringResource(R.string.technical_medium)
+    "contactlessEuicc" -> stringResource(R.string.technical_contactless)
+    "other" -> stringResource(R.string.technical_other)
     else -> value
         .replace(Regex("([a-z0-9])([A-Z])"), "$1 $2")
         .replaceFirstChar(Char::uppercase)
 }
 
-private fun formatKeyIds(values: Set<String>): String = values
-    .takeIf { it.isNotEmpty() }
-    ?.map { it.uppercase() }
-    ?.sorted()
-    ?.joinToString("\n")
-    ?: "Unavailable"
+@Composable
+private fun formatKeyIds(values: Set<String>): String = if (values.isEmpty()) {
+    stringResource(R.string.common_unavailable)
+} else {
+    values.map(String::uppercase).sorted().joinToString("\n")
+}
 
+@Composable
 private fun formatBytes(bytes: Int): String = formatBytes(bytes.toLong())
 
+@Composable
 private fun formatBytes(bytes: Long): String {
-    if (bytes < 1024) return "$bytes B"
+    if (bytes < 1024) return stringResource(R.string.size_bytes, bytes)
     val kib = bytes / 1024.0
-    if (kib < 1024f) return "${(kib * 10).roundToInt() / 10f} KiB"
-    val mib = kib / 1024f
-    return "${(mib * 10).roundToInt() / 10f} MiB"
+    if (kib < 1024f) {
+        return stringResource(R.string.size_kibibytes_decimal, (kib * 10).roundToInt() / 10.0)
+    }
+    val mib = kib / 1024.0
+    return stringResource(R.string.size_mebibytes_decimal, (mib * 10).roundToInt() / 10.0)
 }
+
+private const val MaxBatchInputCharacters = 128 * 1024
+private const val MaxActivationInputCharacters = 4_096
+private const val MaxProvisioningAddressCharacters = 253
+private const val MaxSearchQueryCharacters = 256
+private const val MaxQrEncodedImageBytes = 16 * 1024 * 1024
+private const val MaxQrDecodedEdge = 2_048
+private const val MaxQrSourceDimension = 100_000
