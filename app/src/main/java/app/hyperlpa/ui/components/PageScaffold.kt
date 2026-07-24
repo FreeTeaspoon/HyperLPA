@@ -11,10 +11,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -23,12 +25,14 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.hyperlpa.data.settings.RedactionMode
 import app.hyperlpa.ui.adaptive.AdaptiveTopAppBar
 import app.hyperlpa.ui.adaptive.CenteredContent
 import app.hyperlpa.ui.adaptive.horizontalCutoutPadding
+import kotlinx.coroutines.flow.collect
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
@@ -53,6 +57,7 @@ fun DetailLazyScaffold(
     content: LazyListScope.(sidePadding: Dp) -> Unit,
 ) {
     val scrollBehavior = MiuixScrollBehavior()
+    val listState = rememberLazyListState()
     val hasBackground = background != null
     val backdrop = rememberAppBackdrop()
     val backgroundScrollOffset = remember { mutableFloatStateOf(0f) }
@@ -86,6 +91,45 @@ fun DetailLazyScaffold(
             }
         }
     }
+    // LazyColumn repositions content near the end when an item shrinks, but that
+    // layout correction does not pass through either nested scroll connection.
+    LaunchedEffect(listState, scrollBehavior, hasBackground) {
+        var previousSnapshot: ListViewportSnapshot? = null
+        snapshotFlow {
+            ListViewportSnapshot(
+                isScrollInProgress = listState.isScrollInProgress,
+                itemOffsets = listState.layoutInfo.visibleItemsInfo.associate { item ->
+                    item.index to item.offset
+                },
+            )
+        }.collect { snapshot ->
+            val previous = previousSnapshot
+            if (previous != null &&
+                !previous.isScrollInProgress &&
+                !snapshot.isScrollInProgress
+            ) {
+                val anchorIndex = snapshot.itemOffsets.keys.firstOrNull(previous.itemOffsets::containsKey)
+                if (anchorIndex != null) {
+                    val contentDisplacement =
+                        snapshot.itemOffsets.getValue(anchorIndex) - previous.itemOffsets.getValue(anchorIndex)
+                    if (contentDisplacement != 0) {
+                        // Keep a regular large title collapsed when LazyColumn automatically
+                        // repositions shortened content near the end. Gradient pages also move
+                        // their artwork, so their small bar still follows that visual correction.
+                        if (hasBackground) {
+                            scrollBehavior.state.heightOffset += contentDisplacement
+                        }
+                        scrollBehavior.state.contentOffset += contentDisplacement
+                        if (hasBackground) {
+                            backgroundScrollOffset.floatValue =
+                                (backgroundScrollOffset.floatValue - contentDisplacement).coerceAtLeast(0f)
+                        }
+                    }
+                }
+            }
+            previousSnapshot = snapshot
+        }
+    }
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -97,7 +141,7 @@ fun DetailLazyScaffold(
             topBar = {
                 val navigationIcon: @Composable () -> Unit = {
                     IconButton(onClick = onBack) {
-                        Icon(MiuixIcons.Back, contentDescription = "Back")
+                        Icon(MiuixIcons.Back, contentDescription = stringResource(app.hyperlpa.R.string.common_back))
                     }
                 }
                 if (hasBackground) {
@@ -178,7 +222,7 @@ fun DetailLazyScaffold(
                             .overScrollVertical()
                             .nestedScroll(scrollBehavior.nestedScrollConnection)
                             .nestedScroll(backgroundScrollConnection),
-                        state = rememberLazyListState(),
+                        state = listState,
                         overscrollEffect = null,
                         contentPadding = PaddingValues(
                             start = sidePadding,
@@ -195,15 +239,21 @@ fun DetailLazyScaffold(
     }
 }
 
+private data class ListViewportSnapshot(
+    val isScrollInProgress: Boolean,
+    val itemOffsets: Map<Int, Int>,
+)
+
 fun redactIdentifier(
     value: String,
     mode: RedactionMode,
 ): String {
-    if (mode == RedactionMode.NONE || value.length < 8) return value
+    if (mode == RedactionMode.NONE || value.isEmpty()) return value
     return when (mode) {
         RedactionMode.NONE -> value
         RedactionMode.FULL -> "•".repeat(8)
         RedactionMode.MIDDLE -> {
+            if (value.length < 8) return "•".repeat(value.length)
             val visible = (value.length / 4).coerceIn(2, 6)
             value.take(visible) + "•".repeat(4) + value.takeLast(visible)
         }

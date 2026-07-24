@@ -27,6 +27,12 @@ interface LocalProfileAssistant {
     // Addresses configured on the eUICC for default profile discovery and download.
     val euiccConfiguredAddresses: EuiccConfiguredAddresses?
 
+    /** Updates the eUICC's configured default SM-DP+ address. */
+    fun setDefaultSmdpAddress(address: String): Boolean
+
+    /** Returns SM-DP+ addresses advertised by an SM-DS discovery service. */
+    fun discoverSmdpAddresses(smdsAddress: String, imei: String? = null): List<String>
+
     /**
      * Set the max segment size (mss) for all es10x commands. This can help with removable
      * eUICCs that may run at a baud rate too fast for the modem.
@@ -45,10 +51,11 @@ interface LocalProfileAssistant {
     fun deleteNotification(seqNumber: Long): Boolean
     fun handleNotification(seqNumber: Long): Boolean
 
-    fun euiccMemoryReset()
+    /** Returns false when the eUICC rejects or cannot complete the reset. */
+    fun euiccMemoryReset(): Boolean
 
     /**
-     * Nickname must be valid UTF-8 and shorter than 64 chars.
+     * Nickname must be valid UTF-8 and shorter than 64 bytes once encoded.
      *
      * May throw one of: ProfileRenameException, ProfileNameTooLongException, ProfileNameIsInvalidUTF8Exception
      */
@@ -57,4 +64,6 @@ interface LocalProfileAssistant {
     )
 
     fun close()
+
+    class ProfileDiscoveryException(message: String) : Exception(message)
 }

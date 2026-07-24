@@ -261,7 +261,7 @@ private fun AboutContent(
                                 Modifier
                             },
                         ),
-                    painter = painterResource(R.drawable.ic_launcher_foreground),
+                    painter = painterResource(R.drawable.about_logo),
                     colorFilter = ColorFilter.tint(MiuixTheme.colorScheme.onBackground),
                     contentDescription = stringResource(R.string.app_name),
                 )
@@ -302,7 +302,11 @@ private fun AboutContent(
                         scaleY = 1f - versionProgress * 0.05f
                     },
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                text = "v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                text = stringResource(
+                    R.string.about_version_summary,
+                    BuildConfig.VERSION_NAME,
+                    BuildConfig.VERSION_CODE,
+                ),
                 fontSize = 14.sp,
                 textAlign = TextAlign.Center,
             )

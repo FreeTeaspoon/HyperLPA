@@ -44,11 +44,15 @@ int euicc_apdu_transmit(struct euicc_ctx *ctx, struct apdu_response *response, c
 
     euicc_apdu_request_print(ctx->apdu.log_fp, request, request_len);
 
-    if (in->transmit(ctx, &response->data, &response->length, (uint8_t *)request, request_len) < 0)
+    if (in->transmit(ctx, &response->data, &response->length, (uint8_t *)request, request_len) < 0) {
+        euicc_apdu_response_free(response);
         return -1;
+    }
 
-    if (response->length < 2)
+    if (response->length < 2) {
+        euicc_apdu_response_free(response);
         return -1;
+    }
 
     response->sw1 = response->data[response->length - 2];
     response->sw2 = response->data[response->length - 1];

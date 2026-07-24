@@ -152,13 +152,29 @@ static jobject create_remote_profile_info(JNIEnv *env,
     jobject remote_profile_info = NULL;
 
     metadata_iccid = toJString(env, profile_metadata->iccid);
+    if (metadata_iccid == NULL)
+        goto out;
     metadata_profile_name = toJString(env, profile_metadata->profileName);
+    if (metadata_profile_name == NULL)
+        goto out;
     metadata_provider_name = toJString(env, profile_metadata->serviceProviderName);
+    if (metadata_provider_name == NULL)
+        goto out;
     metadata_icon = toJString(env, profile_metadata->icon);
+    if (metadata_icon == NULL)
+        goto out;
     metadata_mcc_mnc = toJString(env, profile_metadata->profileOwner.mccmnc);
+    if (metadata_mcc_mnc == NULL)
+        goto out;
     metadata_gid1 = toJString(env, profile_metadata->profileOwner.gid1);
+    if (metadata_gid1 == NULL)
+        goto out;
     metadata_gid2 = toJString(env, profile_metadata->profileOwner.gid2);
+    if (metadata_gid2 == NULL)
+        goto out;
     profile_class = profile_class_from_es10c_profile_class(profile_metadata->profileClass);
+    if (profile_class == NULL)
+        goto out;
 
     remote_profile_info = (*env)->NewObject(env, remote_profile_info_class,
                                             remote_profile_info_constructor,
@@ -171,6 +187,7 @@ static jobject create_remote_profile_info(JNIEnv *env,
                                             metadata_gid1,
                                             metadata_gid2);
 
+out:
     if (metadata_iccid != NULL)
         (*env)->DeleteLocalRef(env, metadata_iccid);
     if (metadata_profile_name != NULL)
@@ -190,9 +207,19 @@ static jobject create_remote_profile_info(JNIEnv *env,
 }
 
 struct lpac_download_progress_context {
+    struct euicc_ctx *ctx;
     JNIEnv *env;
     jobject callback;
 };
+
+static jboolean lpac_download_notify(struct euicc_ctx *ctx, JNIEnv *env, jobject callback, jobject state) {
+    jboolean accepted = (*env)->CallBooleanMethod(env, callback, on_state_update, state);
+    if ((*env)->ExceptionCheck(env)) {
+        lpac_jni_capture_exception(ctx, env);
+        return JNI_FALSE;
+    }
+    return accepted;
+}
 
 static int lpac_download_install_progress(uint64_t sent_bytes, uint64_t total_bytes, void *user_data) {
     struct lpac_download_progress_context *progress = user_data;
@@ -205,10 +232,7 @@ static int lpac_download_install_progress(uint64_t sent_bytes, uint64_t total_by
         return -1;
     }
 
-    jboolean accepted = (*progress->env)->CallBooleanMethod(progress->env,
-                                                            progress->callback,
-                                                            on_state_update,
-                                                            state);
+    jboolean accepted = lpac_download_notify(progress->ctx, progress->env, progress->callback, state);
     (*progress->env)->DeleteLocalRef(progress->env, state);
     return accepted ? 0 : -1;
 }
@@ -228,23 +252,41 @@ Java_net_typeblog_lpac_1jni_LpacJni_downloadProfile(JNIEnv *env, jobject thiz, j
     jobject remote_profile_info = NULL;
     jobject confirming_download_state = NULL;
     struct lpac_download_progress_context install_progress = {
+        .ctx = ctx,
         .env = env,
         .callback = callback,
     };
     jboolean confirmed = JNI_TRUE;
-    int ret;
+    int ret = -ES10B_ERROR_REASON_UNDEFINED;
 
-    if (confirmation_code != NULL)
+    if (ctx == NULL || smdp == NULL || callback == NULL)
+        return ret;
+
+    if (confirmation_code != NULL) {
         _confirmation_code = (*env)->GetStringUTFChars(env, confirmation_code, NULL);
-    if (matching_id != NULL)
+        if (_confirmation_code == NULL)
+            goto out;
+    }
+    if (matching_id != NULL) {
         _matching_id = (*env)->GetStringUTFChars(env, matching_id, NULL);
+        if (_matching_id == NULL)
+            goto out;
+    }
     _smdp = (*env)->GetStringUTFChars(env, smdp, NULL);
-    if (imei != NULL)
+    if (_smdp == NULL)
+        goto out;
+    if (imei != NULL) {
         _imei = (*env)->GetStringUTFChars(env, imei, NULL);
+        if (_imei == NULL)
+            goto out;
+    }
 
-    ctx->http.server_address = _smdp;
+    if (lpac_jni_set_owned_http_server_address(ctx, _smdp) < 0) {
+        ret = -ES10B_ERROR_REASON_UNDEFINED;
+        goto out;
+    }
 
-    confirmed = (*env)->CallBooleanMethod(env, callback, on_state_update, download_state_preparing);
+    confirmed = lpac_download_notify(ctx, env, callback, download_state_preparing);
     if (!confirmed) {
         ret = -ES10B_ERROR_REASON_UNDEFINED;
         goto out;
@@ -257,7 +299,7 @@ Java_net_typeblog_lpac_1jni_LpacJni_downloadProfile(JNIEnv *env, jobject thiz, j
         goto out;
     }
 
-    confirmed = (*env)->CallBooleanMethod(env, callback, on_state_update, download_state_connecting);
+    confirmed = lpac_download_notify(ctx, env, callback, download_state_connecting);
     if (!confirmed) {
         ret = -ES10B_ERROR_REASON_UNDEFINED;
         goto out;
@@ -270,7 +312,7 @@ Java_net_typeblog_lpac_1jni_LpacJni_downloadProfile(JNIEnv *env, jobject thiz, j
         goto out;
     }
 
-    confirmed = (*env)->CallBooleanMethod(env, callback, on_state_update, download_state_authenticating);
+    confirmed = lpac_download_notify(ctx, env, callback, download_state_authenticating);
     if (!confirmed) {
         ret = -ES10B_ERROR_REASON_UNDEFINED;
         goto out;
@@ -314,7 +356,7 @@ Java_net_typeblog_lpac_1jni_LpacJni_downloadProfile(JNIEnv *env, jobject thiz, j
         goto out;
     }
 
-    confirmed = (*env)->CallBooleanMethod(env, callback, on_state_update, confirming_download_state);
+    confirmed = lpac_download_notify(ctx, env, callback, confirming_download_state);
 
     if (remote_profile_info != NULL) {
         (*env)->DeleteLocalRef(env, remote_profile_info);
@@ -330,7 +372,7 @@ Java_net_typeblog_lpac_1jni_LpacJni_downloadProfile(JNIEnv *env, jobject thiz, j
         goto out;
     }
 
-    confirmed = (*env)->CallBooleanMethod(env, callback, on_state_update, download_state_downloading);
+    confirmed = lpac_download_notify(ctx, env, callback, download_state_downloading);
     if (!confirmed) {
         ret = -ES10B_ERROR_REASON_UNDEFINED;
         goto out;
@@ -347,7 +389,7 @@ Java_net_typeblog_lpac_1jni_LpacJni_downloadProfile(JNIEnv *env, jobject thiz, j
     if (ret < 0)
         goto out;
 
-    confirmed = (*env)->CallBooleanMethod(env, callback, on_state_update, download_state_finalizing);
+    confirmed = lpac_download_notify(ctx, env, callback, download_state_finalizing);
     if (!confirmed) {
         ret = -ES10B_ERROR_REASON_UNDEFINED;
         goto out;
@@ -364,15 +406,20 @@ Java_net_typeblog_lpac_1jni_LpacJni_downloadProfile(JNIEnv *env, jobject thiz, j
     }
 
     euicc_http_cleanup(ctx);
+    lpac_jni_clear_owned_http_server_address(ctx);
 
     out:
+    /* Java transport and progress-callback failures must be cleared while C
+     * resources unwind, then restored at this JNI boundary. */
+    lpac_jni_capture_exception(ctx, env);
     // We expect Java side to call cancelSessions after any error -- thus, `euicc_http_cleanup` is done there
     // This is so that Java side can access the last HTTP and/or APDU errors when we return.
     if (_confirmation_code != NULL)
         (*env)->ReleaseStringUTFChars(env, confirmation_code, _confirmation_code);
     if (_matching_id != NULL)
         (*env)->ReleaseStringUTFChars(env, matching_id, _matching_id);
-    (*env)->ReleaseStringUTFChars(env, smdp, _smdp);
+    if (_smdp != NULL)
+        (*env)->ReleaseStringUTFChars(env, smdp, _smdp);
     if (_imei != NULL)
         (*env)->ReleaseStringUTFChars(env, imei, _imei);
     if (remote_profile_info != NULL)
@@ -381,6 +428,8 @@ Java_net_typeblog_lpac_1jni_LpacJni_downloadProfile(JNIEnv *env, jobject thiz, j
         (*env)->DeleteLocalRef(env, confirming_download_state);
     if (profile_metadata != NULL)
         es8p_metadata_free(&profile_metadata);
+    lpac_jni_capture_exception(ctx, env);
+    lpac_jni_rethrow_captured_exception(ctx, env);
     return ret;
 }
 
@@ -388,9 +437,86 @@ Java_net_typeblog_lpac_1jni_LpacJni_downloadProfile(JNIEnv *env, jobject thiz, j
 JNIEXPORT void JNICALL
 Java_net_typeblog_lpac_1jni_LpacJni_cancelSessions(JNIEnv *env, jobject thiz, jlong handle) {
     struct euicc_ctx *ctx = (struct euicc_ctx *) handle;
-    es9p_cancel_session(ctx);
+    if (ctx == NULL)
+        return;
+    /*
+     * ES10b creates the signed cancelSessionResponse consumed by ES9+.
+     * Calling the server first silently skips the cancellation request because
+     * b64_cancel_session_response does not exist yet.
+     */
     es10b_cancel_session(ctx, ES10B_CANCEL_SESSION_REASON_UNDEFINED);
+    if (!(*env)->ExceptionCheck(env) && ctx->http.server_address != NULL)
+        es9p_cancel_session(ctx);
     euicc_http_cleanup(ctx);
+    lpac_jni_clear_owned_http_server_address(ctx);
+}
+
+JNIEXPORT jobjectArray JNICALL
+Java_net_typeblog_lpac_1jni_LpacJni_discoverSmdpAddresses(JNIEnv *env, jobject thiz,
+                                                          jlong handle, jstring smds_address,
+                                                          jstring imei) {
+    struct euicc_ctx *ctx = (struct euicc_ctx *)handle;
+    const char *native_smds = NULL;
+    const char *native_imei = NULL;
+    char **smdp_list = NULL;
+    jobjectArray result = NULL;
+    size_t count = 0;
+
+    if (ctx == NULL || smds_address == NULL)
+        return NULL;
+    native_smds = (*env)->GetStringUTFChars(env, smds_address, NULL);
+    if (native_smds == NULL)
+        goto out;
+    if (native_smds[0] == '\0' || strlen(native_smds) > 253U)
+        goto out;
+    if (imei != NULL) {
+        native_imei = (*env)->GetStringUTFChars(env, imei, NULL);
+        if (native_imei == NULL)
+            goto out;
+    }
+
+    ctx->http.server_address = native_smds;
+    if (es10b_get_euicc_challenge_and_info(ctx) < 0 ||
+        es9p_initiate_authentication(ctx) < 0 ||
+        es10b_authenticate_server(ctx, NULL, native_imei) < 0 ||
+        es11_authenticate_client(ctx, &smdp_list) < 0) {
+        goto out;
+    }
+
+    while (count < 1024U && smdp_list[count] != NULL)
+        count++;
+    if (count == 1024U)
+        goto out;
+
+    result = (*env)->NewObjectArray(env, (jsize)count, string_class, NULL);
+    if (result == NULL)
+        goto out;
+    for (size_t i = 0; i < count; i++) {
+        jstring address = toJString(env, smdp_list[i]);
+        if (address == NULL) {
+            (*env)->DeleteLocalRef(env, result);
+            result = NULL;
+            goto out;
+        }
+        (*env)->SetObjectArrayElement(env, result, (jsize)i, address);
+        (*env)->DeleteLocalRef(env, address);
+        if ((*env)->ExceptionCheck(env)) {
+            (*env)->DeleteLocalRef(env, result);
+            result = NULL;
+            goto out;
+        }
+    }
+
+out:
+    euicc_http_cleanup(ctx);
+    if (ctx != NULL)
+        ctx->http.server_address = NULL;
+    es11_smdp_list_free_all(smdp_list);
+    if (native_smds != NULL)
+        (*env)->ReleaseStringUTFChars(env, smds_address, native_smds);
+    if (native_imei != NULL)
+        (*env)->ReleaseStringUTFChars(env, imei, native_imei);
+    return result;
 }
 
 #define QUOTE(S) #S
@@ -452,4 +578,20 @@ Java_net_typeblog_lpac_1jni_LpacJni_downloadLastHttpError(JNIEnv *env, jobject t
     }
 
     return toJString(env, message);
+}
+
+JNIEXPORT jstring JNICALL
+Java_net_typeblog_lpac_1jni_LpacJni_downloadServerCertificate(JNIEnv *env, jobject thiz,
+                                                               jlong handle) {
+    struct euicc_ctx *ctx = (struct euicc_ctx *)handle;
+    struct es10b_authenticate_server_param *param;
+
+    if (ctx == NULL) {
+        return NULL;
+    }
+    param = ctx->http._internal.authenticate_server_param;
+    if (param == NULL || param->b64_serverCertificate == NULL) {
+        return NULL;
+    }
+    return toJString(env, param->b64_serverCertificate);
 }

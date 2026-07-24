@@ -12,9 +12,17 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import java.io.IOException
+import java.net.URI
+import java.nio.charset.StandardCharsets
+import java.util.Locale
 
 private val Context.hyperLpaDataStore by preferencesDataStore(name = "hyperlpa_settings")
 
@@ -145,8 +153,10 @@ data class AppSettings(
     val scheduledReminders: Boolean = true,
     val eidRedaction: RedactionMode = RedactionMode.NONE,
     val iccidRedaction: RedactionMode = RedactionMode.NONE,
-    val loadOperatorIcons: Boolean = true,
-    val estimateProfileSize: Boolean = true,
+    // Remote enrichment is opt-in because even public asset requests disclose the
+    // device IP address and an inferred operator/MCC to third-party hosts.
+    val loadOperatorIcons: Boolean = false,
+    val estimateProfileSize: Boolean = false,
     val hideProfileDeletion: Boolean = false,
     val hideEuiccMemoryReset: Boolean = false,
     val apduLogging: Boolean = false,
@@ -156,6 +166,20 @@ data class AppSettings(
     val lastReaderId: String? = null,
     val isdrAids: List<String> = DefaultIsdrAids,
     val remoteReaderUrls: List<String> = emptyList(),
+    /** Runtime-only credentials. Backups and serialized settings must never contain these values. */
+    @Transient
+    val remoteReaderTokens: Map<String, String> = emptyMap(),
+)
+
+/**
+ * Durable rollback material for a cross-DataStore backup restore. Credentials remain encrypted
+ * with Android Keystore while the journal is at rest; plaintext bearer tokens are never
+ * serialized into it.
+ */
+@Serializable
+internal data class AppSettingsRecoverySnapshot(
+    val settings: AppSettings,
+    val encryptedRemoteCredentials: Map<String, String>,
 )
 
 val DefaultIsdrAids = listOf(
@@ -167,6 +191,11 @@ val DefaultIsdrAids = listOf(
 
 class AppSettingsStore(context: Context) {
     private val dataStore = context.applicationContext.hyperLpaDataStore
+    private val remoteCredentialCipher = RemoteCredentialCipher(context.applicationContext)
+    private val credentialJson = Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = false
+    }
 
     val settings: Flow<AppSettings> = dataStore.data
         .catch { error ->
@@ -181,7 +210,7 @@ class AppSettingsStore(context: Context) {
     suspend fun setPalette(value: ThemePalette) = set(Keys.Palette, value.name)
     suspend fun setBlurEnabled(value: Boolean) = set(Keys.BlurEnabled, value)
     suspend fun setPredictiveBack(value: Boolean) = set(Keys.PredictiveBack, value)
-    suspend fun setDensityScale(value: Float) = set(Keys.DensityScale, value.coerceIn(0.8f, 1.1f))
+    suspend fun setDensityScale(value: Float) = set(Keys.DensityScale, value.coerceIn(1f, 1.1f))
     suspend fun setNavigationStyle(value: NavigationStyle) = set(Keys.NavigationStyle, value.name)
     suspend fun setFloatingBottomBarStyle(value: FloatingBottomBarStyle) =
         set(Keys.FloatingBottomBarStyle, value.name)
@@ -223,24 +252,90 @@ class AppSettingsStore(context: Context) {
     suspend fun setEstimateProfileSize(value: Boolean) = set(Keys.EstimateProfileSize, value)
     suspend fun setHideProfileDeletion(value: Boolean) = set(Keys.HideProfileDeletion, value)
     suspend fun setHideEuiccMemoryReset(value: Boolean) = set(Keys.HideEuiccMemoryReset, value)
-    suspend fun setApduLogging(value: Boolean) = set(Keys.ApduLogging, value)
-    suspend fun setDeveloperMode(value: Boolean) = set(Keys.DeveloperMode, value)
+    suspend fun setApduLogging(value: Boolean) {
+        dataStore.edit { preferences ->
+            preferences[Keys.ApduLogging] = value && preferences[Keys.DeveloperMode] == true
+        }
+    }
+    suspend fun setDeveloperMode(value: Boolean) {
+        dataStore.edit { preferences ->
+            preferences[Keys.DeveloperMode] = value
+            if (!value) preferences[Keys.ApduLogging] = false
+        }
+    }
     suspend fun setEs10xMss(value: Int) = set(Keys.Es10xMss, value.coerceIn(32, 255))
     suspend fun setImei(value: String) = set(Keys.Imei, value.filter(Char::isDigit).take(16))
     suspend fun setLastReaderId(value: String?) = setNullable(Keys.LastReaderId, value)
     suspend fun setIsdrAids(value: List<String>) = set(
         Keys.IsdrAids,
-        value.map(String::trim).filter(String::isNotEmpty).distinct().joinToString("\n"),
+        validateIsdrAids(value).joinToString("\n"),
     )
-    suspend fun setRemoteReaderUrls(value: List<String>) = set(
-        Keys.RemoteReaderUrls,
-        value.map(String::trim).filter(String::isNotEmpty).distinct().joinToString("\n"),
-    )
+    suspend fun setRemoteReaderUrls(value: List<String>): AppSettings {
+        val parsed = validateRemoteReaderSettings(value)
+        val updated = dataStore.edit { preferences ->
+            val encrypted = readStoredRemoteCredentials(preferences).toMutableMap()
+            val retainedEndpoints = parsed.mapTo(hashSetOf(), ParsedRemoteReaderSetting::endpointUrl)
+            encrypted.keys.retainAll(retainedEndpoints)
+            parsed.forEach { entry ->
+                entry.bearerToken?.let { token ->
+                    encrypted[entry.endpointUrl] = remoteCredentialCipher.encrypt(entry.endpointUrl, token)
+                }
+            }
+            preferences[Keys.RemoteReaderUrls] = parsed.joinToString("\n", transform = ParsedRemoteReaderSetting::endpointUrl)
+            preferences.writeStoredRemoteCredentials(encrypted)
+        }
+        return readSettings(updated)
+    }
+
+    suspend fun setRemoteReaderToken(endpointUrl: String, bearerToken: String?): AppSettings {
+        val endpoint = parseRemoteReaderSetting(endpointUrl).endpointUrl
+        val token = bearerToken?.takeIf(String::isNotEmpty)
+        require(token == null || isValidRemoteReaderToken(token)) { "Remote reader token is invalid" }
+        val updated = dataStore.edit { preferences ->
+            val encrypted = readStoredRemoteCredentials(preferences).toMutableMap()
+            if (token == null) encrypted.remove(endpoint)
+            else encrypted[endpoint] = remoteCredentialCipher.encrypt(endpoint, token)
+            preferences.writeStoredRemoteCredentials(encrypted)
+        }
+        return readSettings(updated)
+    }
+
+    /** Moves credentials from legacy URL user-info into Android Keystore protected storage. */
+    suspend fun migrateLegacyRemoteReaderCredentials() {
+        dataStore.edit { preferences ->
+            preferences.migrateLegacyRemoteReaderCredentials()
+        }
+    }
 
     suspend fun replaceSettings(settings: AppSettings) {
         dataStore.edit { preferences ->
             preferences.clear()
             preferences.writeSettings(settings)
+        }
+    }
+
+    /** Reads the current settings directly from their authoritative DataStore generation. */
+    internal suspend fun snapshot(): AppSettings = readSettings(dataStore.data.first())
+
+    internal suspend fun snapshotForRecovery(): AppSettingsRecoverySnapshot {
+        // Canonicalizing a legacy `https://token@host` value without first moving its token would
+        // make a rollback silently lose the credential. Perform the migration and snapshot from
+        // the exact Preferences generation returned by the same transaction. If Keystore access
+        // fails, the edit and restore both fail before a recovery journal or imported state exists.
+        val preferences = dataStore.edit { mutablePreferences ->
+            mutablePreferences.migrateLegacyRemoteReaderCredentials()
+        }
+        return AppSettingsRecoverySnapshot(
+            settings = readSettings(preferences).copy(remoteReaderTokens = emptyMap()),
+            encryptedRemoteCredentials = readStoredRemoteCredentials(preferences),
+        )
+    }
+
+    internal suspend fun restoreRecoverySnapshot(snapshot: AppSettingsRecoverySnapshot) {
+        dataStore.edit { preferences ->
+            preferences.clear()
+            preferences.writeSettings(snapshot.settings.copy(remoteReaderTokens = emptyMap()))
+            preferences.writeStoredRemoteCredentials(snapshot.encryptedRemoteCredentials)
         }
     }
 
@@ -266,7 +361,7 @@ class AppSettingsStore(context: Context) {
         this[Keys.Palette] = settings.palette.name
         this[Keys.BlurEnabled] = settings.blurEnabled
         this[Keys.PredictiveBack] = settings.predictiveBack
-        this[Keys.DensityScale] = settings.densityScale.coerceIn(0.8f, 1.1f)
+        this[Keys.DensityScale] = settings.densityScale.coerceIn(1f, 1.1f)
         this[Keys.NavigationStyle] = settings.navigationStyle.name
         this[Keys.FloatingBottomBarStyle] = settings.floatingBottomBarStyle.name
         this[Keys.NavigationLabels] = settings.navigationLabels.name
@@ -307,24 +402,65 @@ class AppSettingsStore(context: Context) {
         this[Keys.EstimateProfileSize] = settings.estimateProfileSize
         this[Keys.HideProfileDeletion] = settings.hideProfileDeletion
         this[Keys.HideEuiccMemoryReset] = settings.hideEuiccMemoryReset
-        this[Keys.ApduLogging] = settings.apduLogging
+        this[Keys.ApduLogging] = settings.developerMode && settings.apduLogging
         this[Keys.DeveloperMode] = settings.developerMode
         this[Keys.Es10xMss] = settings.es10xMss.coerceIn(32, 255)
         this[Keys.Imei] = settings.imei.filter(Char::isDigit).take(16)
         settings.lastReaderId?.let { this[Keys.LastReaderId] = it }
-        this[Keys.IsdrAids] = settings.isdrAids
-            .map(String::trim)
-            .filter(String::isNotEmpty)
-            .distinct()
-            .joinToString("\n")
-        this[Keys.RemoteReaderUrls] = settings.remoteReaderUrls
-            .map(String::trim)
-            .filter(String::isNotEmpty)
-            .distinct()
-            .joinToString("\n")
+        this[Keys.IsdrAids] = validateIsdrAids(settings.isdrAids).joinToString("\n")
+        val remoteReaders = validateRemoteReaderSettings(settings.remoteReaderUrls)
+        this[Keys.RemoteReaderUrls] = remoteReaders.joinToString("\n", transform = ParsedRemoteReaderSetting::endpointUrl)
+        val encryptedCredentials = remoteReaders.mapNotNull { entry ->
+            val token = entry.bearerToken ?: settings.remoteReaderTokens[entry.endpointUrl]
+            token?.let { entry.endpointUrl to remoteCredentialCipher.encrypt(entry.endpointUrl, it) }
+        }.toMap()
+        writeStoredRemoteCredentials(encryptedCredentials)
     }
 
-    private fun readSettings(preferences: Preferences): AppSettings = AppSettings(
+    private fun MutablePreferences.migrateLegacyRemoteReaderCredentials() {
+        val rawEntries = this[Keys.RemoteReaderUrls]
+            ?.lineSequence()
+            ?.map(String::trim)
+            ?.filter(String::isNotEmpty)
+            ?.take(MaximumRemoteReaderEndpoints)
+            ?.toList()
+            .orEmpty()
+        val encrypted = readStoredRemoteCredentials(this).toMutableMap()
+        val migratedEntries = rawEntries.mapNotNull { raw ->
+            val parsed = runCatching { parseRemoteReaderSetting(raw) }.getOrNull()
+                ?: return@mapNotNull null
+            parsed.bearerToken?.let { token ->
+                encrypted[parsed.endpointUrl] = remoteCredentialCipher.encrypt(
+                    parsed.endpointUrl,
+                    token,
+                )
+            }
+            parsed.endpointUrl
+        }.distinct()
+        this[Keys.RemoteReaderUrls] = migratedEntries.joinToString("\n")
+        encrypted.keys.retainAll(migratedEntries.toSet())
+        writeStoredRemoteCredentials(encrypted)
+    }
+
+    private fun readSettings(preferences: Preferences): AppSettings {
+        val remoteReaders = preferences[Keys.RemoteReaderUrls]
+            ?.lineSequence()
+            ?.mapNotNull { raw -> runCatching { parseRemoteReaderSetting(raw) }.getOrNull() }
+            ?.distinctBy(ParsedRemoteReaderSetting::endpointUrl)
+            ?.take(MaximumRemoteReaderEndpoints)
+            ?.toList()
+            .orEmpty()
+        val encryptedCredentials = readStoredRemoteCredentials(preferences)
+        val remoteTokens = buildMap {
+            remoteReaders.forEach { entry ->
+                entry.bearerToken?.let { put(entry.endpointUrl, it) }
+                encryptedCredentials[entry.endpointUrl]
+                    ?.let { encoded -> remoteCredentialCipher.decrypt(entry.endpointUrl, encoded) }
+                    ?.takeIf(::isValidRemoteReaderToken)
+                    ?.let { token -> put(entry.endpointUrl, token) }
+            }
+        }
+        return AppSettings(
         themeMode = preferences.enum(Keys.ThemeMode, ThemeMode.SYSTEM),
         useMonet = preferences[Keys.UseMonet] ?: false,
         pureBlack = preferences[Keys.PureBlack] ?: false,
@@ -332,7 +468,7 @@ class AppSettingsStore(context: Context) {
         palette = preferences.enum(Keys.Palette, ThemePalette.TONAL_SPOT),
         blurEnabled = preferences[Keys.BlurEnabled] ?: true,
         predictiveBack = preferences[Keys.PredictiveBack] ?: true,
-        densityScale = (preferences[Keys.DensityScale] ?: 1f).coerceIn(0.8f, 1.1f),
+        densityScale = (preferences[Keys.DensityScale] ?: 1f).coerceIn(1f, 1.1f),
         navigationStyle = preferences.enum(Keys.NavigationStyle, NavigationStyle.STANDARD),
         floatingBottomBarStyle = preferences.enum(
             Keys.FloatingBottomBarStyle,
@@ -375,31 +511,58 @@ class AppSettingsStore(context: Context) {
         scheduledReminders = preferences[Keys.ScheduledReminders] ?: true,
         eidRedaction = preferences.enum(Keys.EidRedaction, RedactionMode.NONE),
         iccidRedaction = preferences.enum(Keys.IccidRedaction, RedactionMode.NONE),
-        loadOperatorIcons = preferences[Keys.LoadOperatorIcons] ?: true,
-        estimateProfileSize = preferences[Keys.EstimateProfileSize] ?: true,
+        loadOperatorIcons = preferences[Keys.LoadOperatorIcons] ?: false,
+        estimateProfileSize = preferences[Keys.EstimateProfileSize] ?: false,
         hideProfileDeletion = preferences[Keys.HideProfileDeletion] ?: false,
         hideEuiccMemoryReset = preferences[Keys.HideEuiccMemoryReset] ?: false,
-        apduLogging = preferences[Keys.ApduLogging] ?: false,
+        apduLogging = (preferences[Keys.DeveloperMode] ?: false) &&
+            (preferences[Keys.ApduLogging] ?: false),
         developerMode = preferences[Keys.DeveloperMode] ?: false,
         es10xMss = (preferences[Keys.Es10xMss] ?: 60).coerceIn(32, 255),
         imei = preferences[Keys.Imei].orEmpty(),
         lastReaderId = preferences[Keys.LastReaderId],
         isdrAids = preferences[Keys.IsdrAids]
             ?.lineSequence()
-            ?.map(String::trim)
-            ?.filter(String::isNotEmpty)
-            ?.distinct()
             ?.toList()
+            ?.let(::normalizeIsdrAids)
             ?.takeIf(List<String>::isNotEmpty)
             ?: DefaultIsdrAids,
-        remoteReaderUrls = preferences[Keys.RemoteReaderUrls]
-            ?.lineSequence()
-            ?.map(String::trim)
-            ?.filter(String::isNotEmpty)
-            ?.distinct()
-            ?.toList()
-            .orEmpty(),
-    )
+        remoteReaderUrls = remoteReaders.map(ParsedRemoteReaderSetting::endpointUrl),
+        remoteReaderTokens = remoteTokens,
+        )
+    }
+
+    private fun readStoredRemoteCredentials(preferences: Preferences): Map<String, String> =
+        preferences[Keys.RemoteReaderCredentials]
+            ?.takeIf { it.length <= MaximumStoredCredentialCharacters }
+            ?.let { encoded ->
+                runCatching { credentialJson.decodeFromString<List<StoredRemoteReaderCredential>>(encoded) }
+                    .getOrNull()
+            }
+            .orEmpty()
+            .asSequence()
+            .filter { entry ->
+                entry.endpointUrl.length <= MaximumRemoteReaderUrlCharacters &&
+                    entry.encryptedToken.length <= MaximumEncryptedTokenCharacters
+            }
+            .distinctBy(StoredRemoteReaderCredential::endpointUrl)
+            .take(MaximumRemoteReaderEndpoints)
+            .associate { entry -> entry.endpointUrl to entry.encryptedToken }
+
+    private fun MutablePreferences.writeStoredRemoteCredentials(credentials: Map<String, String>) {
+        if (credentials.isEmpty()) {
+            remove(Keys.RemoteReaderCredentials)
+            return
+        }
+        this[Keys.RemoteReaderCredentials] = credentialJson.encodeToString(
+            credentials.entries
+                .sortedBy(Map.Entry<String, String>::key)
+                .take(MaximumRemoteReaderEndpoints)
+                .map { (endpoint, encryptedToken) ->
+                    StoredRemoteReaderCredential(endpoint, encryptedToken)
+                },
+        )
+    }
 
     private inline fun <reified T : Enum<T>> Preferences.enum(
         key: Preferences.Key<String>,
@@ -462,5 +625,177 @@ class AppSettingsStore(context: Context) {
         val LastReaderId = stringPreferencesKey("last_reader_id")
         val IsdrAids = stringPreferencesKey("isdr_aids")
         val RemoteReaderUrls = stringPreferencesKey("remote_reader_urls")
+        val RemoteReaderCredentials = stringPreferencesKey("remote_reader_credentials_v1")
     }
 }
+
+@Serializable
+private data class StoredRemoteReaderCredential(
+    val endpointUrl: String,
+    val encryptedToken: String,
+)
+
+internal data class ParsedRemoteReaderSetting(
+    val endpointUrl: String,
+    val bearerToken: String?,
+)
+
+internal enum class RemoteReaderSettingsValidationError {
+    TOO_MANY,
+    INVALID_ENDPOINT,
+    DUPLICATE_ENDPOINT,
+}
+
+internal class RemoteReaderSettingsValidationException(
+    val reason: RemoteReaderSettingsValidationError,
+    val lineNumber: Int? = null,
+    cause: Throwable? = null,
+) : IllegalArgumentException(reason.name, cause)
+
+internal enum class IsdrAidValidationError {
+    EMPTY,
+    TOO_MANY,
+    INVALID_AID,
+    DUPLICATE_AID,
+}
+
+internal class IsdrAidValidationException(
+    val reason: IsdrAidValidationError,
+    val lineNumber: Int? = null,
+) : IllegalArgumentException(reason.name)
+
+/**
+ * Validates a user-authored endpoint list without dropping malformed, duplicate, or excess rows.
+ * Tolerant cleanup remains confined to reading legacy/corrupt persisted settings.
+ */
+internal fun validateRemoteReaderSettings(values: List<String>): List<ParsedRemoteReaderSetting> {
+    if (values.size > MaximumRemoteReaderEndpoints) {
+        throw RemoteReaderSettingsValidationException(RemoteReaderSettingsValidationError.TOO_MANY)
+    }
+    val parsed = values.mapIndexed { index, raw ->
+        try {
+            parseRemoteReaderSetting(raw)
+        } catch (error: Exception) {
+            throw RemoteReaderSettingsValidationException(
+                reason = RemoteReaderSettingsValidationError.INVALID_ENDPOINT,
+                lineNumber = index + 1,
+                cause = error,
+            )
+        }
+    }
+    val firstLineByEndpoint = hashMapOf<String, Int>()
+    parsed.forEachIndexed { index, entry ->
+        if (firstLineByEndpoint.putIfAbsent(entry.endpointUrl, index + 1) != null) {
+            throw RemoteReaderSettingsValidationException(
+                reason = RemoteReaderSettingsValidationError.DUPLICATE_ENDPOINT,
+                lineNumber = index + 1,
+            )
+        }
+    }
+    return parsed
+}
+
+/**
+ * Accepts a clean HTTPS URL or the migration/input form `https://token@example.com`.
+ * User-info is stripped from the canonical URL before anything is persisted or logged.
+ */
+internal fun parseRemoteReaderSetting(raw: String): ParsedRemoteReaderSetting {
+    val value = raw.trim().trimEnd('/')
+    require(value.isNotEmpty() && value.length <= MaximumRemoteReaderUrlCharacters) {
+        "Remote reader URL is invalid"
+    }
+    val source = URI(value)
+    require(source.scheme.equals("https", ignoreCase = true)) { "Remote readers require HTTPS" }
+    require(!source.host.isNullOrBlank()) { "Remote reader URL has no host" }
+    require(source.rawQuery == null && source.rawFragment == null) {
+        "Remote reader URL cannot contain a query or fragment"
+    }
+    val bearerToken = source.userInfo?.let { userInfo ->
+        // URI user-info uses RFC 3986 percent decoding. URLDecoder is for form
+        // data and would silently turn a literal '+' in an opaque token into a
+        // space, changing the credential during migration.
+        userInfo.substringAfter(':', userInfo)
+            .takeIf(String::isNotBlank)
+            ?.also { require(isValidRemoteReaderToken(it)) { "Remote reader token is invalid" } }
+    }
+    val clean = URI(
+        "https",
+        null,
+        source.host.lowercase(Locale.ROOT),
+        source.port,
+        source.path?.takeIf(String::isNotBlank),
+        null,
+        null,
+    ).toASCIIString().trimEnd('/')
+    return ParsedRemoteReaderSetting(clean, bearerToken)
+}
+
+internal fun isValidRemoteReaderToken(value: String): Boolean {
+    if (value.isEmpty() || value.toByteArray(StandardCharsets.UTF_8).size > MaximumRemoteReaderTokenBytes) {
+        return false
+    }
+    val paddingStart = value.indexOf('=').let { index -> if (index < 0) value.length else index }
+    return paddingStart > 0 && value.substring(0, paddingStart).all { character ->
+        character.isAsciiLetterOrDigit() || character in "-._~+/"
+    } && value.substring(paddingStart).all { character -> character == '=' }
+}
+
+private fun Char.isAsciiLetterOrDigit(): Boolean =
+    this in 'A'..'Z' || this in 'a'..'z' || this in '0'..'9'
+
+internal fun normalizeIsdrAids(values: Iterable<String>): List<String> = values
+    .map { value -> value.trim().uppercase() }
+    .filter { value ->
+        value.length in MinimumAidHexCharacters..MaximumAidHexCharacters &&
+            value.length % 2 == 0 &&
+            value.all { character -> character in "0123456789ABCDEF" }
+    }
+    .distinct()
+    .take(MaximumAidCandidates)
+
+/** Validates a user-authored AID list without silently removing invalid or duplicate entries. */
+internal fun validateIsdrAids(values: List<String>): List<String> {
+    if (values.isEmpty()) {
+        throw IsdrAidValidationException(IsdrAidValidationError.EMPTY)
+    }
+    if (values.size > MaximumAidCandidates) {
+        throw IsdrAidValidationException(IsdrAidValidationError.TOO_MANY)
+    }
+    val normalized = values.mapIndexed { index, raw ->
+        val value = raw.trim().uppercase()
+        if (
+            value.length !in MinimumAidHexCharacters..MaximumAidHexCharacters ||
+            value.length % 2 != 0 ||
+            value.any { character -> character !in "0123456789ABCDEF" }
+        ) {
+            throw IsdrAidValidationException(
+                reason = IsdrAidValidationError.INVALID_AID,
+                lineNumber = index + 1,
+            )
+        }
+        value
+    }
+    val firstLineByAid = hashMapOf<String, Int>()
+    normalized.forEachIndexed { index, aid ->
+        if (firstLineByAid.putIfAbsent(aid, index + 1) != null) {
+            throw IsdrAidValidationException(
+                reason = IsdrAidValidationError.DUPLICATE_AID,
+                lineNumber = index + 1,
+            )
+        }
+    }
+    return normalized
+}
+
+internal const val MinimumAidHexCharacters = 10
+internal const val MaximumAidHexCharacters = 32
+internal const val MaximumAidCandidates = 16
+internal const val MaximumRemoteReaderEndpoints = 16
+internal const val MaximumRemoteReaderUrlCharacters = 2_048
+internal const val MaximumAidEditorCharacters =
+    (MaximumAidCandidates + 1) * (MaximumAidHexCharacters + 1)
+internal const val MaximumRemoteReaderEditorCharacters =
+    (MaximumRemoteReaderEndpoints + 1) * (MaximumRemoteReaderUrlCharacters + 1)
+private const val MaximumRemoteReaderTokenBytes = 4_096
+private const val MaximumEncryptedTokenCharacters = 8_192
+private const val MaximumStoredCredentialCharacters = 160_000

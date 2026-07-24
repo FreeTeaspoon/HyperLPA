@@ -2,7 +2,9 @@
 
 #include "derutil.h"
 #include "euicc.private.h"
+#include "rsp_limits.h"
 
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -18,6 +20,8 @@ int es10a_get_euicc_configured_addresses(struct euicc_ctx *ctx, struct es10a_eui
 
     struct euicc_derutil_node tmpnode, n_Response;
 
+    if (ctx == NULL || address == NULL)
+        return -1;
     memset(address, 0, sizeof(*address));
 
     reqlen = sizeof(ctx->apdu._internal.request_buffer.body);
@@ -29,24 +33,45 @@ int es10a_get_euicc_configured_addresses(struct euicc_ctx *ctx, struct es10a_eui
         goto err;
     }
 
-    if (euicc_derutil_unpack_find_tag(&n_Response, n_request.tag, respbuf, resplen)) {
+    if (euicc_derutil_unpack_find_tag(&n_Response, n_request.tag, respbuf, resplen) < 0 ||
+        n_Response.self.ptr != respbuf || n_Response.self.length != resplen) {
         goto err;
     }
 
-    if (euicc_derutil_unpack_find_tag(&tmpnode, 0x80, n_Response.value, n_Response.length) == 0) {
-        address->defaultDpAddress = malloc(tmpnode.length + 1);
-        if (address->defaultDpAddress) {
-            memcpy(address->defaultDpAddress, tmpnode.value, tmpnode.length);
-            address->defaultDpAddress[tmpnode.length] = '\0';
-        }
-    }
+    {
+        uint32_t seen_addresses = 0;
+        int address_unpack_status;
+        tmpnode.self.ptr = n_Response.value;
+        tmpnode.self.length = 0;
+        while ((address_unpack_status = euicc_derutil_unpack_next(
+                    &tmpnode, &tmpnode, n_Response.value, n_Response.length)) == 0) {
+            char **target;
+            uint32_t flag;
 
-    if (euicc_derutil_unpack_find_tag(&tmpnode, 0x81, n_Response.value, n_Response.length) == 0) {
-        address->rootDsAddress = malloc(tmpnode.length + 1);
-        if (address->rootDsAddress) {
-            memcpy(address->rootDsAddress, tmpnode.value, tmpnode.length);
-            address->rootDsAddress[tmpnode.length] = '\0';
+            if (tmpnode.tag == 0x80) {
+                target = &address->defaultDpAddress;
+                flag = 1U << 0;
+            } else if (tmpnode.tag == 0x81) {
+                target = &address->rootDsAddress;
+                flag = 1U << 1;
+            } else {
+                continue;
+            }
+
+            if ((seen_addresses & flag) != 0 || tmpnode.length == 0 ||
+                tmpnode.length > EUICC_RSP_FQDN_BYTES ||
+                euicc_derutil_validate_utf8(tmpnode.value, tmpnode.length, EUICC_RSP_FQDN_BYTES) < 0)
+                goto err;
+            seen_addresses |= flag;
+
+            *target = malloc(tmpnode.length + 1);
+            if (*target == NULL)
+                goto err;
+            memcpy(*target, tmpnode.value, tmpnode.length);
+            (*target)[tmpnode.length] = '\0';
         }
+        if (address_unpack_status < 0)
+            goto err;
     }
 
     goto exit;
@@ -65,6 +90,8 @@ exit:
 
 int es10a_set_default_dp_address(struct euicc_ctx *ctx, const char *smdp) {
     int fret = 0;
+    long response_code;
+    size_t smdp_len;
     struct euicc_derutil_node n_request = {
         .tag = 0xBF3F, // SetDefaultDpAddressRequest
         .pack =
@@ -72,7 +99,7 @@ int es10a_set_default_dp_address(struct euicc_ctx *ctx, const char *smdp) {
                 .child =
                     &(struct euicc_derutil_node){
                         .tag = 0x80,
-                        .length = strlen(smdp),
+                        .length = 0,
                         .value = (const uint8_t *)smdp,
                     },
             },
@@ -82,6 +109,16 @@ int es10a_set_default_dp_address(struct euicc_ctx *ctx, const char *smdp) {
     unsigned resplen;
 
     struct euicc_derutil_node tmpnode;
+
+    if (ctx == NULL || smdp == NULL) {
+        return -1;
+    }
+    smdp_len = strnlen(smdp, EUICC_RSP_FQDN_BYTES + 1U);
+    if (smdp_len == 0 || smdp_len > EUICC_RSP_FQDN_BYTES ||
+        euicc_derutil_validate_utf8((const uint8_t *)smdp, (uint32_t)smdp_len, EUICC_RSP_FQDN_BYTES) < 0) {
+        return -1;
+    }
+    n_request.pack.child->length = (uint32_t)smdp_len;
 
     reqlen = sizeof(ctx->apdu._internal.request_buffer.body);
     if (euicc_derutil_pack(ctx->apdu._internal.request_buffer.body, &reqlen, &n_request)) {
@@ -100,7 +137,10 @@ int es10a_set_default_dp_address(struct euicc_ctx *ctx, const char *smdp) {
         goto err;
     }
 
-    fret = euicc_derutil_convert_bin2long(tmpnode.value, tmpnode.length);
+    if (euicc_derutil_convert_bin2long(&response_code, tmpnode.value, tmpnode.length) < 0 ||
+        response_code > INT_MAX)
+        goto err;
+    fret = (int)response_code;
 
     goto exit;
 

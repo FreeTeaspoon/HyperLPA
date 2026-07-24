@@ -1,11 +1,14 @@
 package app.hyperlpa.lpa.platform
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.telephony.IccOpenLogicalChannelResponse
 import android.telephony.TelephonyManager
+import app.hyperlpa.BuildConfig
+import app.hyperlpa.R
 import app.hyperlpa.domain.model.ReaderInfo
 import app.hyperlpa.domain.model.ReaderKind
 import app.hyperlpa.lpa.ReaderEndpoint
@@ -21,6 +24,7 @@ internal class TelephonyReaderProvider(context: Context) : ReaderProvider {
     private val telephony = appContext.getSystemService(TelephonyManager::class.java)
 
     override suspend fun listReaders(): List<ReaderEndpoint> {
+        if (!BuildConfig.HAS_PRIVILEGED_TELEPHONY) return emptyList()
         if (appContext.checkSelfPermission(Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED &&
             appContext.checkSelfPermission("android.permission.READ_PRIVILEGED_PHONE_STATE") != PackageManager.PERMISSION_GRANTED
         ) {
@@ -32,13 +36,20 @@ internal class TelephonyReaderProvider(context: Context) : ReaderProvider {
             ReaderEndpoint(
                 info = ReaderInfo(
                     id = "telephony:${slot.slotIndex}:${slot.portIndex}",
-                    name = "Telephony ${if (slot.euicc) "eUICC" else "SIM"} ${slot.slotIndex + 1}",
+                    name = appContext.getString(
+                        if (slot.euicc) R.string.reader_telephony_euicc_name else R.string.reader_telephony_sim_name,
+                        slot.slotIndex + 1,
+                    ),
                     kind = ReaderKind.TELEPHONY,
-                    detail = buildString {
-                        append("Port ${slot.portIndex}")
-                        if (slot.removable) append(" · removable")
-                        if (!slot.active) append(" · inactive")
-                    },
+                    detail = appContext.getString(
+                        when {
+                            slot.removable && !slot.active -> R.string.reader_telephony_port_removable_inactive
+                            slot.removable -> R.string.reader_telephony_port_removable
+                            !slot.active -> R.string.reader_telephony_port_inactive
+                            else -> R.string.reader_telephony_port
+                        },
+                        slot.portIndex,
+                    ),
                     available = slot.active,
                 ),
                 openApduInterface = {
@@ -48,9 +59,13 @@ internal class TelephonyReaderProvider(context: Context) : ReaderProvider {
         }
     }
 
+    // Access is compile-time gated to the privileged variants and listReaders
+    // verifies phone-state access first. Carrier privileges are also accepted
+    // by this API but cannot be expressed as a manifest permission to lint.
+    @SuppressLint("MissingPermission")
     private fun discoverSlots(): List<TelephonySlot> = runCatching {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            return@runCatching (0 until telephony.phoneCount).map { TelephonySlot(it, 0, false, true, true) }
+            return@runCatching (0 until legacyPhoneCount()).map { TelephonySlot(it, 0, false, true, true) }
         }
         val cards = telephony.uiccCardsInfo.orEmpty()
         buildList {
@@ -75,7 +90,14 @@ internal class TelephonyReaderProvider(context: Context) : ReaderProvider {
             }
         }
     }.getOrElse {
-        (0 until telephony.phoneCount).map { TelephonySlot(it, 0, false, true, true) }
+        (0 until legacyPhoneCount()).map { TelephonySlot(it, 0, false, true, true) }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun legacyPhoneCount(): Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        telephony.activeModemCount
+    } else {
+        telephony.phoneCount
     }
 
     private fun readInt(target: Any, vararg names: String): Int? = names.firstNotNullOfOrNull { name ->
@@ -100,7 +122,12 @@ private class TelephonyApduInterface(
     private val slotIndex: Int,
     private val portIndex: Int,
 ) : ApduInterface {
+    companion object {
+        private const val MaxApduBytes = 1024 * 1024
+    }
+
     private var connected = false
+    private val channels = mutableSetOf<Int>()
 
     override val valid: Boolean
         get() = connected
@@ -110,12 +137,19 @@ private class TelephonyApduInterface(
     }
 
     override fun disconnect() {
-        for (channel in 1..19) runCatching { TelephonyHiddenApi.close(telephony, slotIndex, portIndex, channel) }
+        val ownedChannels = synchronized(channels) { channels.toList() }
+        ownedChannels.forEach { channel ->
+            if (runCatching { TelephonyHiddenApi.close(telephony, slotIndex, portIndex, channel) }.isSuccess) {
+                synchronized(channels) { channels.remove(channel) }
+            }
+        }
+        synchronized(channels) { channels.clear() }
         connected = false
     }
 
     override fun logicalChannelOpen(aid: ByteArray): Int {
         check(connected) { "Telephony reader is not connected" }
+        require(aid.size in 5..16) { "Telephony AID must be 5 to 16 bytes" }
         runCatching {
             TelephonyHiddenApi.transmitBasic(
                 telephony = telephony,
@@ -133,15 +167,24 @@ private class TelephonyApduInterface(
         check(response.status == IccOpenLogicalChannelResponse.STATUS_NO_ERROR) {
             "Telephony logical channel failed with status ${response.status}"
         }
-        return response.channel
+        val channel = response.channel
+        if (channel !in 1..19) {
+            if (channel > 0) runCatching { TelephonyHiddenApi.close(telephony, slotIndex, portIndex, channel) }
+            error("Telephony returned invalid logical channel $channel")
+        }
+        synchronized(channels) { channels += channel }
+        return channel
     }
 
     override fun logicalChannelClose(handle: Int) {
+        check(synchronized(channels) { handle in channels }) { "Unknown telephony channel $handle" }
         TelephonyHiddenApi.close(telephony, slotIndex, portIndex, handle)
+        synchronized(channels) { channels.remove(handle) }
     }
 
     override fun transmit(handle: Int, tx: ByteArray): ByteArray {
-        require(tx.size >= 4) { "APDU is too short" }
+        check(synchronized(channels) { handle in channels }) { "Unknown telephony channel $handle" }
+        require(tx.size in 4..MaxApduBytes) { "Invalid telephony APDU length" }
         val response = TelephonyHiddenApi.transmitLogical(
             telephony = telephony,
             slotIndex = slotIndex,
@@ -154,6 +197,9 @@ private class TelephonyApduInterface(
             p3 = tx.getOrNull(4)?.toUByte()?.toInt() ?: 0,
             data = if (tx.size > 5) tx.copyOfRange(5, tx.size).toHexString() else "",
         )
+        require(response.length in 4..MaxApduBytes * 2 && response.length % 2 == 0) {
+            "Telephony returned an invalid APDU response"
+        }
         return response.hexToByteArray()
     }
 }
@@ -298,4 +344,3 @@ private object TelephonyHiddenApi {
         throw (error.targetException ?: error)
     }
 }
-

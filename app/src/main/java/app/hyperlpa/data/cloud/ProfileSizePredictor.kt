@@ -20,6 +20,13 @@ internal class ProfileSizePredictor(
     private val loadMutex = Mutex()
     private var catalog: ProfileSizeCatalog? = null
 
+    suspend fun clear() = withContext(Dispatchers.IO) {
+        loadMutex.withLock {
+            catalog = null
+            runCatching { cacheFile.delete() }
+        }
+    }
+
     suspend fun predict(profile: ProfileInfo, eid: String?): Long? = withContext(Dispatchers.IO) {
         loadCatalog()?.predict(
             eid = eid,
@@ -35,22 +42,24 @@ internal class ProfileSizePredictor(
             catalog?.let { return@withLock it }
             val freshCache = cacheFile
                 .takeIf { it.isFile && System.currentTimeMillis() - it.lastModified() < DatasetMaxAgeMillis }
-                ?.readText()
+                ?.let { file -> readUtf8FileBounded(file, MaxDatasetBytes) }
             val source = freshCache
                 ?: httpGet(DatasetUrl, MaxDatasetBytes)?.decodeToString()
                     ?.also(::writeCache)
-                ?: cacheFile.takeIf(File::isFile)?.readText()
+                ?: readUtf8FileBounded(cacheFile, MaxDatasetBytes)
             source?.let(ProfileSizeCatalog::parse)?.also { catalog = it }
         }
     }
 
     private fun writeCache(source: String) {
         runCatching {
+            val encoded = source.encodeToByteArray()
+            require(encoded.size <= MaxDatasetBytes)
             cacheFile.parentFile?.mkdirs()
             val temporary = File(cacheFile.parentFile, "${cacheFile.name}.tmp")
-            temporary.writeText(source)
+            temporary.writeBytes(encoded)
             if (!temporary.renameTo(cacheFile)) {
-                cacheFile.writeText(source)
+                cacheFile.writeBytes(encoded)
                 temporary.delete()
             }
         }
@@ -58,7 +67,7 @@ internal class ProfileSizePredictor(
 
     private companion object {
         const val DatasetUrl =
-            "https://raw.githubusercontent.com/iebb/NekokoLPA2/master/data/reference_sizes_simple.json"
+            "https://raw.githubusercontent.com/iebb/NekokoLPA2/7d5a426d8d836caf5e7d98d9428e58c036f03a6d/data/reference_sizes_simple.json"
         const val MaxDatasetBytes = 2 * 1024 * 1024
         const val DatasetMaxAgeMillis = 7L * 24 * 60 * 60 * 1000
     }

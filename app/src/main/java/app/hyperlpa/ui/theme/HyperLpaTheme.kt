@@ -81,7 +81,9 @@ fun HyperLpaTheme(
         val platformDensity = LocalDensity.current
         val scaledDensity = remember(platformDensity, settings.densityScale) {
             Density(
-                density = platformDensity.density * settings.densityScale.coerceIn(0.8f, 1.1f),
+                // Never shrink dp below the platform density: doing so turns nominal
+                // 48 dp controls into physically undersized touch targets.
+                density = platformDensity.density * settings.densityScale.coerceIn(1f, 1.1f),
                 fontScale = platformDensity.fontScale,
             )
         }

@@ -34,8 +34,36 @@ internal fun ProfileGradientBackdrop(
     val palette = remember(bitmap, surface) {
         bitmap?.extractArtworkPalette() ?: ProfileArtworkPalette(surface, surface)
     }
-    val primary = palette.primary
-    val secondary = palette.secondary
+    GradientBackdrop(
+        palette = palette,
+        surface = surface,
+        isDark = isDark,
+        modifier = modifier,
+    )
+}
+
+/** A theme-accented wash for detail pages that do not have profile artwork. */
+@Composable
+internal fun AccentGradientBackdrop(modifier: Modifier = Modifier) {
+    val colorScheme = MiuixTheme.colorScheme
+    GradientBackdrop(
+        palette = ProfileArtworkPalette(
+            primary = colorScheme.primary,
+            secondary = colorScheme.secondaryContainer,
+        ),
+        surface = colorScheme.surface,
+        isDark = LocalDarkTheme.current,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun GradientBackdrop(
+    palette: ProfileArtworkPalette,
+    surface: Color,
+    isDark: Boolean,
+    modifier: Modifier,
+) {
     val fadeHeight = with(LocalDensity.current) { 480.dp.toPx() }
 
     Canvas(modifier = modifier.fillMaxSize()) {
@@ -45,14 +73,14 @@ internal fun ProfileGradientBackdrop(
         val secondaryAlpha = if (isDark) 0.24f else 0.17f
         drawRect(
             brush = Brush.radialGradient(
-                colors = listOf(primary.copy(alpha = primaryAlpha), Color.Transparent),
+                colors = listOf(palette.primary.copy(alpha = primaryAlpha), Color.Transparent),
                 center = Offset(size.width * 0.42f, fadeHeight * 0.12f),
                 radius = radius,
             ),
         )
         drawRect(
             brush = Brush.radialGradient(
-                colors = listOf(secondary.copy(alpha = secondaryAlpha), Color.Transparent),
+                colors = listOf(palette.secondary.copy(alpha = secondaryAlpha), Color.Transparent),
                 center = Offset(size.width * 0.82f, fadeHeight * 0.28f),
                 radius = radius * 0.75f,
             ),

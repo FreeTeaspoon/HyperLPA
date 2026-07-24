@@ -15,6 +15,50 @@ static const unsigned char pr2six[256] = {
     64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
     64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64};
 
+int euicc_base64_validate(const char *encoded, uint32_t max_encoded_length) {
+    size_t length;
+    size_t padding = 0;
+    size_t data_length;
+
+    if (encoded == NULL || max_encoded_length == 0) {
+        return -1;
+    }
+    length = strnlen(encoded, (size_t)max_encoded_length + 1U);
+    if (length == 0 || length > max_encoded_length || length % 4U == 1U) {
+        return -1;
+    }
+    if (encoded[length - 1U] == '=') {
+        padding = 1;
+        if (length >= 2U && encoded[length - 2U] == '=') {
+            padding = 2;
+        }
+        if (length % 4U != 0 || length < 4U) {
+            return -1;
+        }
+    }
+    data_length = length - padding;
+    for (size_t i = 0; i < data_length; i++) {
+        if (pr2six[(unsigned char)encoded[i]] > 63) {
+            return -1;
+        }
+    }
+    for (size_t i = data_length; i < length; i++) {
+        if (encoded[i] != '=') {
+            return -1;
+        }
+    }
+
+    /* Require zero unused bits so alternate encodings cannot represent the
+     * same signed DER value. This applies to padded and unpadded forms. */
+    if (data_length % 4U == 2U && (pr2six[(unsigned char)encoded[data_length - 1U]] & 0x0FU) != 0) {
+        return -1;
+    }
+    if (data_length % 4U == 3U && (pr2six[(unsigned char)encoded[data_length - 1U]] & 0x03U) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
 int euicc_base64_decode_len(const char *bufcoded) {
     int nbytesdecoded;
     register const unsigned char *bufin;

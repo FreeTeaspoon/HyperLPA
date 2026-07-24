@@ -7,6 +7,8 @@ import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 
 /**
  * A wrapper over an usb device + interface, manages the lifecycle independent
@@ -17,6 +19,7 @@ import kotlinx.coroutines.flow.Flow
  */
 class UsbCcidContext private constructor(
     private val conn: UsbDeviceConnection,
+    private val usbInterface: UsbInterface,
     private val bulkIn: UsbEndpoint,
     private val bulkOut: UsbEndpoint,
     val verboseLoggingFlow: Flow<Boolean>,
@@ -34,12 +37,16 @@ class UsbCcidContext private constructor(
             if (bulkIn == null || bulkOut == null) return@runCatching null
             val conn = context.getSystemService(UsbManager::class.java).openDevice(usbDevice)
                 ?: return@runCatching null
-            if (!conn.claimInterface(usbInterface, true)) return@runCatching null
+            if (!conn.claimInterface(usbInterface, true)) {
+                conn.close()
+                return@runCatching null
+            }
 
             val useTpdu = forceTpduMode || isKnownTpduReader(usbDevice.vendorId, usbDevice.productId)
 
             UsbCcidContext(
                 conn,
+                usbInterface,
                 bulkIn,
                 bulkOut,
                 verboseLoggingFlow,
@@ -54,19 +61,31 @@ class UsbCcidContext private constructor(
      */
     var allowDisconnect = false
     private var initialized = false
+    private var closed = false
     lateinit var transceiver: UsbCcidTransceiver
     var atr: ByteArray? = null
+    var hasAutomaticPps: Boolean = false
+        private set
 
+    val isConnected: Boolean
+        get() = initialized && !closed
+
+    fun isVerboseLoggingEnabled(): Boolean = runBlocking { verboseLoggingFlow.first() }
+
+    @Synchronized
     fun connect() {
         if (initialized) {
             return
         }
+        check(!closed) { "USB CCID connection is already closed" }
 
-        val ccidDescription = UsbCcidDescription.fromRawDescriptors(conn.rawDescriptors)!!
+        val ccidDescription = UsbCcidDescription.fromRawDescriptors(conn.rawDescriptors)
+            ?: throw IllegalArgumentException("USB device has no valid CCID descriptor")
 
         if (!ccidDescription.hasT0Protocol) {
             throw IllegalArgumentException("Unsupported card reader; T=0 support is required")
         }
+        hasAutomaticPps = ccidDescription.hasAutomaticPps
 
         transceiver = UsbCcidTransceiver(conn, bulkIn, bulkOut, ccidDescription, verboseLoggingFlow)
 
@@ -75,17 +94,28 @@ class UsbCcidContext private constructor(
             // https://www.usb.org/sites/default/files/DWG_Smart-Card_USB-ICC_ICCD_rev10.pdf
             atr = transceiver.iccPowerOn().data
         } catch (e: Exception) {
-            e.printStackTrace()
+            atr = null
+            hasAutomaticPps = false
+            initialized = false
+            if (allowDisconnect) closeConnection()
             throw e
         }
 
         initialized = true
     }
 
+    @Synchronized
     fun disconnect() {
-        if (initialized && allowDisconnect) {
-            conn.close()
-            atr = null
-        }
+        if (allowDisconnect) closeConnection()
+        initialized = false
+        atr = null
+        hasAutomaticPps = false
+    }
+
+    private fun closeConnection() {
+        if (closed) return
+        runCatching { conn.releaseInterface(usbInterface) }
+        conn.close()
+        closed = true
     }
 }

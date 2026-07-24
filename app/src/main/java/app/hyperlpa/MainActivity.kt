@@ -1,6 +1,7 @@
 package app.hyperlpa
 
 import android.Manifest
+import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -8,7 +9,9 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.net.Uri
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -21,13 +24,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.hyperlpa.data.settings.AppSettings
 import app.hyperlpa.reminders.hasProfileReminderPermission
 import app.hyperlpa.reminders.showTestProfileReminder
 import app.hyperlpa.ui.HyperLpaApp
+import app.hyperlpa.ui.BluetoothReaderUiState
 import app.hyperlpa.ui.HyperLpaViewModel
+import app.hyperlpa.ui.NavigationSnapshot
 import app.hyperlpa.ui.theme.HyperLpaTheme
 import io.github.g00fy2.quickie.QRResult
 import io.github.g00fy2.quickie.ScanCustomCode
@@ -45,16 +51,20 @@ class MainActivity : ComponentActivity() {
             metadataStore = applicationGraph.metadataStore,
             repository = applicationGraph.lpaRepository,
             cloudService = applicationGraph.cloudService,
+            notificationHistoryStore = applicationGraph.notificationHistoryStore,
+            supportReportBuilder = applicationGraph.supportReportBuilder,
+            provisioningCoordinator = applicationGraph.provisioningCoordinator,
         )
     }
 
     private lateinit var qrLauncher: ActivityResultLauncher<ScannerConfig>
     private lateinit var permissionLauncher: ActivityResultLauncher<Array<String>>
     private lateinit var notificationPermissionLauncher: ActivityResultLauncher<String>
-    private var qrCallback: ((String?) -> Unit)? = null
-    private var notificationPermissionCallback: ((Boolean) -> Unit)? = null
     private var notificationPermissionGranted by mutableStateOf(true)
-    private val requestedPermissions = mutableSetOf<String>()
+    private var bluetoothSupported by mutableStateOf(false)
+    private var bluetoothPermissionGranted by mutableStateOf(false)
+    private var bluetoothAdapterEnabled by mutableStateOf(false)
+    private var refreshReadersAfterSettings by mutableStateOf(false)
     private var simStateReceiverRegistered = false
     private val simStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -66,30 +76,50 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
+        savedInstanceState?.let { state ->
+            viewModel.restoreNavigation(
+                NavigationSnapshot(
+                    selectedTab = state.getString(StateSelectedTab).orEmpty(),
+                    route = state.getString(StateRoute),
+                ),
+            )
+        }
         splashScreen.setKeepOnScreenCondition { !viewModel.state.value.settingsLoaded }
         enableEdgeToEdge()
 
         permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            viewModel.completeRuntimePermissionRequest()
+            refreshBluetoothState()
             viewModel.refreshReaders()
         }
         notificationPermissionGranted = hasProfileReminderPermission(this)
         notificationPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
-            notificationPermissionGranted = it
-            notificationPermissionCallback?.invoke(it)
-            notificationPermissionCallback = null
+            notificationPermissionGranted = it && hasProfileReminderPermission(this)
+            viewModel.completeNotificationPermissionRequest(notificationPermissionGranted)
         }
 
         qrLauncher = registerForActivityResult(ScanCustomCode()) { result ->
-            val value = when (result) {
-                is QRResult.QRSuccess -> result.content.rawValue
-                is QRResult.QRError,
-                is QRResult.QRMissingPermission,
-                is QRResult.QRUserCanceled,
-                -> null
+            when (result) {
+                is QRResult.QRSuccess -> {
+                    val rawValue = result.content.rawValue
+                    when {
+                        rawValue == null -> showScannerMessage(R.string.activation_error_qr_read)
+                        !viewModel.handleActivationCode(rawValue) -> {
+                            showScannerMessage(R.string.activation_error_invalid)
+                        }
+                    }
+                }
+                is QRResult.QRError -> showScannerMessage(R.string.activation_error_qr_read)
+                is QRResult.QRMissingPermission -> {
+                    showScannerMessage(R.string.activation_error_camera_permission)
+                    if (!shouldShowRequestPermissionRationale(Manifest.permission.CAMERA)) {
+                        openAppPermissionSettings(refreshReadersOnReturn = false)
+                    }
+                }
+                is QRResult.QRUserCanceled -> Unit
             }
-            qrCallback?.invoke(value)
-            qrCallback = null
         }
+        refreshBluetoothState()
 
         setContent {
             val state = viewModel.state.collectAsStateWithLifecycle().value
@@ -98,13 +128,15 @@ class MainActivity : ComponentActivity() {
                 state.lpa.initialized,
                 state.settings.enableNBridge,
                 state.settings.enableOmapi,
-                state.settings.enableTelephony,
+                BuildConfig.HAS_PRIVILEGED_TELEPHONY && state.settings.enableTelephony,
                 state.settings.enableUsbCcid,
                 state.settings.enableBle,
                 state.settings.enableRemote,
-                state.settings.remoteReaderUrls,
             ) {
-                val permissionRequestStarted = requestRuntimePermissions(state.settings)
+                val permissionRequestStarted = requestRuntimePermissions(
+                    settings = state.settings,
+                    userInitiated = false,
+                )
                 if (!state.lpa.initialized) return@LaunchedEffect
                 if (firstReaderConfiguration) {
                     firstReaderConfiguration = false
@@ -126,9 +158,8 @@ class MainActivity : ComponentActivity() {
                     notificationPermissionGranted = notificationPermissionGranted,
                     onRequestNotificationPermission = ::requestNotificationPermission,
                     onOpenNotificationSettings = ::openNotificationSettings,
-                    onTestProfileReminder = { showTestProfileReminder(this) },
-                    onScanQr = { callback ->
-                        qrCallback = callback
+                    onTestProfileReminder = { showTestProfileReminder(applicationContext) },
+                    onScanQr = {
                         qrLauncher.launch(
                             ScannerConfig.build {
                                 setBarcodeFormats(listOf(BarcodeFormat.FORMAT_QR_CODE))
@@ -138,11 +169,22 @@ class MainActivity : ComponentActivity() {
                             },
                         )
                     },
+                    bluetoothReaderState = BluetoothReaderUiState(
+                        enabled = state.settings.enableBle,
+                        supported = bluetoothSupported,
+                        permissionGranted = bluetoothPermissionGranted,
+                        adapterEnabled = bluetoothAdapterEnabled,
+                    ),
+                    onRefreshReaders = { discoverReaders(state.settings) },
+                    onRequestBluetoothPermission = {
+                        requestRuntimePermissions(state.settings, userInitiated = true)
+                    },
+                    onOpenBluetoothSettings = ::openBluetoothSettings,
                 )
             }
         }
 
-        intent?.dataString?.let(viewModel::handleActivationCode)
+        intent?.let(::consumeActivationIntent)
     }
 
     override fun onStart() {
@@ -156,15 +198,43 @@ class MainActivity : ComponentActivity() {
                 this,
                 simStateReceiver,
                 filter,
+                // Telephony broadcasts can originate from a privileged phone-process
+                // UID rather than the system UID. These actions are protected by the
+                // platform, so exported registration is required for reliable delivery.
                 ContextCompat.RECEIVER_EXPORTED,
             )
             simStateReceiverRegistered = true
         }
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        viewModel.navigationSnapshot().let { snapshot ->
+            outState.putString(StateSelectedTab, snapshot.selectedTab)
+            outState.putString(StateRoute, snapshot.route)
+        }
+        super.onSaveInstanceState(outState)
+    }
+
     override fun onResume() {
         super.onResume()
         notificationPermissionGranted = hasProfileReminderPermission(this)
+        val previousBluetoothState = Triple(
+            bluetoothSupported,
+            bluetoothPermissionGranted,
+            bluetoothAdapterEnabled,
+        )
+        refreshBluetoothState()
+        if (
+            refreshReadersAfterSettings ||
+            previousBluetoothState != Triple(
+                bluetoothSupported,
+                bluetoothPermissionGranted,
+                bluetoothAdapterEnabled,
+            )
+        ) {
+            refreshReadersAfterSettings = false
+            viewModel.refreshReaders()
+        }
     }
 
     override fun onStop() {
@@ -177,29 +247,107 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
-        setIntent(intent)
-        intent.dataString?.let(viewModel::handleActivationCode)
+        consumeActivationIntent(intent)
     }
 
-    private fun requestRuntimePermissions(settings: AppSettings): Boolean {
-        val candidates = buildList {
-            if (settings.enableBle) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    add(Manifest.permission.BLUETOOTH_SCAN)
-                    add(Manifest.permission.BLUETOOTH_CONNECT)
-                } else {
-                    add(Manifest.permission.ACCESS_FINE_LOCATION)
-                }
+    private fun consumeActivationIntent(source: Intent) {
+        val activationCode = source.dataString
+        // Do not retain an activation/matching identifier in the Activity's task Intent. The
+        // parsed draft remains in volatile ViewModel memory only.
+        source.data = null
+        source.clipData = null
+        source.replaceExtras(null as Bundle?)
+        setIntent(source)
+        activationCode?.let(viewModel::handleActivationCode)
+    }
+
+    private fun requestRuntimePermissions(
+        settings: AppSettings,
+        userInitiated: Boolean,
+    ): Boolean {
+        val bluetoothPermissions = bluetoothRuntimePermissions()
+        val missingBluetoothPermissions = if (settings.enableBle) {
+            bluetoothPermissions.filterNot(::hasPermission)
+        } else {
+            emptyList()
+        }
+        val bluetoothPermissionPreviouslyRequested = getSharedPreferences(
+            RuntimePermissionPreferences,
+            Context.MODE_PRIVATE,
+        ).getBoolean(BluetoothPermissionRequested, false)
+        if (
+            userInitiated &&
+            missingBluetoothPermissions.isNotEmpty() &&
+            bluetoothPermissionPreviouslyRequested &&
+            missingBluetoothPermissions.all { permission ->
+                !shouldShowRequestPermissionRationale(permission)
             }
-            if (settings.enableTelephony) add(Manifest.permission.READ_PHONE_STATE)
+        ) {
+            openAppPermissionSettings(refreshReadersOnReturn = true)
+            return true
         }
-        val missing = candidates.filter { permission ->
-            ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED &&
-                requestedPermissions.add(permission)
+        val candidates = buildList {
+            if (
+                settings.enableBle &&
+                (userInitiated || !bluetoothPermissionPreviouslyRequested)
+            ) {
+                addAll(bluetoothPermissions)
+            }
+            if (BuildConfig.HAS_PRIVILEGED_TELEPHONY && settings.enableTelephony) {
+                add(Manifest.permission.READ_PHONE_STATE)
+            }
         }
+        val missing = candidates.filterNot(::hasPermission)
         if (missing.isEmpty()) return false
-        permissionLauncher.launch(missing.toTypedArray())
-        return true
+        if (!viewModel.beginRuntimePermissionRequest()) return true
+        val requestsBluetoothPermission = missing.any(bluetoothPermissions::contains)
+        return runCatching {
+            permissionLauncher.launch(missing.toTypedArray())
+            if (requestsBluetoothPermission) {
+                getSharedPreferences(RuntimePermissionPreferences, Context.MODE_PRIVATE)
+                    .edit { putBoolean(BluetoothPermissionRequested, true) }
+            }
+            true
+        }.getOrElse {
+            viewModel.completeRuntimePermissionRequest()
+            false
+        }
+    }
+
+    private fun discoverReaders(settings: AppSettings) {
+        refreshBluetoothState()
+        if (settings.enableBle && bluetoothSupported) {
+            if (!bluetoothPermissionGranted) {
+                requestRuntimePermissions(settings, userInitiated = true)
+            } else if (!bluetoothAdapterEnabled) {
+                openBluetoothSettings()
+            }
+        }
+        // BLE remediation must never prevent the other enabled reader providers from refreshing.
+        viewModel.refreshReaders()
+    }
+
+    private fun bluetoothRuntimePermissions(): List<String> =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            listOf(
+                Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH_CONNECT,
+            )
+        } else {
+            listOf(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+
+    private fun hasPermission(permission: String): Boolean =
+        ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+
+    private fun refreshBluetoothState() {
+        val adapter = getSystemService(BluetoothManager::class.java)?.adapter
+        bluetoothSupported = adapter != null &&
+            packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)
+        bluetoothPermissionGranted = bluetoothRuntimePermissions().all(::hasPermission)
+        bluetoothAdapterEnabled = adapter != null &&
+            bluetoothPermissionGranted &&
+            runCatching { adapter.isEnabled }.getOrDefault(false)
     }
 
     private fun requestNotificationPermission(onResult: (Boolean) -> Unit) {
@@ -212,8 +360,16 @@ class MainActivity : ComponentActivity() {
             onResult(notificationPermissionGranted)
             return
         }
-        notificationPermissionCallback = onResult
-        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        viewModel.retainNotificationPermissionContinuation(onResult)
+        runCatching {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }.onFailure {
+            viewModel.completeNotificationPermissionRequest(false)
+        }
+    }
+
+    private fun showScannerMessage(messageRes: Int) {
+        Toast.makeText(applicationContext, messageRes, Toast.LENGTH_LONG).show()
     }
 
     private fun openNotificationSettings() {
@@ -222,5 +378,46 @@ class MainActivity : ComponentActivity() {
                 putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
             },
         )
+    }
+
+    private fun openBluetoothSettings() {
+        refreshReadersAfterSettings = true
+        val opened = runCatching {
+            startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+        }.isSuccess || runCatching {
+            startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS))
+        }.isSuccess
+        if (!opened) {
+            Toast.makeText(
+                applicationContext,
+                R.string.reader_bluetooth_settings_unavailable,
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+
+    private fun openAppPermissionSettings(refreshReadersOnReturn: Boolean) {
+        refreshReadersAfterSettings = refreshReadersOnReturn
+        runCatching {
+            startActivity(
+                Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.fromParts("package", packageName, null),
+                ),
+            )
+        }.onFailure {
+            Toast.makeText(
+                applicationContext,
+                R.string.reader_bluetooth_settings_unavailable,
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+
+    private companion object {
+        const val StateSelectedTab = "hyperlpa.selected-tab"
+        const val StateRoute = "hyperlpa.route"
+        const val RuntimePermissionPreferences = "hyperlpa-runtime-permissions"
+        const val BluetoothPermissionRequested = "bluetooth-requested"
     }
 }
