@@ -25,9 +25,9 @@ jobs:
       HYPERLPA_VERSION_NAME: ${{ inputs.version_name }}
       HYPERLPA_VERSION_CODE: ${{ inputs.version_code }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check out pinned 9eSIM community key
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: 9esim/9eSIMCommunityKey
           ref: ddc15a8b8c873d42faa6dcda5db03f5dbc4124c4
