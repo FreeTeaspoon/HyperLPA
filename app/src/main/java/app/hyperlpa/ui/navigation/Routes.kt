@@ -1,6 +1,8 @@
 package app.hyperlpa.ui.navigation
 
 import androidx.compose.runtime.Immutable
+import androidx.annotation.StringRes
+import app.hyperlpa.R
 
 enum class AppTab {
     PROFILES,
@@ -36,9 +38,11 @@ sealed interface AppRoute {
     data object About : AppRoute
 }
 
-fun AppTab.title(): String = when (this) {
-    AppTab.PROFILES -> "Profiles"
-    AppTab.NOTIFICATIONS -> "Notifications"
-    AppTab.TOOLS -> "Tools"
-    AppTab.SETTINGS -> "Settings"
+@get:StringRes
+val AppTab.titleRes: Int
+    get() = when (this) {
+    AppTab.PROFILES -> R.string.nav_profiles
+    AppTab.NOTIFICATIONS -> R.string.nav_notifications
+    AppTab.TOOLS -> R.string.nav_tools
+    AppTab.SETTINGS -> R.string.nav_settings
 }

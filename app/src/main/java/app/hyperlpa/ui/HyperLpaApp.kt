@@ -36,12 +36,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -54,6 +58,7 @@ import androidx.navigationevent.compose.rememberNavigationEventState
 import app.hyperlpa.data.settings.FloatingBottomBarStyle
 import app.hyperlpa.data.settings.NavigationLabels
 import app.hyperlpa.data.settings.NavigationStyle
+import app.hyperlpa.data.metadata.providerIconKey
 import app.hyperlpa.domain.model.LpaOperation
 import app.hyperlpa.domain.model.DownloadStage
 import app.hyperlpa.domain.model.ProfileState
@@ -65,7 +70,7 @@ import app.hyperlpa.ui.components.liquid.NzbLiquidGlassNavigationBar
 import app.hyperlpa.ui.components.rememberAppBackdrop
 import app.hyperlpa.ui.navigation.AppRoute
 import app.hyperlpa.ui.navigation.AppTab
-import app.hyperlpa.ui.navigation.title
+import app.hyperlpa.ui.navigation.titleRes
 import app.hyperlpa.ui.screens.AboutScreen
 import app.hyperlpa.ui.screens.AdvancedSettingsScreen
 import app.hyperlpa.ui.screens.AidManagerScreen
@@ -135,32 +140,40 @@ fun HyperLpaApp(
     onRequestNotificationPermission: ((Boolean) -> Unit) -> Unit,
     onOpenNotificationSettings: () -> Unit,
     onTestProfileReminder: () -> Unit,
-    onScanQr: ((String?) -> Unit) -> Unit,
+    onScanQr: () -> Unit,
+    bluetoothReaderState: BluetoothReaderUiState,
+    onRefreshReaders: () -> Unit,
+    onRequestBluetoothPermission: () -> Unit,
+    onOpenBluetoothSettings: () -> Unit,
 ) {
     val currentState = rememberUpdatedState(state)
     val currentNotificationPermissionGranted = rememberUpdatedState(notificationPermissionGranted)
+    val currentBluetoothReaderState = rememberUpdatedState(bluetoothReaderState)
+    val currentOnRefreshReaders = rememberUpdatedState(onRefreshReaders)
+    val currentOnRequestBluetoothPermission = rememberUpdatedState(onRequestBluetoothPermission)
+    val currentOnOpenBluetoothSettings = rememberUpdatedState(onOpenBluetoothSettings)
     val entries = remember {
         entryProvider<AppRoute> {
             entry<AppRoute.Shell> {
                 MainShell(
                     state = currentState.value,
                     viewModel = viewModel,
+                    bluetoothReaderState = currentBluetoothReaderState.value,
+                    onRefreshReaders = { currentOnRefreshReaders.value() },
                 )
             }
             entry<AppRoute.ProfileDetails> { route ->
                 val profile = currentState.value.profiles.firstOrNull { it.iccid == route.iccid }
-                val providerKey = profile?.providerName
-                    ?.trim()
-                    ?.lowercase()
-                    ?.takeIf(String::isNotEmpty)
                 ProfileDetailsScreen(
                     profile = profile,
                     settings = currentState.value.settings,
                     suggestedTags = currentState.value.profiles.flatMap { it.tags }.toSet(),
                     operatorIcon = currentState.value.operatorIcons[route.iccid],
                     hasProfileIcon = currentState.value.metadata[route.iccid]?.iconUri != null,
-                    hasProviderIcon = providerKey != null &&
-                        currentState.value.providerIcons.containsKey(providerKey),
+                    hasProviderIcon = hasProviderIcon(
+                        providerName = profile?.providerName,
+                        providerIcons = currentState.value.providerIcons,
+                    ),
                     onBack = viewModel::navigateBack,
                     onEnableChange = { enabled -> viewModel.setProfileEnabled(route.iccid, enabled) },
                     onRename = { nickname -> viewModel.renameProfile(route.iccid, nickname) },
@@ -168,24 +181,30 @@ fun HyperLpaApp(
                     onSetTags = { tags -> viewModel.setProfileTags(route.iccid, tags) },
                     onSetReminder = { label, instant -> viewModel.setProfileReminder(route.iccid, label, instant) },
                     onRequestNotificationPermission = onRequestNotificationPermission,
-                    onSetIcon = { uri, applyToProvider ->
+                    onSetIcon = { uri, applyToProvider, onComplete ->
                         viewModel.setProfileIcon(
                             iccid = route.iccid,
                             uri = uri,
                             applyToProvider = applyToProvider,
                             providerName = profile?.providerName,
+                            onComplete = onComplete,
                         )
                     },
-                    onApplyIconToProvider = {
-                        viewModel.applyProfileIconToProvider(route.iccid, profile?.providerName)
+                    onApplyIconToProvider = { onComplete ->
+                        viewModel.applyProfileIconToProvider(
+                            route.iccid,
+                            profile?.providerName,
+                            onComplete,
+                        )
                     },
                 )
             }
             entry<AppRoute.DownloadProfile> {
+                val singleDownloadActive by viewModel.singleDownloadActive.collectAsStateWithLifecycle()
                 DownloadProfileScreen(
                     initialValue = currentState.value.activationCodeDraft,
                     imei = currentState.value.settings.imei,
-                    busy = currentState.value.lpa.operation is LpaOperation.Downloading,
+                    busy = singleDownloadActive,
                     onBack = viewModel::navigateBack,
                     onValueChange = viewModel::setActivationCodeDraft,
                     onScanQr = onScanQr,
@@ -218,6 +237,7 @@ fun HyperLpaApp(
                 (livePreview ?: retainedPreview)?.let { preview ->
                     ProfileDownloadConfirmationScreen(
                         preview = preview,
+                        iccidRedaction = currentState.value.settings.iccidRedaction,
                         cloudIcon = if (livePreview != null) {
                             currentState.value.downloadPreviewIcon
                         } else {
@@ -257,10 +277,16 @@ fun HyperLpaApp(
                 )
             }
             entry<AppRoute.BatchDownload> {
+                val batchState by viewModel.batchDownloadState.collectAsStateWithLifecycle()
                 BatchDownloadScreen(
                     imei = currentState.value.settings.imei,
+                    state = batchState,
                     onBack = viewModel::navigateBack,
-                    onDownload = viewModel::downloadProfileWithoutConfirmation,
+                    onDownload = viewModel::startBatchDownload,
+                    onResume = viewModel::resumeBatchDownload,
+                    onRetry = viewModel::retryFailedBatchDownload,
+                    onCancel = viewModel::cancelBatchDownload,
+                    onClear = viewModel::clearBatchDownload,
                 )
             }
             entry<AppRoute.EuiccDetails> {
@@ -271,9 +297,13 @@ fun HyperLpaApp(
                     enabledProfileCount = currentState.value.lpa.profiles.count {
                         it.state == ProfileState.ENABLED
                     },
+                    discoveredSmdpAddresses = currentState.value.lpa.discoveredSmdpAddresses,
                     settings = currentState.value.settings,
                     onBack = viewModel::navigateBack,
                     onReset = viewModel::resetEuiccMemory,
+                    onSetDefaultSmdpAddress = viewModel::setDefaultSmdpAddress,
+                    onDiscoverProfiles = viewModel::discoverProfiles,
+                    onUseDiscoveredAddress = viewModel::useDiscoveredSmdpAddress,
                 )
             }
             entry<AppRoute.ReaderSettings> {
@@ -281,6 +311,12 @@ fun HyperLpaApp(
                     state = currentState.value,
                     onBack = viewModel::navigateBack,
                     viewModel = viewModel,
+                    bluetoothReaderState = currentBluetoothReaderState.value,
+                    onDiscoverReaders = { currentOnRefreshReaders.value() },
+                    onRequestBluetoothPermission = {
+                        currentOnRequestBluetoothPermission.value()
+                    },
+                    onOpenBluetoothSettings = { currentOnOpenBluetoothSettings.value() },
                 )
             }
             entry<AppRoute.NotificationSettings> {
@@ -373,7 +409,11 @@ fun HyperLpaApp(
                 )
             }
             entry<AppRoute.Logs> {
-                LogsScreen(logs = currentState.value.lpa.logs, onBack = viewModel::navigateBack)
+                LogsScreen(
+                    logs = currentState.value.lpa.logs,
+                    onBack = viewModel::navigateBack,
+                    onExportSupportReport = viewModel::exportSupportReport,
+                )
             }
             entry<AppRoute.About> {
                 AboutScreen(onBack = viewModel::navigateBack)
@@ -404,6 +444,11 @@ fun HyperLpaApp(
                 failure = state.lpa.failure,
                 onDismiss = viewModel::clearFailure,
             )
+            LastEnabledProfileDisableDialog(
+                show = state.pendingProfileDisableConfirmation != null,
+                onCancel = viewModel::cancelLastEnabledProfileDisable,
+                onConfirm = viewModel::confirmLastEnabledProfileDisable,
+            )
             MainTabBackHandler(
                 enabled = backStack.lastOrNull() == AppRoute.Shell &&
                     state.selectedTab != AppTab.PROFILES,
@@ -412,6 +457,11 @@ fun HyperLpaApp(
         }
     }
 }
+
+internal fun hasProviderIcon(
+    providerName: String?,
+    providerIcons: Map<String, String>,
+): Boolean = providerIconKey(providerName)?.let(providerIcons::containsKey) == true
 
 @Composable
 private fun MainTabBackHandler(
@@ -432,6 +482,8 @@ private fun MainTabBackHandler(
 private fun MainShell(
     state: HyperLpaUiState,
     viewModel: HyperLpaViewModel,
+    bluetoothReaderState: BluetoothReaderUiState,
+    onRefreshReaders: () -> Unit,
 ) {
     val tabs = AppTab.entries
     val pagerState = rememberPagerState(initialPage = state.selectedTab.ordinal) { tabs.size }
@@ -444,22 +496,24 @@ private fun MainShell(
         mainPagerState.animateToPage(state.selectedTab.ordinal)
     }
     LaunchedEffect(pagerState) {
-        snapshotFlow { pagerState.settledPage }
+        snapshotFlow { pagerState.settledPage to mainPagerState.navigating }
             .distinctUntilChanged()
-            .collect { page ->
+            .collect { (page, navigating) ->
+                // Cancelling one programmatic scroll can briefly settle its intermediate page.
+                // Wait for the latest request to finish before publishing a page to the model,
+                // otherwise that stale result can cancel the newer tab animation.
+                if (navigating) return@collect
                 val tab = tabs[page]
                 if (tab != selectedTab) viewModel.selectTab(tab)
             }
     }
 
-    val navigationItems = remember {
-        listOf(
-            NavigationItem("Profiles", MiuixIcons.BankCards),
-            NavigationItem("Notifications", MiuixIcons.Messages),
-            NavigationItem("Tools", MiuixIcons.Tune),
-            NavigationItem("Settings", MiuixIcons.Settings),
-        )
-    }
+    val navigationItems = listOf(
+        NavigationItem(stringResource(app.hyperlpa.R.string.nav_profiles), MiuixIcons.BankCards),
+        NavigationItem(stringResource(app.hyperlpa.R.string.nav_notifications), MiuixIcons.Messages),
+        NavigationItem(stringResource(app.hyperlpa.R.string.nav_tools), MiuixIcons.Tune),
+        NavigationItem(stringResource(app.hyperlpa.R.string.nav_settings), MiuixIcons.Settings),
+    )
     val isWide = rememberIsWideWindow()
     val navigateTo: (Int) -> Unit = { index ->
         if (index != mainPagerState.selectedPage) mainPagerState.animateToPage(index)
@@ -478,6 +532,8 @@ private fun MainShell(
                 viewModel = viewModel,
                 scrollBehavior = scrollBehaviors[page],
                 outerPadding = outerPadding,
+                bluetoothReaderState = bluetoothReaderState,
+                onRefreshReaders = onRefreshReaders,
             )
         }
     }
@@ -608,6 +664,8 @@ private fun MainTabPage(
     viewModel: HyperLpaViewModel,
     scrollBehavior: ScrollBehavior,
     outerPadding: PaddingValues,
+    bluetoothReaderState: BluetoothReaderUiState,
+    onRefreshReaders: () -> Unit,
 ) {
     val profilesLoading = state.isProfilesLoading
     val useStaticBackdrop = profilesLoading && tab == AppTab.PROFILES
@@ -619,14 +677,17 @@ private fun MainTabPage(
         topBar = {
             BlurredBar(backdrop = backdrop) {
                 AdaptiveTopAppBar(
-                    title = tab.title(),
+                    title = stringResource(tab.titleRes),
                     color = topBarColor,
                     scrollBehavior = scrollBehavior,
                     actions = {
                         when (tab) {
                             AppTab.PROFILES -> {
                                 IconButton(onClick = { viewModel.navigate(AppRoute.DownloadProfile) }) {
-                                    Icon(MiuixIcons.Download, contentDescription = "Download profile")
+                                    Icon(
+                                        MiuixIcons.Download,
+                                        contentDescription = stringResource(app.hyperlpa.R.string.action_download_profile),
+                                    )
                                 }
                             }
                             AppTab.NOTIFICATIONS -> Unit
@@ -662,9 +723,10 @@ private fun MainTabPage(
                     modifier = modifier,
                     contentPadding = contentPadding,
                     scrollBehavior = scrollBehavior,
+                    bluetoothReaderState = bluetoothReaderState,
                     onSearchChange = viewModel::updateSearchQuery,
                     onSelectReader = viewModel::connectReader,
-                    onRefreshReaders = viewModel::refreshReaders,
+                    onRefreshReaders = onRefreshReaders,
                     onOpenEuiccDetails = { viewModel.navigate(AppRoute.EuiccDetails) },
                     onOpenProfile = { profile -> viewModel.navigate(AppRoute.ProfileDetails(profile.iccid)) },
                     onEnableChange = viewModel::setProfileEnabled,
@@ -679,6 +741,7 @@ private fun MainTabPage(
                     onProcess = viewModel::processNotification,
                     onDelete = viewModel::deleteNotification,
                     onRefresh = viewModel::refreshProfiles,
+                    onClearHistory = viewModel::clearNotificationHistory,
                 )
                 AppTab.TOOLS -> ToolsScreen(
                     state = state,
@@ -701,8 +764,7 @@ private fun MainTabPage(
 
 private val HyperLpaUiState.isProfilesLoading: Boolean
     get() = !lpa.initialized ||
-        (lpa.operation is LpaOperation.DiscoveringReaders && lpa.profiles.isEmpty()) ||
-        (!profileEnrichmentReady && lpa.profiles.isNotEmpty())
+        (lpa.operation is LpaOperation.DiscoveringReaders && lpa.profiles.isEmpty())
 
 @Composable
 private fun FloatingTabItem(
@@ -753,10 +815,44 @@ private fun FloatingTabItem(
 }
 
 @Composable
+private fun LastEnabledProfileDisableDialog(
+    show: Boolean,
+    onCancel: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    OverlayDialog(
+        show = show,
+        title = stringResource(app.hyperlpa.R.string.last_profile_disable_title),
+        summary = stringResource(app.hyperlpa.R.string.last_profile_disable_summary),
+        onDismissRequest = onCancel,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(
+                text = stringResource(app.hyperlpa.R.string.common_cancel),
+                onClick = onCancel,
+            )
+            Spacer(Modifier.size(8.dp))
+            TextButton(
+                text = stringResource(app.hyperlpa.R.string.last_profile_disable_action),
+                onClick = onConfirm,
+                colors = ButtonDefaults.textButtonColors(
+                    textColor = MiuixTheme.colorScheme.error,
+                ),
+            )
+        }
+    }
+}
+
+@Composable
 private fun OperationFailureDialog(
     failure: app.hyperlpa.domain.model.OperationFailure?,
     onDismiss: () -> Unit,
 ) {
+    val haptic = LocalHapticFeedback.current
     OverlayDialog(
         show = failure != null,
         title = failure?.title,
@@ -774,8 +870,11 @@ private fun OperationFailureDialog(
             Spacer(Modifier.size(12.dp))
         }
         TextButton(
-            text = "Close",
-            onClick = onDismiss,
+            text = stringResource(app.hyperlpa.R.string.common_close),
+            onClick = {
+                haptic.performHapticFeedback(HapticFeedbackType.Confirm)
+                onDismiss()
+            },
             colors = ButtonDefaults.textButtonColorsPrimary(),
             modifier = Modifier.fillMaxWidth(),
         )
@@ -812,12 +911,20 @@ private fun NonDismissibleProgressDialog(
 @Composable
 private fun OperationProgressDialog(operation: LpaOperation) {
     val title = when (operation) {
-        is LpaOperation.Switching -> if (operation.enable) "Enabling profile" else "Disabling profile"
-        is LpaOperation.Deleting -> "Deleting profile"
-        is LpaOperation.Renaming -> "Renaming profile"
+        is LpaOperation.Switching -> stringResource(
+            if (operation.enable) {
+                app.hyperlpa.R.string.operation_enabling_profile
+            } else {
+                app.hyperlpa.R.string.operation_disabling_profile
+            },
+        )
+        is LpaOperation.Deleting -> stringResource(app.hyperlpa.R.string.operation_deleting_profile)
+        is LpaOperation.Renaming -> stringResource(app.hyperlpa.R.string.operation_renaming_profile)
         is LpaOperation.Downloading -> null
-        is LpaOperation.ProcessingNotification -> "Processing notification"
-        is LpaOperation.Resetting -> "Resetting eUICC"
+        is LpaOperation.ProcessingNotification -> stringResource(
+            app.hyperlpa.R.string.operation_processing_notification,
+        )
+        is LpaOperation.Resetting -> stringResource(app.hyperlpa.R.string.operation_resetting_euicc)
         LpaOperation.Idle,
         is LpaOperation.Connecting,
         is LpaOperation.DiscoveringReaders,
@@ -828,7 +935,7 @@ private fun OperationProgressDialog(operation: LpaOperation) {
     NonDismissibleProgressDialog(
         show = title != null,
         title = title,
-        summary = "Keep the eUICC connected. This can take a few seconds.",
+        summary = stringResource(app.hyperlpa.R.string.operation_keep_connected_summary),
     ) {
         Box(
             modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
@@ -855,8 +962,8 @@ private fun ProfileInstallProgressDialog(operation: LpaOperation) {
 
     NonDismissibleProgressDialog(
         show = show,
-        title = "Installing profile",
-        summary = "Keep the eUICC connected until installation is complete.",
+        title = stringResource(app.hyperlpa.R.string.install_progress_title),
+        summary = stringResource(app.hyperlpa.R.string.install_progress_summary),
     ) {
         if (progress != null && sentBytes != null && totalBytes != null) {
             Column(
@@ -870,12 +977,19 @@ private fun ProfileInstallProgressDialog(operation: LpaOperation) {
                 )
                 Spacer(Modifier.size(14.dp))
                 Text(
-                    text = "${(progress * 100).roundToInt()}%",
+                    text = stringResource(
+                        app.hyperlpa.R.string.install_progress_percent,
+                        (progress * 100).roundToInt(),
+                    ),
                     style = MiuixTheme.textStyles.title2,
                 )
                 Spacer(Modifier.size(6.dp))
                 Text(
-                    text = "Installing ($sentBytes / $totalBytes bytes)…",
+                    text = stringResource(
+                        app.hyperlpa.R.string.install_progress_bytes,
+                        sentBytes,
+                        totalBytes,
+                    ),
                     style = MiuixTheme.textStyles.body2,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 )
@@ -889,7 +1003,7 @@ private fun ProfileInstallProgressDialog(operation: LpaOperation) {
                 CircularProgressIndicator(size = 26.dp)
                 Spacer(Modifier.size(12.dp))
                 Text(
-                    text = "Preparing secure installation…",
+                    text = stringResource(app.hyperlpa.R.string.install_progress_preparing),
                     style = MiuixTheme.textStyles.body1,
                 )
             }

@@ -74,6 +74,7 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import app.hyperlpa.ui.components.animation.DampedDragAnimation
 import app.hyperlpa.ui.components.animation.InteractiveHighlight
+import app.hyperlpa.ui.components.animation.rememberSystemAnimationsEnabled
 import top.yukonga.miuix.kmp.basic.BadgedBox
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.NavigationItem
@@ -140,7 +141,10 @@ private val GRAVITY_ANGLE_STEP_RAD = (3.0 * PI / 180.0).toFloat()
  * 从传感器速率降到方向真正跨过量化步进时。
  */
 @Composable
-private fun rememberQuantizedGravityAngle(): State<Float> {
+private fun rememberQuantizedGravityAngle(enabled: Boolean): State<Float> {
+    if (!enabled) {
+        return remember { mutableFloatStateOf((-PI / 2).toFloat()) }
+    }
     val tiltState = rememberDeviceTilt()
     return remember(tiltState) {
         derivedStateOf {
@@ -189,8 +193,8 @@ fun NzbLiquidGlassNavigationBar(
     isBlurActive: Boolean,
     isDark: Boolean,
     showLabels: Boolean,
-    solidContainerColor: Color = MiuixTheme.colorScheme.surfaceContainer,
     modifier: Modifier = Modifier,
+    solidContainerColor: Color = MiuixTheme.colorScheme.surfaceContainer,
     badge: (Int) -> (@Composable () -> Unit)? = { null },
 ) {
     val pillShape = remember { CircleShape }
@@ -204,6 +208,7 @@ fun NzbLiquidGlassNavigationBar(
     val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
     val animationScope = rememberCoroutineScope()
     val tabsCount = items.size
+    val animationsEnabled = rememberSystemAnimationsEnabled()
 
     var tabWidthPx by remember { mutableFloatStateOf(0f) }
     var totalWidthPx by remember { mutableFloatStateOf(0f) }
@@ -308,7 +313,9 @@ fun NzbLiquidGlassNavigationBar(
 
     // 只持有 State，不在组合期读值；在下方 highlight lambda（绘制阶段）内消费，
     // 使传感器更新只触发 draw 失效而非整个导航栏作用域的重组。
-    val gravityAngle = rememberQuantizedGravityAngle()
+    val gravityAngle = rememberQuantizedGravityAngle(
+        enabled = animationsEnabled && isBlurActive && backdrop != null,
+    )
 
     val combinedBackdrop = backdrop?.let { rememberCombinedBackdrop(it, tabsBackdrop) }
 

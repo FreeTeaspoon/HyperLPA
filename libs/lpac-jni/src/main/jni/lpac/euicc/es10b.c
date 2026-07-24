@@ -4,11 +4,41 @@
 #include "base64.h"
 #include "derutil.h"
 #include "hexutil.h"
+#include "rsp_limits.h"
 #include "sha256.h"
 
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+static int mark_singleton_seen(uint32_t *seen, uint32_t flag) {
+    if ((*seen & flag) != 0) {
+        return -1;
+    }
+    *seen |= flag;
+    return 0;
+}
+
+static int unpack_find_unique_tag(struct euicc_derutil_node *result, uint16_t tag,
+                                  const uint8_t *buffer, uint32_t buffer_len) {
+    struct euicc_derutil_node node;
+    uint32_t matches = 0;
+    int unpack_status;
+
+    if (result == NULL || buffer == NULL)
+        return -1;
+    node.self.ptr = buffer;
+    node.self.length = 0;
+    while ((unpack_status = euicc_derutil_unpack_next(&node, &node, buffer, buffer_len)) == 0) {
+        if (node.tag != tag)
+            continue;
+        if (++matches > 1)
+            return -1;
+        *result = node;
+    }
+    return unpack_status == 1 && matches == 1 ? 0 : -1;
+}
 
 int es10b_prepare_download_r(struct euicc_ctx *ctx, char **b64_PrepareDownloadResponse,
                              struct es10b_prepare_download_param *param,
@@ -26,8 +56,15 @@ int es10b_prepare_download_r(struct euicc_ctx *ctx, char **b64_PrepareDownloadRe
     int smdpSigned2_len, smdpSignature2_len, smdpCertificate_len;
     struct euicc_derutil_node n_request, n_smdpSigned2, n_smdpSignature2, n_smdpCertificate, n_hashCc, n_transactionId,
         n_ccRequiredFlag;
+    long cc_required;
 
+    if (ctx == NULL || b64_PrepareDownloadResponse == NULL || param == NULL || param_user == NULL)
+        return -1;
     *b64_PrepareDownloadResponse = NULL;
+    if (euicc_base64_validate(param->b64_smdpSigned2, EUICC_RSP_SIGNED_DATA_BASE64_BYTES) < 0 ||
+        euicc_base64_validate(param->b64_smdpSignature2, EUICC_RSP_SIGNATURE_BASE64_BYTES) < 0 ||
+        euicc_base64_validate(param->b64_smdpCertificate, EUICC_RSP_CERTIFICATE_BASE64_BYTES) < 0)
+        return -1;
 
     memset(&n_request, 0, sizeof(n_request));
     memset(&n_smdpSigned2, 0, sizeof(n_smdpSigned2));
@@ -62,23 +99,34 @@ int es10b_prepare_download_r(struct euicc_ctx *ctx, char **b64_PrepareDownloadRe
         goto err;
     }
 
-    if (euicc_derutil_unpack_find_tag(&n_smdpSigned2, 0x30, smdpSigned2, smdpSigned2_len) < 0) {
+    if (euicc_derutil_unpack_find_tag(&n_smdpSigned2, 0x30, smdpSigned2, smdpSigned2_len) < 0 ||
+        n_smdpSigned2.self.ptr != smdpSigned2 || n_smdpSigned2.self.length != (uint32_t)smdpSigned2_len) {
         goto err;
     }
 
-    if (euicc_derutil_unpack_find_tag(&n_smdpSignature2, 0x5F37, smdpSignature2, smdpSignature2_len) < 0) {
+    if (euicc_derutil_unpack_find_tag(&n_smdpSignature2, 0x5F37, smdpSignature2, smdpSignature2_len) < 0 ||
+        n_smdpSignature2.self.ptr != smdpSignature2 ||
+        n_smdpSignature2.self.length != (uint32_t)smdpSignature2_len) {
         goto err;
     }
 
-    if (euicc_derutil_unpack_find_tag(&n_smdpCertificate, 0x30, smdpCertificate, smdpCertificate_len) < 0) {
+    if (euicc_derutil_unpack_find_tag(&n_smdpCertificate, 0x30, smdpCertificate, smdpCertificate_len) < 0 ||
+        n_smdpCertificate.self.ptr != smdpCertificate ||
+        n_smdpCertificate.self.length != (uint32_t)smdpCertificate_len) {
         goto err;
     }
 
-    if (euicc_derutil_unpack_find_tag(&n_transactionId, 0x80, n_smdpSigned2.value, n_smdpSigned2.length) < 0) {
+    if (unpack_find_unique_tag(&n_transactionId, 0x80, n_smdpSigned2.value, n_smdpSigned2.length) < 0) {
+        goto err;
+    }
+    if (n_transactionId.length == 0 || n_transactionId.length > 16U) {
         goto err;
     }
 
-    if (euicc_derutil_unpack_find_tag(&n_ccRequiredFlag, 0x01, n_smdpSigned2.value, n_smdpSigned2.length) < 0) {
+    if (unpack_find_unique_tag(&n_ccRequiredFlag, 0x01, n_smdpSigned2.value, n_smdpSigned2.length) < 0) {
+        goto err;
+    }
+    if (n_ccRequiredFlag.length != 1U) {
         goto err;
     }
 
@@ -86,7 +134,9 @@ int es10b_prepare_download_r(struct euicc_ctx *ctx, char **b64_PrepareDownloadRe
     n_request.pack.child = &n_smdpSigned2;
     n_smdpSigned2.pack.next = &n_smdpSignature2;
 
-    if (euicc_derutil_convert_bin2long(n_ccRequiredFlag.value, n_ccRequiredFlag.length)) {
+    if (euicc_derutil_convert_bin2long(&cc_required, n_ccRequiredFlag.value, n_ccRequiredFlag.length) < 0)
+        goto err;
+    if (cc_required != 0) {
         if ((!param_user->confirmationCode) || (strlen(param_user->confirmationCode) == 0)) {
             goto err;
         }
@@ -210,7 +260,11 @@ static int es10b_load_bound_profile_package_tx(struct euicc_ctx *ctx,
         if (euicc_derutil_unpack_find_tag(&n_sequenceNumber, 0x80, n_notificationMetadata.value,
                                           n_notificationMetadata.length)
             == 0) {
-            result->seqNumber = euicc_derutil_convert_bin2long(n_sequenceNumber.value, n_sequenceNumber.length);
+            long sequence_number;
+            if (euicc_derutil_convert_bin2long(
+                    &sequence_number, n_sequenceNumber.value, n_sequenceNumber.length) < 0)
+                goto err;
+            result->seqNumber = (unsigned long)sequence_number;
         }
 
         switch (n_finalResult.tag) {
@@ -223,7 +277,8 @@ static int es10b_load_bound_profile_package_tx(struct euicc_ctx *ctx,
                 long tmpint;
                 switch (tmpnode.tag) {
                 case 0x80:
-                    tmpint = euicc_derutil_convert_bin2long(tmpnode.value, tmpnode.length);
+                    if (euicc_derutil_convert_bin2long(&tmpint, tmpnode.value, tmpnode.length) < 0)
+                        goto err;
                     switch (tmpint) {
                     case ES10B_BPP_COMMAND_ID_INITIALISE_SECURE_CHANNEL:
                     case ES10B_BPP_COMMAND_ID_CONFIGURE_ISDP:
@@ -239,7 +294,8 @@ static int es10b_load_bound_profile_package_tx(struct euicc_ctx *ctx,
                     }
                     break;
                 case 0x81:
-                    tmpint = euicc_derutil_convert_bin2long(tmpnode.value, tmpnode.length);
+                    if (euicc_derutil_convert_bin2long(&tmpint, tmpnode.value, tmpnode.length) < 0)
+                        goto err;
                     switch (tmpint) {
                     case ES10B_ERROR_REASON_INCORRECT_INPUT_VALUES:
                     case ES10B_ERROR_REASON_INVALID_SIGNATURE:
@@ -291,6 +347,7 @@ static int es10b_for_each_bpp_chunk(const struct euicc_derutil_node *n_BoundProf
                                     es10b_bpp_chunk_callback callback, void *user_data) {
     const uint8_t *reqbuf;
     int reqbuf_len;
+    int child_unpack_status;
     struct euicc_derutil_node tmpnode, tmpchildnode;
 
     if (euicc_derutil_unpack_find_tag(&tmpnode, 0xBF23, n_BoundProfilePackage->value,
@@ -323,11 +380,14 @@ static int es10b_for_each_bpp_chunk(const struct euicc_derutil_node *n_BoundProf
 
     tmpchildnode.self.ptr = tmpnode.value;
     tmpchildnode.self.length = 0;
-    while (euicc_derutil_unpack_next(&tmpchildnode, &tmpchildnode, tmpnode.value, tmpnode.length) == 0) {
+    while ((child_unpack_status = euicc_derutil_unpack_next(
+                &tmpchildnode, &tmpchildnode, tmpnode.value, tmpnode.length)) == 0) {
         if (callback(tmpchildnode.self.ptr, tmpchildnode.self.length, user_data) < 0) {
             return -1;
         }
     }
+    if (child_unpack_status < 0)
+        return -1;
 
     if (euicc_derutil_unpack_find_tag(&tmpnode, 0xA2, n_BoundProfilePackage->value,
                                       n_BoundProfilePackage->length) == 0 &&
@@ -346,11 +406,14 @@ static int es10b_for_each_bpp_chunk(const struct euicc_derutil_node *n_BoundProf
 
     tmpchildnode.self.ptr = tmpnode.value;
     tmpchildnode.self.length = 0;
-    while (euicc_derutil_unpack_next(&tmpchildnode, &tmpchildnode, tmpnode.value, tmpnode.length) == 0) {
+    while ((child_unpack_status = euicc_derutil_unpack_next(
+                &tmpchildnode, &tmpchildnode, tmpnode.value, tmpnode.length)) == 0) {
         if (callback(tmpchildnode.self.ptr, tmpchildnode.self.length, user_data) < 0) {
             return -1;
         }
     }
+    if (child_unpack_status < 0)
+        return -1;
 
     return 0;
 }
@@ -408,6 +471,10 @@ int es10b_load_bound_profile_package_r_progress(
         .progress_user_data = progress_user_data,
     };
 
+    if (ctx == NULL || result == NULL ||
+        euicc_base64_validate(
+            b64_BoundProfilePackage, EUICC_RSP_BOUND_PROFILE_PACKAGE_BASE64_BYTES) < 0)
+        return -1;
     result->seqNumber = 0;
     result->bppCommandId = ES10B_BPP_COMMAND_ID_UNDEFINED;
     result->errorReason = ES10B_ERROR_REASON_UNDEFINED;
@@ -420,7 +487,8 @@ int es10b_load_bound_profile_package_r_progress(
         goto err;
     }
 
-    if (euicc_derutil_unpack_find_tag(&n_BoundProfilePackage, 0xBF36, bpp, bpp_len) < 0) {
+    if (euicc_derutil_unpack_find_tag(&n_BoundProfilePackage, 0xBF36, bpp, bpp_len) < 0 ||
+        n_BoundProfilePackage.self.ptr != bpp || n_BoundProfilePackage.self.length != (uint32_t)bpp_len) {
         goto err;
     }
 
@@ -480,6 +548,9 @@ int es10b_get_euicc_challenge_r(struct euicc_ctx *ctx, char **b64_euiccChallenge
     if (euicc_derutil_unpack_find_tag(&tmpnode, 0x80, tmpnode.value, tmpnode.length)) {
         goto err;
     }
+    if (tmpnode.length != 16U) {
+        goto err;
+    }
 
     *b64_euiccChallenge = malloc(euicc_base64_encode_len(tmpnode.length));
     if (!(*b64_euiccChallenge)) {
@@ -524,6 +595,9 @@ int es10b_get_euicc_info_r(struct euicc_ctx *ctx, char **b64_EUICCInfo1) {
     if (euicc_derutil_unpack_find_tag(&tmpnode, n_request.tag, respbuf, resplen)) {
         goto err;
     }
+    if (tmpnode.self.length > EUICC_RSP_EUICC_INFO_BYTES) {
+        goto err;
+    }
 
     *b64_EUICCInfo1 = malloc(euicc_base64_encode_len(tmpnode.self.length));
     if (!(*b64_EUICCInfo1)) {
@@ -560,9 +634,17 @@ int es10b_authenticate_server_r(struct euicc_ctx *ctx, uint8_t **transaction_id,
     struct euicc_derutil_node n_request, n_serverSigned1, n_transactionId, n_serverSignature1, n_euiccCiPKIdToBeUsed,
         n_serverCertificate, n_CtxParams1, n_matchingId, n_deviceInfo, n_tac, n_deviceCapabilities, n_imei;
 
+    if (ctx == NULL || transaction_id == NULL || transaction_id_len == NULL ||
+        b64_AuthenticateServerResponse == NULL || param == NULL || param_user == NULL)
+        return -1;
     *transaction_id = NULL;
     *transaction_id_len = 0;
     *b64_AuthenticateServerResponse = NULL;
+    if (euicc_base64_validate(param->b64_serverSigned1, EUICC_RSP_SIGNED_DATA_BASE64_BYTES) < 0 ||
+        euicc_base64_validate(param->b64_serverSignature1, EUICC_RSP_SIGNATURE_BASE64_BYTES) < 0 ||
+        euicc_base64_validate(param->b64_euiccCiPKIdToBeUsed, EUICC_RSP_PKID_BASE64_BYTES) < 0 ||
+        euicc_base64_validate(param->b64_serverCertificate, EUICC_RSP_CERTIFICATE_BASE64_BYTES) < 0)
+        return -1;
 
     memset(&n_request, 0, sizeof(n_request));
     memset(&n_serverSigned1, 0, sizeof(n_serverSigned1));
@@ -612,23 +694,36 @@ int es10b_authenticate_server_r(struct euicc_ctx *ctx, uint8_t **transaction_id,
         goto err;
     }
 
-    if (euicc_derutil_unpack_find_tag(&n_serverSigned1, 0x30, serverSigned1, serverSigned1_len) < 0) {
+    if (euicc_derutil_unpack_find_tag(&n_serverSigned1, 0x30, serverSigned1, serverSigned1_len) < 0 ||
+        n_serverSigned1.self.ptr != serverSigned1 || n_serverSigned1.self.length != (uint32_t)serverSigned1_len) {
         goto err;
     }
 
-    if (euicc_derutil_unpack_find_tag(&n_transactionId, 0x80, n_serverSigned1.value, n_serverSigned1.length) < 0) {
+    if (unpack_find_unique_tag(&n_transactionId, 0x80, n_serverSigned1.value, n_serverSigned1.length) < 0) {
+        goto err;
+    }
+    if (n_transactionId.length == 0 || n_transactionId.length > 16U) {
         goto err;
     }
 
-    if (euicc_derutil_unpack_find_tag(&n_serverSignature1, 0x5F37, serverSignature1, serverSignature1_len) < 0) {
+    if (euicc_derutil_unpack_find_tag(&n_serverSignature1, 0x5F37, serverSignature1, serverSignature1_len) < 0 ||
+        n_serverSignature1.self.ptr != serverSignature1 ||
+        n_serverSignature1.self.length != (uint32_t)serverSignature1_len) {
         goto err;
     }
 
-    if (euicc_derutil_unpack_find_tag(&n_euiccCiPKIdToBeUsed, 0x04, euiccCiPKIdToBeUsed, euiccCiPKIdToBeUsed_len) < 0) {
+    if (euicc_derutil_unpack_find_tag(&n_euiccCiPKIdToBeUsed, 0x04, euiccCiPKIdToBeUsed, euiccCiPKIdToBeUsed_len) < 0 ||
+        n_euiccCiPKIdToBeUsed.self.ptr != euiccCiPKIdToBeUsed ||
+        n_euiccCiPKIdToBeUsed.self.length != (uint32_t)euiccCiPKIdToBeUsed_len) {
+        goto err;
+    }
+    if (n_euiccCiPKIdToBeUsed.length == 0 || n_euiccCiPKIdToBeUsed.length > EUICC_RSP_CI_PKID_BYTES) {
         goto err;
     }
 
-    if (euicc_derutil_unpack_find_tag(&n_serverCertificate, 0x30, serverCertificate, serverCertificate_len) < 0) {
+    if (euicc_derutil_unpack_find_tag(&n_serverCertificate, 0x30, serverCertificate, serverCertificate_len) < 0 ||
+        n_serverCertificate.self.ptr != serverCertificate ||
+        n_serverCertificate.self.length != (uint32_t)serverCertificate_len) {
         goto err;
     }
 
@@ -987,7 +1082,12 @@ int es10b_list_notification(struct euicc_ctx *ctx, struct es10b_notification_met
     struct euicc_derutil_node tmpnode, n_notificationMetadataList, n_NotificationMetadata;
 
     struct es10b_notification_metadata_list *list_wptr = NULL;
+    struct es10b_notification_metadata_list *pending_notification = NULL;
+    uint32_t notification_count = 0;
+    int notification_unpack_status;
 
+    if (ctx == NULL || notificationMetadataList == NULL)
+        return -1;
     *notificationMetadataList = NULL;
 
     reqlen = sizeof(ctx->apdu._internal.request_buffer.body);
@@ -999,24 +1099,30 @@ int es10b_list_notification(struct euicc_ctx *ctx, struct es10b_notification_met
         goto err;
     }
 
-    if (euicc_derutil_unpack_find_tag(&tmpnode, n_request.tag, respbuf, resplen) < 0) {
+    if (euicc_derutil_unpack_find_tag(&tmpnode, n_request.tag, respbuf, resplen) < 0 ||
+        tmpnode.self.ptr != respbuf || tmpnode.self.length != resplen) {
         goto err;
     }
 
-    if (euicc_derutil_unpack_find_tag(&n_notificationMetadataList, 0xA0, tmpnode.value, tmpnode.length) < 0) {
+    if (euicc_derutil_unpack_find_tag(&n_notificationMetadataList, 0xA0, tmpnode.value, tmpnode.length) < 0 ||
+        n_notificationMetadataList.self.ptr != tmpnode.value ||
+        n_notificationMetadataList.self.length != tmpnode.length) {
         goto err;
     }
 
     n_NotificationMetadata.self.ptr = n_notificationMetadataList.value;
     n_NotificationMetadata.self.length = 0;
 
-    while (euicc_derutil_unpack_next(&n_NotificationMetadata, &n_NotificationMetadata, n_notificationMetadataList.value,
-                                     n_notificationMetadataList.length)
-           == 0) {
+    while ((notification_unpack_status = euicc_derutil_unpack_next(
+                &n_NotificationMetadata, &n_NotificationMetadata, n_notificationMetadataList.value,
+                n_notificationMetadataList.length)) == 0) {
         struct es10b_notification_metadata_list *p;
 
         if (n_NotificationMetadata.tag != 0xBF2F) {
             continue;
+        }
+        if (++notification_count > EUICC_RSP_NOTIFICATION_COUNT) {
+            goto err;
         }
 
         p = malloc(sizeof(struct es10b_notification_metadata_list));
@@ -1025,19 +1131,38 @@ int es10b_list_notification(struct euicc_ctx *ctx, struct es10b_notification_met
         }
 
         memset(p, 0, sizeof(*p));
+        pending_notification = p;
 
         tmpnode.self.ptr = n_NotificationMetadata.value;
         tmpnode.self.length = 0;
         p->profileManagementOperation = ES10B_PROFILE_MANAGEMENT_OPERATION_NULL;
-        while (
-            euicc_derutil_unpack_next(&tmpnode, &tmpnode, n_NotificationMetadata.value, n_NotificationMetadata.length)
-            == 0) {
+        uint32_t seen_tags = 0;
+        int field_unpack_status;
+        enum {
+            SEEN_SEQUENCE_NUMBER = 1U << 0,
+            SEEN_OPERATION = 1U << 1,
+            SEEN_ADDRESS = 1U << 2,
+            SEEN_ICCID = 1U << 3,
+        };
+        while ((field_unpack_status = euicc_derutil_unpack_next(
+                    &tmpnode, &tmpnode, n_NotificationMetadata.value, n_NotificationMetadata.length)) == 0) {
             switch (tmpnode.tag) {
-            case 0x80:
-                p->seqNumber = euicc_derutil_convert_bin2long(tmpnode.value, tmpnode.length);
+            case 0x80: {
+                long sequence_number;
+                if (mark_singleton_seen(&seen_tags, SEEN_SEQUENCE_NUMBER) < 0 ||
+                    euicc_derutil_convert_bin2long(
+                        &sequence_number, tmpnode.value, tmpnode.length) < 0)
+                    goto err;
+                p->seqNumber = (unsigned long)sequence_number;
                 break;
+            }
             case 0x81:
-                if (tmpnode.length >= 2) {
+                if (mark_singleton_seen(&seen_tags, SEEN_OPERATION) < 0 || tmpnode.length < 2 ||
+                    tmpnode.length > EUICC_RSP_BIT_STRING_BYTES ||
+                    euicc_derutil_validate_bit_string(tmpnode.value, tmpnode.length) < 0) {
+                    goto err;
+                }
+                {
                     switch (tmpnode.value[1]) {
                     case ES10B_PROFILE_MANAGEMENT_OPERATION_INSTALL:
                     case ES10B_PROFILE_MANAGEMENT_OPERATION_ENABLE:
@@ -1052,23 +1177,34 @@ int es10b_list_notification(struct euicc_ctx *ctx, struct es10b_notification_met
                 }
                 break;
             case 0x0C:
+                if (mark_singleton_seen(&seen_tags, SEEN_ADDRESS) < 0 || tmpnode.length == 0 ||
+                    tmpnode.length > EUICC_RSP_FQDN_BYTES ||
+                    euicc_derutil_validate_utf8(tmpnode.value, tmpnode.length, EUICC_RSP_FQDN_BYTES) < 0)
+                    goto err;
                 p->notificationAddress = malloc(tmpnode.length + 1);
-                if (p->notificationAddress) {
-                    memcpy(p->notificationAddress, tmpnode.value, tmpnode.length);
-                    p->notificationAddress[tmpnode.length] = '\0';
-                }
+                if (!p->notificationAddress)
+                    goto err;
+                memcpy(p->notificationAddress, tmpnode.value, tmpnode.length);
+                p->notificationAddress[tmpnode.length] = '\0';
                 break;
             case 0x5A:
+                if (mark_singleton_seen(&seen_tags, SEEN_ICCID) < 0 ||
+                    tmpnode.length != EUICC_RSP_ICCID_BYTES)
+                    goto err;
                 p->iccid = malloc((tmpnode.length * 2) + 1);
-                if (p->iccid) {
-                    if (euicc_hexutil_bin2gsmbcd(p->iccid, (tmpnode.length * 2) + 1, tmpnode.value, tmpnode.length)
-                        < 0) {
-                        free(p->iccid);
-                        p->iccid = NULL;
-                    }
-                }
+                if (!p->iccid ||
+                    euicc_hexutil_bin2gsmbcd(
+                        p->iccid, (tmpnode.length * 2) + 1, tmpnode.value, tmpnode.length) < 0)
+                    goto err;
                 break;
             }
+        }
+        if (field_unpack_status < 0)
+            goto err;
+
+        if ((seen_tags & (SEEN_SEQUENCE_NUMBER | SEEN_OPERATION | SEEN_ADDRESS)) !=
+            (SEEN_SEQUENCE_NUMBER | SEEN_OPERATION | SEEN_ADDRESS)) {
+            goto err;
         }
 
         if (*notificationMetadataList == NULL) {
@@ -1078,13 +1214,18 @@ int es10b_list_notification(struct euicc_ctx *ctx, struct es10b_notification_met
         }
 
         list_wptr = p;
+        pending_notification = NULL;
     }
+    if (notification_unpack_status < 0)
+        goto err;
 
     goto exit;
 
 err:
     fret = -1;
+    es10b_notification_metadata_list_free_all(pending_notification);
     es10b_notification_metadata_list_free_all(*notificationMetadataList);
+    *notificationMetadataList = NULL;
 exit:
     free(respbuf);
     respbuf = NULL;
@@ -1103,6 +1244,8 @@ int es10b_retrieve_notifications_list(struct euicc_ctx *ctx, struct es10b_pendin
 
     struct euicc_derutil_node tmpnode, n_PendingNotification, n_NotificationMetadata;
 
+    if (ctx == NULL || PendingNotification == NULL)
+        return -1;
     memset(PendingNotification, 0, sizeof(struct es10b_pending_notification));
 
     if (euicc_derutil_convert_long2bin(seqNumber_buf, &seqNumber_buf_len, seqNumber) < 0) {
@@ -1165,9 +1308,26 @@ int es10b_retrieve_notifications_list(struct euicc_ctx *ctx, struct es10b_pendin
         break;
     }
 
-    if (euicc_derutil_unpack_find_tag(&tmpnode, 0x0C, n_NotificationMetadata.value, n_NotificationMetadata.length)
-        < 0) {
-        goto err;
+    {
+        struct euicc_derutil_node address_node;
+        uint32_t address_count = 0;
+        int address_unpack_status;
+        address_node.self.ptr = n_NotificationMetadata.value;
+        address_node.self.length = 0;
+        while ((address_unpack_status = euicc_derutil_unpack_next(
+                    &address_node, &address_node, n_NotificationMetadata.value,
+                    n_NotificationMetadata.length)) == 0) {
+            if (address_node.tag != 0x0C)
+                continue;
+            if (++address_count > 1 || address_node.length == 0 ||
+                address_node.length > EUICC_RSP_FQDN_BYTES ||
+                euicc_derutil_validate_utf8(
+                    address_node.value, address_node.length, EUICC_RSP_FQDN_BYTES) < 0)
+                goto err;
+            tmpnode = address_node;
+        }
+        if (address_unpack_status < 0 || address_count != 1)
+            goto err;
     }
 
     PendingNotification->notificationAddress = malloc(tmpnode.length + 1);
@@ -1202,6 +1362,7 @@ exit:
 
 int es10b_remove_notification_from_list(struct euicc_ctx *ctx, unsigned long seqNumber) {
     int fret = 0;
+    long response_code;
     uint8_t seqNumber_buf[sizeof(seqNumber)];
     uint32_t seqNumber_buf_len = sizeof(seqNumber_buf);
     struct euicc_derutil_node n_request, n_seqNumber;
@@ -1242,7 +1403,10 @@ int es10b_remove_notification_from_list(struct euicc_ctx *ctx, unsigned long seq
         goto err;
     }
 
-    fret = euicc_derutil_convert_bin2long(tmpnode.value, tmpnode.length);
+    if (euicc_derutil_convert_bin2long(&response_code, tmpnode.value, tmpnode.length) < 0 ||
+        response_code > INT_MAX)
+        goto err;
+    fret = (int)response_code;
 
     goto exit;
 

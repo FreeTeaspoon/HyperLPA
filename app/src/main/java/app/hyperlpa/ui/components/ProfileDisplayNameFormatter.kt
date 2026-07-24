@@ -16,7 +16,7 @@ data class FormattedProfileDisplayName(
 fun formatProfileDisplayName(
     profile: ProfileInfo,
     strategy: PhoneFormatStrategy,
-    fallback: String = "eSIM profile",
+    fallback: String,
 ): FormattedProfileDisplayName {
     val rawName = profile.nickname.ifBlank { profile.name.ifBlank { fallback } }
     return formatProfileDisplayName(

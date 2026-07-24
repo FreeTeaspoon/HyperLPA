@@ -9,3 +9,8 @@ keystore.properties
 nineesim-keystore.properties
 *.jks
 *.keystore
+*.p12
+*.pfx
+*.pkcs12
+.kotlin/
+.DS_Store

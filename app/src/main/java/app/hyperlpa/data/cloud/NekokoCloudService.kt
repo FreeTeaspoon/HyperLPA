@@ -16,9 +16,10 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
-import java.util.concurrent.ConcurrentHashMap
+import java.util.LinkedHashMap
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
+import javax.net.ssl.HttpsURLConnection
 import kotlin.coroutines.resume
 
 class NekokoCloudService(context: Context) {
@@ -34,6 +35,11 @@ class NekokoCloudService(context: Context) {
 
     suspend fun clearOperatorIconCache() {
         iconResolver.clear()
+    }
+
+    suspend fun clearAllCaches() {
+        iconResolver.clear()
+        sizePredictor.clear()
     }
 }
 
@@ -73,10 +79,19 @@ internal fun decodeMccMnc(encoded: String?): MobileNetworkCode? {
 internal class OperatorIconResolver(
     private val cacheDirectory: File,
 ) {
-    private val catalogCache = mutableMapOf<String, OperatorCatalog?>()
-    private val catalogLocks = ConcurrentHashMap<String, Mutex>()
-    private val iconLocks = ConcurrentHashMap<String, Mutex>()
-    private val memoryIcons = ConcurrentHashMap<String, ByteArray>()
+    private val catalogCache = object : LinkedHashMap<String, OperatorCatalog?>(16, 0.75f, true) {
+        override fun removeEldestEntry(
+            eldest: MutableMap.MutableEntry<String, OperatorCatalog?>,
+        ): Boolean = size > MaxMemoryCatalogs
+    }
+    // Fixed lock stripes bound synchronization memory even when a reader keeps
+    // presenting new, attacker-controlled profile metadata across refreshes.
+    private val catalogLocks = Array(CacheLockStripes) { Mutex() }
+    private val iconLocks = Array(CacheLockStripes) { Mutex() }
+    private val memoryIcons = ByteArrayLruCache(
+        maxBytes = MaxMemoryIconBytes,
+        maxEntries = MaxMemoryIconEntries,
+    )
     private val cacheMutationMutex = Mutex()
     private val cacheGeneration = AtomicLong()
 
@@ -97,7 +112,7 @@ internal class OperatorIconResolver(
         memoryIcons[cacheKey]?.takeIf { generation == cacheGeneration.get() }
             ?.let { return@withContext it }
 
-        iconLocks.getOrPut(cacheKey) { Mutex() }.withLock {
+        iconLocks.forKey(cacheKey).withLock {
             if (generation != cacheGeneration.get()) return@withLock null
             memoryIcons[cacheKey]?.let { return@withLock it }
             val iconFile = File(File(cacheDirectory, "images"), "$cacheKey.png")
@@ -106,7 +121,7 @@ internal class OperatorIconResolver(
                     if (generation != cacheGeneration.get()) {
                         false
                     } else {
-                        memoryIcons[cacheKey] = bytes
+                        memoryIcons.put(cacheKey, bytes)
                         true
                     }
                 }
@@ -130,13 +145,12 @@ internal class OperatorIconResolver(
                     false
                 } else {
                     writeCached(iconFile, bytes)
-                    memoryIcons[cacheKey] = bytes
+                    pruneCacheDirectory(cacheDirectory, MaxDiskCacheBytes, MaxDiskCacheFiles)
+                    memoryIcons.put(cacheKey, bytes)
                     true
                 }
             }
             bytes.takeIf { accepted }
-        }.also {
-            iconLocks.remove(cacheKey)
         }
     }
 
@@ -153,7 +167,7 @@ internal class OperatorIconResolver(
         synchronized(catalogCache) {
             if (catalogCache.containsKey(mcc)) return catalogCache[mcc]
         }
-        return catalogLocks.getOrPut(mcc) { Mutex() }.withLock {
+        return catalogLocks.forKey(mcc).withLock {
             synchronized(catalogCache) {
                 if (catalogCache.containsKey(mcc)) return@withLock catalogCache[mcc]
             }
@@ -161,7 +175,7 @@ internal class OperatorIconResolver(
             val cacheFile = File(File(cacheDirectory, "catalog"), "$mcc.toml")
             val freshCache = cacheFile
                 .takeIf { it.isFile && System.currentTimeMillis() - it.lastModified() < CatalogMaxAgeMillis }
-                ?.let { file -> runCatching(file::readText).getOrNull() }
+                ?.let { file -> readUtf8FileBounded(file, MaxCatalogBytes) }
             var definitiveMissing = false
             var fetchedSource: String? = null
             val source = if (freshCache != null) {
@@ -175,26 +189,25 @@ internal class OperatorIconResolver(
                         null
                     }
                     HttpFetchResult.Failure ->
-                        cacheFile.takeIf(File::isFile)
-                            ?.let { file -> runCatching(file::readText).getOrNull() }
+                        readUtf8FileBounded(cacheFile, MaxCatalogBytes)
                 }
             }
             val catalog = source?.let(OperatorCatalog::parse)
             cacheMutationMutex.withLock {
                 if (generation == cacheGeneration.get() && (catalog != null || definitiveMissing)) {
-                    fetchedSource?.let { writeCached(cacheFile, it.encodeToByteArray()) }
+                    fetchedSource?.let {
+                        writeCached(cacheFile, it.encodeToByteArray())
+                        pruneCacheDirectory(cacheDirectory, MaxDiskCacheBytes, MaxDiskCacheFiles)
+                    }
                     synchronized(catalogCache) { catalogCache[mcc] = catalog }
                 }
             }
             catalog
-        }.also {
-            catalogLocks.remove(mcc)
         }
     }
 
     private fun readCached(file: File): ByteArray? =
-        runCatching { file.takeIf { it.isFile && it.length() in 1..MaxIconBytes.toLong() }?.readBytes() }
-            .getOrNull()
+        readFileBounded(file, MaxIconBytes)
 
     private fun writeCached(file: File, bytes: ByteArray) {
         runCatching {
@@ -214,8 +227,60 @@ internal class OperatorIconResolver(
         const val IconBaseUrl = "$BaseUrl/icons"
         const val MaxCatalogBytes = 512 * 1024
         const val MaxIconBytes = 1024 * 1024
+        const val MaxMemoryIconBytes = 8 * 1024 * 1024
+        const val MaxMemoryIconEntries = 32
+        const val MaxMemoryCatalogs = 16
+        const val CacheLockStripes = 32
+        const val MaxDiskCacheBytes = 64L * 1024 * 1024
+        const val MaxDiskCacheFiles = 256
         const val CatalogMaxAgeMillis = 7L * 24 * 60 * 60 * 1000
     }
+}
+
+private fun Array<Mutex>.forKey(key: String): Mutex =
+    this[(key.hashCode() and Int.MAX_VALUE) % size]
+
+internal class ByteArrayLruCache(
+    private val maxBytes: Int,
+    private val maxEntries: Int,
+) {
+    init {
+        require(maxBytes > 0 && maxEntries > 0)
+    }
+
+    private val entries = LinkedHashMap<String, ByteArray>(16, 0.75f, true)
+    private var retainedBytes = 0L
+
+    @Synchronized
+    operator fun get(key: String): ByteArray? = entries[key]
+
+    @Synchronized
+    fun put(key: String, value: ByteArray) {
+        entries.remove(key)?.let { previous -> retainedBytes -= previous.size }
+        if (value.size > maxBytes) return
+        entries[key] = value
+        retainedBytes += value.size
+        val iterator = entries.entries.iterator()
+        while ((retainedBytes > maxBytes || entries.size > maxEntries) && iterator.hasNext()) {
+            val removed = iterator.next()
+            retainedBytes -= removed.value.size
+            iterator.remove()
+        }
+    }
+
+    @Synchronized
+    fun clear() {
+        entries.clear()
+        retainedBytes = 0
+    }
+
+    @get:Synchronized
+    internal val size: Int
+        get() = entries.size
+
+    @get:Synchronized
+    internal val byteSize: Long
+        get() = retainedBytes
 }
 
 internal data class OperatorIconReference(
@@ -263,7 +328,9 @@ internal data class OperatorCatalog(
             var gid: MutableOperatorGid? = null
 
             fun finishOperator() {
-                operator?.freeze()?.let(operators::add)
+                if (operators.size < MaxCatalogOperators) {
+                    operator?.freeze()?.let(operators::add)
+                }
                 operator = null
                 gid = null
             }
@@ -278,7 +345,11 @@ internal data class OperatorCatalog(
                     }
                     line == "[[operators.gids]]" -> {
                         val current = operator ?: return@forEach
-                        gid = MutableOperatorGid().also(current.gids::add)
+                        gid = MutableOperatorGid().also { candidate ->
+                            if (current.gids.size < MaxGidsPerOperator) {
+                                current.gids.add(candidate)
+                            }
+                        }
                     }
                     '=' in line -> {
                         val key = line.substringBefore('=').trim()
@@ -308,6 +379,9 @@ internal data class OperatorCatalog(
             finishOperator()
             return OperatorCatalog(operators)
         }
+
+        private const val MaxCatalogOperators = 2_048
+        private const val MaxGidsPerOperator = 128
     }
 }
 
@@ -448,20 +522,21 @@ private fun parseTomlString(value: String): String? {
     for (index in 1 until trimmed.length) {
         val character = trimmed[index]
         if (escaped) {
-            result.append(
-                when (character) {
-                    'n' -> '\n'
-                    'r' -> '\r'
-                    't' -> '\t'
-                    else -> character
-                },
-            )
+            val decoded = when (character) {
+                'n' -> '\n'
+                'r' -> '\r'
+                't' -> '\t'
+                else -> character
+            }
+            if (decoded.isISOControl() || result.length >= MaxCatalogStringCharacters) return null
+            result.append(decoded)
             escaped = false
         } else if (character == '\\') {
             escaped = true
         } else if (character == '"') {
             return result.toString()
         } else {
+            if (character.isISOControl() || result.length >= MaxCatalogStringCharacters) return null
             result.append(character)
         }
     }
@@ -471,7 +546,7 @@ private fun parseTomlString(value: String): String? {
 private fun parseTomlStringList(value: String): List<String> {
     val values = mutableListOf<String>()
     var index = 0
-    while (index < value.length) {
+    while (index < value.length && values.size < MaxCatalogListItems) {
         val start = value.indexOf('"', index)
         if (start < 0) break
         var end = start + 1
@@ -489,6 +564,9 @@ private fun parseTomlStringList(value: String): List<String> {
     }
     return values
 }
+
+private const val MaxCatalogStringCharacters = 256
+private const val MaxCatalogListItems = 128
 
 private fun stripTomlComment(line: String): String {
     var inString = false
@@ -515,6 +593,50 @@ private fun sha256(value: String): String =
 private fun encodePathSegment(value: String): String =
     java.net.URLEncoder.encode(value, Charsets.UTF_8.name()).replace("+", "%20")
 
+/** A cache file can be replaced or enlarged between stat and read; cap the read itself too. */
+internal fun readUtf8FileBounded(file: File, maxBytes: Int): String? {
+    return readFileBounded(file, maxBytes)?.decodeToString()
+}
+
+internal fun readFileBounded(file: File, maxBytes: Int): ByteArray? {
+    if (maxBytes <= 0 || !file.isFile || file.length() !in 1..maxBytes.toLong()) return null
+    return runCatching {
+        file.inputStream().buffered().use { input ->
+            val output = ByteArrayOutputStream(minOf(file.length().toInt(), maxBytes))
+            val buffer = ByteArray(minOf(8 * 1024, maxBytes))
+            var total = 0
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                if (count == 0) continue
+                if (total > maxBytes - count) return@use null
+                output.write(buffer, 0, count)
+                total += count
+            }
+            output.toByteArray()
+        }
+    }.getOrNull()
+}
+
+/** Keeps this best-effort cache bounded by deleting the least-recently-written files first. */
+internal fun pruneCacheDirectory(root: File, maxBytes: Long, maxFiles: Int) {
+    if (maxBytes <= 0L || maxFiles <= 0 || !root.isDirectory) return
+    val files = root.walkTopDown()
+        .filter(File::isFile)
+        .toList()
+        .sortedBy(File::lastModified)
+    var retainedBytes = files.sumOf { file -> file.length().coerceAtLeast(0L) }
+    var retainedFiles = files.size
+    for (file in files) {
+        if (retainedBytes <= maxBytes && retainedFiles <= maxFiles) break
+        val length = file.length().coerceAtLeast(0L)
+        if (file.delete()) {
+            retainedBytes = (retainedBytes - length).coerceAtLeast(0L)
+            retainedFiles--
+        }
+    }
+}
+
 private sealed interface HttpFetchResult {
     data class Success(val bytes: ByteArray) : HttpFetchResult
     data object NotFound : HttpFetchResult
@@ -525,14 +647,17 @@ internal suspend fun httpGet(url: String, maxBytes: Int): ByteArray? =
     (httpFetch(url, maxBytes) as? HttpFetchResult.Success)?.bytes
 
 private suspend fun httpFetch(url: String, maxBytes: Int): HttpFetchResult = coroutineScope {
+    require(maxBytes > 0) { "The download size limit must be positive" }
     suspendCancellableCoroutine { continuation ->
         val activeConnection = AtomicReference<HttpURLConnection?>()
         val worker = launch(Dispatchers.IO) {
             val connection = runCatching {
-                (URL(url).openConnection() as HttpURLConnection).apply {
+                (URL(url).openConnection() as? HttpsURLConnection)?.apply {
                     connectTimeout = 8_000
                     readTimeout = 12_000
-                    instanceFollowRedirects = true
+                    // These endpoints are fixed app resources. Reject redirects so
+                    // HTTPS cannot be downgraded or silently moved to another host.
+                    instanceFollowRedirects = false
                     setRequestProperty("Accept", "*/*")
                     setRequestProperty("User-Agent", "HyperLPA/${BuildConfig.VERSION_NAME} (Android)")
                 }

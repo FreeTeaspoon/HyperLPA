@@ -2,6 +2,7 @@ package app.hyperlpa.lpa.usb
 
 import android.util.Log
 import app.hyperlpa.lpa.ApduInterfaceAtrProvider
+import java.util.Locale
 import net.typeblog.lpac_jni.ApduInterface
 
 class UsbApduInterface(
@@ -9,15 +10,34 @@ class UsbApduInterface(
 ) : ApduInterface, ApduInterfaceAtrProvider {
     companion object {
         private const val TAG = "UsbApduInterface"
+        private const val MaxApduBytes = 1024 * 1024
+        private const val MaxGetResponseRounds = 256
+
+        internal fun buildPps(pts1: Byte): ByteArray = byteArrayOf(
+            0xFF.toByte(),
+            0x10,
+            pts1,
+            (0xFF xor 0x10 xor pts1.toUByte().toInt()).toByte(),
+        )
+
+        internal fun shouldExchangePps(useTpdu: Boolean, hasAutomaticPps: Boolean): Boolean =
+            useTpdu && !hasAutomaticPps
+
+        internal fun isValidPpsResponse(request: ByteArray, response: ByteArray?): Boolean =
+            response != null && response.contentEquals(request)
     }
 
     override val atr: ByteArray?
         get() = ccidCtx.atr
 
     override val valid: Boolean
-        get() = channels.isNotEmpty()
+        get() = ccidCtx.isConnected
 
     private var channels = mutableSetOf<Int>()
+
+    private fun logVerbose(message: String) {
+        if (ccidCtx.isVerboseLoggingEnabled()) Log.d(TAG, message)
+    }
 
     // ATR parser
     // Specs: ISO/IEC 7816-3:2006 8.2 Answer-to-Reset
@@ -36,6 +56,7 @@ class UsbApduInterface(
     ) {
         companion object {
             fun parse(atr: ByteArray): ParsedAtr {
+                require(atr.size >= 2) { "ATR is shorter than TS and T0" }
                 val ts = atr[0]
                 val t0 = atr[1]
                 val tx1 = arrayOf<Byte?>(null, null, null, null)
@@ -44,6 +65,7 @@ class UsbApduInterface(
 
                 for (i in 0..3) {
                     if (t0.toInt() and (0x10 shl i) != 0) {
+                        require(pointer < atr.size) { "ATR is truncated in the first interface group" }
                         tx1[i] = atr[pointer]
                         pointer++
                     }
@@ -53,6 +75,7 @@ class UsbApduInterface(
 
                 for (i in 0..3) {
                     if (td1.toInt() and (0x10 shl i) != 0) {
+                        require(pointer < atr.size) { "ATR is truncated in the second interface group" }
                         tx2[i] = atr[pointer]
                         pointer++
                     }
@@ -72,12 +95,17 @@ class UsbApduInterface(
         if (ccidCtx.useTpdu) {
             // Send parameter selection
             // Specs: USB-CCID 3.2.1 TPDU level of exchange
-            val parsedAtr = ParsedAtr.parse(atr!!)
+            val parsedAtr = ParsedAtr.parse(requireNotNull(atr) { "USB reader returned no ATR" })
             val ta1 = parsedAtr.ta1 ?: 0x11.toByte()
             val pts1 = ta1 // TODO: Check that reader supports baud rate proposed by the card
-            val pps = byteArrayOf(0xff.toByte(), 0x10.toByte(), pts1, 0x00.toByte())
-            Log.d(TAG, "PTS1=${pts1} PPS: ${pps.encodeHex()}")
-            ccidCtx.transceiver.sendXfrBlock(pps)
+            if (shouldExchangePps(ccidCtx.useTpdu, ccidCtx.hasAutomaticPps)) {
+                val pps = buildPps(pts1)
+                logVerbose("Configuring USB TPDU PPS (${pps.size} bytes)")
+                val ppsResponse = ccidCtx.transceiver.sendXfrBlock(pps).data
+                require(isValidPpsResponse(pps, ppsResponse)) {
+                    "The card rejected or returned an invalid PPS response"
+                }
+            }
 
             // Send Set Parameters
             // Specs: USB-CCID 6.1.7 PC_to_RDR_SetParameters
@@ -90,7 +118,7 @@ class UsbApduInterface(
                 0x00
             )
 
-            Log.d(TAG, "Param: ${param.encodeHex()}")
+            logVerbose("Configuring USB TPDU parameters (${param.size} bytes)")
 
             ccidCtx.transceiver.sendParamBlock(param)
         }
@@ -105,36 +133,44 @@ class UsbApduInterface(
         transmitApduByChannel(terminalCapabilities, 0)
     }
 
-    override fun disconnect() = ccidCtx.disconnect()
+    override fun disconnect() {
+        synchronized(channels) {
+            channels.toList().forEach { channel -> runCatching { logicalChannelClose(channel) } }
+            channels.clear()
+        }
+        ccidCtx.disconnect()
+    }
 
     override fun logicalChannelOpen(aid: ByteArray): Int {
+        require(aid.size in 5..16) { "USB AID must be 5 to 16 bytes" }
         // OPEN LOGICAL CHANNEL
         val req = manageChannelCmd(true, 0)
 
         val resp = try {
             transmitApduByChannel(req, 0)
         } catch (e: Exception) {
-            e.printStackTrace()
             return -1
         }
 
         if (!isSuccessResponse(resp)) {
-            Log.d(TAG, "OPEN LOGICAL CHANNEL failed: ${resp.encodeHex()}")
+            logVerbose("OPEN LOGICAL CHANNEL failed (${resp.size} bytes, status=${responseStatus(resp)})")
             return -1
         }
 
-        val channelId = resp[0].toInt()
-        Log.d(TAG, "channelId = $channelId")
-        channels.add(channelId)
+        require(resp.size >= 3) { "OPEN LOGICAL CHANNEL returned no channel number" }
+        val channelId = resp[0].toUByte().toInt()
+        require(channelId in 1..19) { "OPEN LOGICAL CHANNEL returned invalid channel $channelId" }
+        logVerbose("channelId = $channelId")
+        synchronized(channels) { channels.add(channelId) }
 
         // Then, select AID
         val selectAid = selectByDfCmd(aid, channelId.toByte())
         val selectAidResp = transmitApduByChannel(selectAid, channelId.toByte())
 
         if (!isSuccessResponse(selectAidResp)) {
-            Log.d(TAG, "Select DF failed : ${selectAidResp.encodeHex()}")
+            logVerbose("Select DF failed (${selectAidResp.size} bytes, status=${responseStatus(selectAidResp)})")
             logicalChannelClose(channelId)
-            Log.d(TAG, "Closed logical channel $channelId due to select DF failure")
+            logVerbose("Closed logical channel $channelId due to select DF failure")
             return -1
         }
 
@@ -142,7 +178,7 @@ class UsbApduInterface(
     }
 
     override fun logicalChannelClose(handle: Int) {
-        check(channels.contains(handle)) {
+        check(synchronized(channels) { channels.contains(handle) }) {
             "Invalid logical channel handle $handle"
         }
         // CLOSE LOGICAL CHANNEL
@@ -150,13 +186,13 @@ class UsbApduInterface(
         val resp = transmitApduByChannel(req, handle.toByte())
 
         if (!isSuccessResponse(resp)) {
-            Log.d(TAG, "CLOSE LOGICAL CHANNEL failed: ${resp.encodeHex()}")
+            logVerbose("CLOSE LOGICAL CHANNEL failed (${resp.size} bytes, status=${responseStatus(resp)})")
         }
-        channels.remove(handle)
+        synchronized(channels) { channels.remove(handle) }
     }
 
     override fun transmit(handle: Int, tx: ByteArray): ByteArray {
-        check(channels.contains(handle)) {
+        check(synchronized(channels) { channels.contains(handle) }) {
             "Invalid logical channel handle $handle"
         }
         return transmitApduByChannel(tx, handle.toByte())
@@ -165,8 +201,20 @@ class UsbApduInterface(
     private fun isSuccessResponse(resp: ByteArray): Boolean =
         resp.size >= 2 && resp[resp.size - 2] == 0x90.toByte() && resp[resp.size - 1] == 0x00.toByte()
 
-    private fun buildCmd(cla: Byte, ins: Byte, p1: Byte, p2: Byte, data: ByteArray?, le: Byte?) =
-        byteArrayOf(cla, ins, p1, p2).let {
+    private fun responseStatus(resp: ByteArray): String = if (resp.size >= 2) {
+        String.format(
+            Locale.ROOT,
+            "%02X%02X",
+            resp[resp.size - 2].toUByte().toInt(),
+            resp[resp.size - 1].toUByte().toInt(),
+        )
+    } else {
+        "unavailable"
+    }
+
+    private fun buildCmd(cla: Byte, ins: Byte, p1: Byte, p2: Byte, data: ByteArray?, le: Byte?): ByteArray {
+        require(data == null || data.size <= 0xFF) { "Short APDU data exceeds 255 bytes" }
+        return byteArrayOf(cla, ins, p1, p2).let {
             if (data != null) {
                 it + data.size.toByte() + data
             } else {
@@ -179,6 +227,7 @@ class UsbApduInterface(
                 it
             }
         }
+    }
 
     private fun manageChannelCmd(open: Boolean, channel: Byte) =
         if (open) {
@@ -191,11 +240,13 @@ class UsbApduInterface(
         buildCmd(channel, 0xA4.toByte(), 0x04, 0x00, aid, null)
 
     private fun transmitApduByChannel(tx: ByteArray, channel: Byte): ByteArray {
+        require(tx.isNotEmpty() && tx.size <= MaxApduBytes) { "Invalid APDU length ${tx.size}" }
         val realTx = tx.copyOf()
-        // OR the channel mask into the CLA byte
-        realTx[0] = ((realTx[0].toInt() and 0xFC) or channel.toInt()).toByte()
+        realTx[0] = mapCla(realTx[0].toUByte().toInt(), channel.toUByte().toInt()).toByte()
 
-        var resp = ccidCtx.transceiver.sendXfrBlock(realTx).data!!
+        var resp = requireNotNull(ccidCtx.transceiver.sendXfrBlock(realTx).data) {
+            "USB reader returned no APDU response"
+        }
 
         if (resp.size < 2) throw RuntimeException("APDU response smaller than 2 (sw1 + sw2)!")
 
@@ -205,20 +256,31 @@ class UsbApduInterface(
         if (sw1 == 0x6C) {
             // 0x6C = wrong le
             // so we fix the le field here
+            require(realTx.size >= 5) { "Card requested a corrected Le for an APDU without Le" }
             realTx[realTx.size - 1] = resp[resp.size - 1]
-            resp = ccidCtx.transceiver.sendXfrBlock(realTx).data!!
+            resp = requireNotNull(ccidCtx.transceiver.sendXfrBlock(realTx).data) {
+                "USB reader returned no corrected APDU response"
+            }
+            require(resp.size >= 2) { "Corrected APDU response is truncated" }
+            require(resp.size <= MaxApduBytes) { "APDU response exceeds the safety limit" }
         } else if (sw1 == 0x61) {
             // 0x61 = X bytes available
             // continue reading by GET RESPONSE
+            var rounds = 0
             do {
+                check(++rounds <= MaxGetResponseRounds) { "GET RESPONSE retry limit reached" }
                 // GET RESPONSE
                 val getResponseCmd = byteArrayOf(
                     realTx[0], 0xC0.toByte(), 0x00, 0x00, sw2.toByte()
                 )
 
-                val tmp = ccidCtx.transceiver.sendXfrBlock(getResponseCmd).data!!
+                val tmp = requireNotNull(ccidCtx.transceiver.sendXfrBlock(getResponseCmd).data) {
+                    "USB reader returned no continued APDU response"
+                }
+                require(tmp.size >= 2) { "Continued APDU response is truncated" }
 
                 resp = resp.sliceArray(0 until (resp.size - 2)) + tmp
+                require(resp.size <= MaxApduBytes) { "APDU response exceeds the safety limit" }
 
                 sw1 = resp[resp.size - 2].toInt() and 0xFF
                 sw2 = resp[resp.size - 1].toInt() and 0xFF
@@ -226,5 +288,11 @@ class UsbApduInterface(
         }
 
         return resp
+    }
+
+    private fun mapCla(cla: Int, channel: Int): Int = when (channel) {
+        in 0..3 -> (cla and 0xFC) or channel
+        in 4..19 -> (cla and 0xF0) or 0x40 or (channel - 4)
+        else -> throw IllegalArgumentException("Unsupported logical channel $channel")
     }
 }

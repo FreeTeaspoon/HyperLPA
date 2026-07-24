@@ -4,6 +4,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include <cjson-ext/cJSON_ex.h>
 
@@ -24,6 +25,34 @@ static void es9p_base64_trim(char *str) {
             p++;
         }
     }
+}
+
+/*
+ * RSP field names are case-sensitive. cJSON_GetObjectItem() is not: it returns
+ * the first case-insensitive match and also silently accepts duplicate keys.
+ * Apart from being ambiguous, that can make different protocol layers inspect
+ * different values from the same response. Treat a duplicate or case-variant
+ * spelling of a requested field as invalid.
+ */
+static cJSON *es9p_get_unique_case_sensitive_item(const cJSON *object, const char *name) {
+    cJSON *item = NULL;
+    cJSON *match = NULL;
+
+    if (!cJSON_IsObject(object) || name == NULL) {
+        return NULL;
+    }
+
+    cJSON_ArrayForEach(item, object) {
+        if (item->string == NULL || strcasecmp(item->string, name) != 0) {
+            continue;
+        }
+        if (strcmp(item->string, name) != 0 || match != NULL) {
+            return NULL;
+        }
+        match = item;
+    }
+
+    return match;
 }
 
 static int es9p_trans_ex(struct euicc_ctx *ctx, const char *url, const char *url_postfix, uint32_t *rcode,
@@ -93,6 +122,8 @@ static int es9p_trans_json(struct euicc_ctx *ctx, const char *smdp, const char *
     uint32_t rcode;
     char *rbuf = NULL;
     cJSON *rjroot = NULL, *rjheader = NULL, *rjfunctionExecutionStatus = NULL;
+    void **pending_outputs = NULL;
+    size_t output_count = 0;
 
     strncpy(ctx->http.status.reasonCode, "0.0.0", sizeof(ctx->http.status.reasonCode));
     strncpy(ctx->http.status.subjectCode, "0.0.0", sizeof(ctx->http.status.subjectCode));
@@ -138,7 +169,7 @@ static int es9p_trans_json(struct euicc_ctx *ctx, const char *smdp, const char *
         goto exit;
     }
 
-    if (!(rjroot = cJSON_Parse((const char *)rbuf))) {
+    if (!(rjroot = cJSON_ParseWithOpts((const char *)rbuf, NULL, 1))) {
         strncpy(ctx->http.status.reasonCode, "0.0.0", sizeof(ctx->http.status.reasonCode));
         strncpy(ctx->http.status.subjectCode, "0.0.0", sizeof(ctx->http.status.subjectCode));
         strncpy(ctx->http.status.subjectIdentifier, "root", sizeof(ctx->http.status.subjectIdentifier));
@@ -156,7 +187,8 @@ static int es9p_trans_json(struct euicc_ctx *ctx, const char *smdp, const char *
         goto err;
     }
 
-    if (!cJSON_HasObjectItem(rjroot, "header")) {
+    rjheader = es9p_get_unique_case_sensitive_item(rjroot, "header");
+    if (rjheader == NULL || !cJSON_IsObject(rjheader)) {
         strncpy(ctx->http.status.reasonCode, "0.0.0", sizeof(ctx->http.status.reasonCode));
         strncpy(ctx->http.status.subjectCode, "0.0.0", sizeof(ctx->http.status.subjectCode));
         strncpy(ctx->http.status.subjectIdentifier, "header", sizeof(ctx->http.status.subjectIdentifier));
@@ -164,9 +196,9 @@ static int es9p_trans_json(struct euicc_ctx *ctx, const char *smdp, const char *
         goto err;
     }
 
-    rjheader = cJSON_GetObjectItem(rjroot, "header");
-
-    if (!cJSON_HasObjectItem(rjheader, "functionExecutionStatus")) {
+    rjfunctionExecutionStatus =
+        es9p_get_unique_case_sensitive_item(rjheader, "functionExecutionStatus");
+    if (rjfunctionExecutionStatus == NULL || !cJSON_IsObject(rjfunctionExecutionStatus)) {
         strncpy(ctx->http.status.reasonCode, "0.0.0", sizeof(ctx->http.status.reasonCode));
         strncpy(ctx->http.status.subjectCode, "0.0.0", sizeof(ctx->http.status.subjectCode));
         strncpy(ctx->http.status.subjectIdentifier, "functionExecutionStatus",
@@ -175,62 +207,81 @@ static int es9p_trans_json(struct euicc_ctx *ctx, const char *smdp, const char *
         goto err;
     }
 
-    rjfunctionExecutionStatus = cJSON_GetObjectItem(rjheader, "functionExecutionStatus");
+    {
+        cJSON *statusCodeData =
+            es9p_get_unique_case_sensitive_item(rjfunctionExecutionStatus, "statusCodeData");
 
-    if (cJSON_HasObjectItem(rjfunctionExecutionStatus, "statusCodeData")) {
-        cJSON *statusCodeData = cJSON_GetObjectItem(rjfunctionExecutionStatus, "statusCodeData");
+        if (statusCodeData != NULL && cJSON_IsObject(statusCodeData)) {
+            cJSON *reasonCode = es9p_get_unique_case_sensitive_item(statusCodeData, "reasonCode");
+            cJSON *subjectCode = es9p_get_unique_case_sensitive_item(statusCodeData, "subjectCode");
+            cJSON *subjectIdentifier =
+                es9p_get_unique_case_sensitive_item(statusCodeData, "subjectIdentifier");
+            cJSON *message = es9p_get_unique_case_sensitive_item(statusCodeData, "message");
 
-        if (cJSON_HasObjectItem(statusCodeData, "reasonCode")
-            && cJSON_IsString(cJSON_GetObjectItem(statusCodeData, "reasonCode"))) {
-            snprintf(ctx->http.status.reasonCode, sizeof(ctx->http.status.reasonCode), "%s",
-                     cJSON_GetObjectItem(statusCodeData, "reasonCode")->valuestring);
-        }
-        if (cJSON_HasObjectItem(statusCodeData, "subjectCode")
-            && cJSON_IsString(cJSON_GetObjectItem(statusCodeData, "subjectCode"))) {
-            snprintf(ctx->http.status.subjectCode, sizeof(ctx->http.status.subjectCode), "%s",
-                     cJSON_GetObjectItem(statusCodeData, "subjectCode")->valuestring);
-        }
-        if (cJSON_HasObjectItem(statusCodeData, "subjectIdentifier")
-            && cJSON_IsString(cJSON_GetObjectItem(statusCodeData, "subjectIdentifier"))) {
-            snprintf(ctx->http.status.subjectIdentifier, sizeof(ctx->http.status.subjectIdentifier), "%s",
-                     cJSON_GetObjectItem(statusCodeData, "subjectIdentifier")->valuestring);
-        }
-        if (cJSON_HasObjectItem(statusCodeData, "message")
-            && cJSON_IsString(cJSON_GetObjectItem(statusCodeData, "message"))) {
-            snprintf(ctx->http.status.message, sizeof(ctx->http.status.message), "%s",
-                     cJSON_GetObjectItem(statusCodeData, "message")->valuestring);
-        } else {
-            const char *message = es9p_error_message(ctx->http.status.subjectCode, ctx->http.status.reasonCode);
-            if (message != NULL) {
-                snprintf(ctx->http.status.message, sizeof(ctx->http.status.message), "%s", message);
+            if (cJSON_IsString(reasonCode)) {
+                snprintf(ctx->http.status.reasonCode, sizeof(ctx->http.status.reasonCode), "%s",
+                         reasonCode->valuestring);
+            }
+            if (cJSON_IsString(subjectCode)) {
+                snprintf(ctx->http.status.subjectCode, sizeof(ctx->http.status.subjectCode), "%s",
+                         subjectCode->valuestring);
+            }
+            if (cJSON_IsString(subjectIdentifier)) {
+                snprintf(ctx->http.status.subjectIdentifier, sizeof(ctx->http.status.subjectIdentifier), "%s",
+                         subjectIdentifier->valuestring);
+            }
+            if (cJSON_IsString(message)) {
+                snprintf(ctx->http.status.message, sizeof(ctx->http.status.message), "%s",
+                         message->valuestring);
             } else {
-                snprintf(ctx->http.status.message, sizeof(ctx->http.status.message),
-                         "subject-code: %s, reason-code: %s", ctx->http.status.subjectCode,
-                         ctx->http.status.reasonCode);
+                const char *known_message =
+                    es9p_error_message(ctx->http.status.subjectCode, ctx->http.status.reasonCode);
+                if (known_message != NULL) {
+                    snprintf(ctx->http.status.message, sizeof(ctx->http.status.message), "%s", known_message);
+                } else {
+                    snprintf(ctx->http.status.message, sizeof(ctx->http.status.message),
+                             "subject-code: %s, reason-code: %s", ctx->http.status.subjectCode,
+                             ctx->http.status.reasonCode);
+                }
             }
         }
+    }
+
+    while (okey[output_count] != NULL) {
+        output_count++;
+    }
+    pending_outputs = calloc(output_count, sizeof(void *));
+    if (output_count > 0 && pending_outputs == NULL) {
+        goto err;
     }
 
     for (int i = 0; okey[i] != NULL; i++) {
         cJSON *obj;
 
-        obj = cJSON_GetObjectItem(rjroot, okey[i]);
+        obj = es9p_get_unique_case_sensitive_item(rjroot, okey[i]);
         if (!obj) {
             goto err;
         }
 
         if (cJSON_IsString(obj)) {
-            if (!(*optr[i] = strdup(obj->valuestring))) {
+            pending_outputs[i] = strdup(obj->valuestring);
+            if (pending_outputs[i] == NULL) {
                 goto err;
             }
         } else {
             if (oobj[i] == 0) {
                 goto err;
             }
-            if (!(*(optr[i]) = cJSON_Duplicate(obj, 1))) {
+            pending_outputs[i] = cJSON_Duplicate(obj, 1);
+            if (pending_outputs[i] == NULL) {
                 goto err;
             }
         }
+    }
+
+    for (size_t i = 0; i < output_count; i++) {
+        *optr[i] = pending_outputs[i];
+        pending_outputs[i] = NULL;
     }
 
     cJSON_Delete(rjroot);
@@ -242,7 +293,20 @@ static int es9p_trans_json(struct euicc_ctx *ctx, const char *smdp, const char *
 err:
     fret = -1;
 exit:
-    free(sbuf);
+    if (pending_outputs != NULL) {
+        for (size_t i = 0; i < output_count; i++) {
+            if (pending_outputs[i] == NULL) {
+                continue;
+            }
+            if (oobj[i] == 0) {
+                free(pending_outputs[i]);
+            } else {
+                cJSON_Delete((cJSON *)pending_outputs[i]);
+            }
+        }
+    }
+    free(pending_outputs);
+    cJSON_free(sbuf);
     cJSON_Delete(sjroot);
     free(rbuf);
     cJSON_Delete(rjroot);
@@ -345,11 +409,12 @@ int es11_authenticate_client_r(struct euicc_ctx *ctx, char ***smdp_list, const c
         return -1;
     }
 
-    if (j_eventEntries == NULL || !cJSON_IsArray(j_eventEntries)) {
-        return -1;
-    }
+    if (j_eventEntries == NULL || !cJSON_IsArray(j_eventEntries))
+        goto err;
 
     j_eventEntries_size = cJSON_GetArraySize(j_eventEntries);
+    if (j_eventEntries_size < 0 || j_eventEntries_size > 1024)
+        goto err;
 
     *smdp_list = malloc(sizeof(char *) * (j_eventEntries_size + 1));
     if (*smdp_list == NULL) {
@@ -360,7 +425,7 @@ int es11_authenticate_client_r(struct euicc_ctx *ctx, char ***smdp_list, const c
 
     for (int i = 0; i < j_eventEntries_size; i++) {
         cJSON *j_event = cJSON_GetArrayItem(j_eventEntries, i);
-        cJSON *j_eventType = cJSON_GetObjectItem(j_event, "rspServerAddress");
+        cJSON *j_eventType = es9p_get_unique_case_sensitive_item(j_event, "rspServerAddress");
 
         if (j_eventType == NULL || !cJSON_IsString(j_eventType)) {
             fret = -1;
@@ -368,6 +433,10 @@ int es11_authenticate_client_r(struct euicc_ctx *ctx, char ***smdp_list, const c
         }
 
         (*smdp_list)[i] = strdup(j_eventType->valuestring);
+        if ((*smdp_list)[i] == NULL) {
+            fret = -1;
+            goto err;
+        }
     }
 
     fret = 0;
@@ -402,7 +471,7 @@ int es9p_initiate_authentication(struct euicc_ctx *ctx) {
         return -1;
     }
 
-    ctx->http._internal.authenticate_server_param = malloc(sizeof(struct es10b_authenticate_server_param));
+    ctx->http._internal.authenticate_server_param = calloc(1, sizeof(struct es10b_authenticate_server_param));
     if (ctx->http._internal.authenticate_server_param == NULL) {
         return -1;
     }
@@ -462,7 +531,7 @@ int es9p_authenticate_client(struct euicc_ctx *ctx) {
         return -1;
     }
 
-    ctx->http._internal.prepare_download_param = malloc(sizeof(struct es10b_prepare_download_param));
+    ctx->http._internal.prepare_download_param = calloc(1, sizeof(struct es10b_prepare_download_param));
     if (ctx->http._internal.prepare_download_param == NULL) {
         return -1;
     }
