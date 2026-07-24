@@ -1,6 +1,7 @@
 package app.hyperlpa.ui
 
 import android.app.Application
+import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.compose.runtime.mutableStateListOf
 import androidx.core.net.toUri
@@ -8,11 +9,17 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import app.hyperlpa.BuildConfig
+import app.hyperlpa.R
 import app.hyperlpa.data.LpaRepository
 import app.hyperlpa.data.LpaRepositoryState
 import app.hyperlpa.data.backup.HyperLpaBackupManager
 import app.hyperlpa.data.cloud.NekokoCloudService
+import app.hyperlpa.data.history.NotificationHistoryEntry
+import app.hyperlpa.data.history.NotificationHistoryStore
+import app.hyperlpa.data.metadata.PendingProfileIconImport
 import app.hyperlpa.data.metadata.ProfileMetadata
+import app.hyperlpa.data.metadata.ProfileIconStorage
 import app.hyperlpa.data.metadata.ProfileMetadataStore
 import app.hyperlpa.data.metadata.providerIconKey
 import app.hyperlpa.data.settings.AppSettings
@@ -27,14 +34,20 @@ import app.hyperlpa.data.settings.RedactionMode
 import app.hyperlpa.data.settings.ThemeAccent
 import app.hyperlpa.data.settings.ThemeMode
 import app.hyperlpa.data.settings.ThemePalette
+import app.hyperlpa.data.support.SupportReportBuilder
 import app.hyperlpa.domain.model.DownloadRequest
 import app.hyperlpa.domain.model.LpaOperation
+import app.hyperlpa.domain.model.OperationOutcome
 import app.hyperlpa.domain.model.ProfileInfo
+import app.hyperlpa.domain.model.ProfileState
+import app.hyperlpa.provisioning.ProvisioningCoordinator
+import app.hyperlpa.reminders.withProfileReminderIsolation
 import app.hyperlpa.ui.navigation.AppRoute
 import app.hyperlpa.ui.navigation.AppTab
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -44,12 +57,18 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStream
 import java.time.Instant
 
@@ -68,10 +87,12 @@ data class HyperLpaUiState(
     val estimatedDownloadBytes: Long? = null,
     val downloadPreviewEnrichmentLoading: Boolean = false,
     val showCancelDownloadConfirmation: Boolean = false,
+    val pendingProfileDisableConfirmation: String? = null,
     val profileEnrichmentReady: Boolean = false,
+    val notificationHistory: List<NotificationHistoryEntry> = emptyList(),
 ) {
     val profiles: List<ProfileInfo> by lazy {
-        lpa.profiles
+        profilesWithOptimisticSwitch(lpa.profiles, lpa.operation)
             .map { profile ->
                 val extra = metadata[profile.iccid]
                 val measuredBytes = extra
@@ -111,14 +132,42 @@ data class HyperLpaUiState(
     }
 }
 
+internal fun profilesWithOptimisticSwitch(
+    profiles: List<ProfileInfo>,
+    operation: LpaOperation,
+): List<ProfileInfo> {
+    val switching = operation as? LpaOperation.Switching ?: return profiles
+    val previousEnabledIccid = profiles
+        .singleOrNull { profile ->
+            profile.iccid != switching.iccid && profile.state == ProfileState.ENABLED
+        }
+        ?.iccid
+    return profiles.map { profile ->
+        val displayedState = when {
+            profile.iccid == switching.iccid -> if (switching.enable) {
+                ProfileState.ENABLED
+            } else {
+                ProfileState.DISABLED
+            }
+            switching.enable && profile.iccid == previousEnabledIccid -> ProfileState.DISABLED
+            else -> profile.state
+        }
+        if (displayedState == profile.state) profile else profile.copy(state = displayedState)
+    }
+}
+
 class HyperLpaViewModel(
     application: Application,
     private val settingsStore: AppSettingsStore,
     private val metadataStore: ProfileMetadataStore,
     private val repository: LpaRepository,
     private val cloudService: NekokoCloudService,
+    private val notificationHistoryStore: NotificationHistoryStore,
+    private val supportReportBuilder: SupportReportBuilder,
+    private val provisioningCoordinator: ProvisioningCoordinator,
 ) : AndroidViewModel(application) {
     private val backupManager = HyperLpaBackupManager(application, settingsStore, metadataStore)
+    private val profileIconStorage = ProfileIconStorage(application)
     private val backStack = mutableStateListOf<AppRoute>(AppRoute.Shell)
     val navigationBackStack: List<AppRoute> = backStack
     private val selectedTab = MutableStateFlow(AppTab.PROFILES)
@@ -127,8 +176,22 @@ class HyperLpaViewModel(
     private val cloudProfileData = MutableStateFlow(CloudProfileData())
     private val cloudRefreshToken = MutableStateFlow(0)
     private val downloadPreviewCloudData = MutableStateFlow(DownloadPreviewCloudData())
+    private var suppressedCloudProfileSource: CloudEnrichmentKey? = null
+    private var suppressedDownloadPreviewSource: DownloadPreviewCloudSourceKey? = null
     private val showCancelDownloadConfirmation = MutableStateFlow(false)
+    private val pendingProfileDisableConfirmation = MutableStateFlow<String?>(null)
+    private val cloudEnrichmentSemaphore = Semaphore(CloudEnrichmentConcurrency)
+    // Serializes settings/profile-metadata edits with backup snapshots and restores. Repository
+    // operations have their own mutex; restore additionally acquires that barrier before commit.
+    private val dataMutationMutex = Mutex()
+    private val _backupOperationInProgress = MutableStateFlow(false)
+    val backupOperationInProgress = _backupOperationInProgress.asStateFlow()
+    val batchDownloadState = provisioningCoordinator.batchState
+    val singleDownloadActive = provisioningCoordinator.singleDownloadActive
     private var simStateRefreshJob: Job? = null
+    private var pendingBackupPassword: CharArray? = null
+    private var notificationPermissionContinuation: ((Boolean) -> Unit)? = null
+    private var runtimePermissionRequestInProgress = false
 
     @Suppress("UNCHECKED_CAST")
     val state = combine(
@@ -143,6 +206,8 @@ class HyperLpaViewModel(
         cloudProfileData,
         downloadPreviewCloudData,
         showCancelDownloadConfirmation,
+        notificationHistoryStore.history,
+        pendingProfileDisableConfirmation,
     ) { values ->
         val settings = values[0] as AppSettings
         val lpa = values[1] as LpaRepositoryState
@@ -173,6 +238,8 @@ class HyperLpaViewModel(
             estimatedDownloadBytes = previewCloudData.estimatedBytes,
             downloadPreviewEnrichmentLoading = previewCloudData.loading,
             showCancelDownloadConfirmation = values[10] as Boolean,
+            notificationHistory = values[11] as List<NotificationHistoryEntry>,
+            pendingProfileDisableConfirmation = values[12] as String?,
             profileEnrichmentReady = lpa.profiles.isEmpty() ||
                 (!settings.loadOperatorIcons && !settings.estimateProfileSize) ||
                 cloudData.input?.enrichmentKey == expectedCloudInput.enrichmentKey,
@@ -187,6 +254,18 @@ class HyperLpaViewModel(
                     repository.discoverReaders(autoConnect = settings.autoLoadProfiles)
                 }
             }
+        }
+        viewModelScope.launch {
+            repository.state
+                .map { lpa ->
+                    lpa.profiles.associate { profile -> profile.iccid to profile.providerName }
+                }
+                .distinctUntilChanged()
+                .collect { providerNamesByIccid ->
+                    dataMutationMutex.withLock {
+                        metadataStore.recordProviderIdentities(providerNamesByIccid)
+                    }
+                }
         }
         viewModelScope.launch {
             combine(
@@ -208,22 +287,29 @@ class HyperLpaViewModel(
                     previous.enrichmentKey == current.enrichmentKey
                 }
                 .collectLatest { input ->
+                    val sourceKey = input.enrichmentKey.copy(refreshToken = 0)
+                    if (suppressedCloudProfileSource == sourceKey) {
+                        cloudProfileData.value = CloudProfileData(input = input)
+                        return@collectLatest
+                    }
+                    suppressedCloudProfileSource = null
                     cloudProfileData.value = supervisorScope {
                         val icons = async {
                             if (!input.loadOperatorIcons) return@async emptyMap()
-                            input.profiles.map { profile ->
+                            val loaded = input.profiles.take(MaxUiOperatorIconEntries).map { profile ->
                                 async {
-                                    val icon = try {
-                                        cloudService.loadOperatorIcon(profile)
-                                    } catch (error: Throwable) {
-                                        if (error is CancellationException) throw error
-                                        null
+                                    val icon = cloudEnrichmentSemaphore.withPermit {
+                                        try {
+                                            cloudService.loadOperatorIcon(profile)
+                                        } catch (error: Throwable) {
+                                            if (error is CancellationException) throw error
+                                            null
+                                        }
                                     }
                                     profile.iccid to icon
                                 }
-                            }.awaitAll().mapNotNull { (iccid, bytes) ->
-                                bytes?.let { iccid to it }
-                            }.toMap()
+                            }.awaitAll()
+                            boundedOperatorIconMap(loaded)
                         }
 
                         val sizes = async {
@@ -241,14 +327,16 @@ class HyperLpaViewModel(
                                             smdpAddress = input.metadata[profile.iccid]?.smdpAddress
                                                 ?: profile.smdpAddress,
                                         )
-                                        val size = try {
-                                            cloudService.predictProfileSize(
-                                                profile = enriched,
-                                                eid = input.eid,
-                                            )
-                                        } catch (error: Throwable) {
-                                            if (error is CancellationException) throw error
-                                            null
+                                        val size = cloudEnrichmentSemaphore.withPermit {
+                                            try {
+                                                cloudService.predictProfileSize(
+                                                    profile = enriched,
+                                                    eid = input.eid,
+                                                )
+                                            } catch (error: Throwable) {
+                                                if (error is CancellationException) throw error
+                                                null
+                                            }
                                         }
                                         profile.iccid to size
                                     }
@@ -270,9 +358,18 @@ class HyperLpaViewModel(
             combine(
                 settingsStore.settings,
                 repository.state.map { it.pendingProfileDownload },
-            ) { settings, preview -> DownloadPreviewCloudInput(settings, preview) }
+                repository.state.map { it.euiccInfo?.eid },
+                cloudRefreshToken,
+            ) { settings, preview, eid, refreshToken ->
+                DownloadPreviewCloudInput(settings, preview, eid, refreshToken)
+            }
                 .distinctUntilChanged()
                 .collectLatest { input ->
+                    if (suppressedDownloadPreviewSource == input.sourceKey) {
+                        downloadPreviewCloudData.value = DownloadPreviewCloudData()
+                        return@collectLatest
+                    }
+                    suppressedDownloadPreviewSource = null
                     val preview = input.preview
                     if (preview == null) {
                         downloadPreviewCloudData.value = DownloadPreviewCloudData()
@@ -298,7 +395,7 @@ class HyperLpaViewModel(
                             try {
                                 cloudService.predictProfileSize(
                                     profile = preview.profile,
-                                    eid = repository.state.value.euiccInfo?.eid,
+                                    eid = input.eid,
                                 )
                             } catch (error: Throwable) {
                                 if (error is CancellationException) throw error
@@ -314,12 +411,18 @@ class HyperLpaViewModel(
         }
         viewModelScope.launch {
             repository.state.collect { lpa ->
+                pendingProfileDisableConfirmation.value?.let { pendingIccid ->
+                    val stillEnabled = lpa.profiles.any { profile ->
+                        profile.iccid == pendingIccid && profile.state == ProfileState.ENABLED
+                    }
+                    if (!stillEnabled) pendingProfileDisableConfirmation.value = null
+                }
                 val top = backStack.lastOrNull()
                 when {
                     lpa.pendingProfileDownload != null &&
                         (lpa.operation as? LpaOperation.Downloading)?.stage ==
                         app.hyperlpa.domain.model.DownloadStage.CONFIRMING &&
-                        top == AppRoute.DownloadProfile -> {
+                        (top == AppRoute.DownloadProfile || top == AppRoute.Shell) -> {
                         backStack.add(AppRoute.ConfirmProfileDownload)
                     }
                     lpa.completedProfileDownload != null &&
@@ -337,16 +440,41 @@ class HyperLpaViewModel(
                         lpa.completedProfileDownload == null &&
                         lpa.operation is LpaOperation.Idle &&
                         top == AppRoute.ConfirmProfileDownload -> {
-                        backStack.removeLast()
+                        backStack.removeAt(backStack.lastIndex)
                         showCancelDownloadConfirmation.value = false
                     }
                 }
+            }
+        }
+        viewModelScope.launch {
+            var firstEmission = true
+            provisioningCoordinator.batchState.collect { batch ->
+                if (firstEmission && batch.running && backStack.lastOrNull() == AppRoute.Shell) {
+                    backStack.add(AppRoute.BatchDownload)
+                }
+                firstEmission = false
             }
         }
     }
 
     fun selectTab(tab: AppTab) {
         selectedTab.value = tab
+    }
+
+    fun navigationSnapshot(): NavigationSnapshot = NavigationSnapshot(
+        selectedTab = selectedTab.value.name,
+        route = backStack.lastOrNull().toPersistedRoute(),
+    )
+
+    fun restoreNavigation(snapshot: NavigationSnapshot) {
+        selectedTab.value = AppTab.entries.firstOrNull { it.name == snapshot.selectedTab }
+            ?: AppTab.PROFILES
+        val restoredRoute = snapshot.route.toAppRoute()
+        backStack.clear()
+        backStack.add(AppRoute.Shell)
+        if (restoredRoute != null && restoredRoute != AppRoute.Shell) {
+            backStack.add(restoredRoute)
+        }
     }
 
     fun navigate(route: AppRoute) {
@@ -362,25 +490,28 @@ class HyperLpaViewModel(
                 }
             }
             is AppRoute.ProfileDownloadResult -> finishProfileDownload()
-            else -> if (backStack.size > 1) backStack.removeLast()
+            else -> if (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
         }
     }
 
     fun updateSearchQuery(value: String) {
-        searchQuery.value = value
+        searchQuery.value = value.take(MaxSearchQueryCharacters)
     }
 
-    fun handleActivationCode(value: String) {
-        if (!value.startsWith("LPA:", ignoreCase = true)) return
-        activationCodeDraft.value = value
+    fun handleActivationCode(value: String): Boolean {
+        val activationCode = extractActivationCode(value) ?: return false
+        activationCodeDraft.value = activationCode
         navigate(AppRoute.DownloadProfile)
+        return true
     }
 
     fun setActivationCodeDraft(value: String) {
         activationCodeDraft.value = value
     }
 
-    fun refreshReaders() = launch { repository.discoverReaders(autoConnect = true) }
+    fun refreshReaders() = launch {
+        repository.discoverReaders(autoConnect = true, includeRemoteReaders = true)
+    }
     fun onSimStateChanged() {
         simStateRefreshJob?.cancel()
         simStateRefreshJob = viewModelScope.launch {
@@ -390,31 +521,65 @@ class HyperLpaViewModel(
         }
     }
     fun connectReader(readerId: String) = launch {
-        settingsStore.setLastReaderId(readerId)
-        repository.connect(readerId)
+        if (repository.connect(readerId) is OperationOutcome.Success) {
+            settingsStore.setLastReaderId(readerId)
+        }
     }
+    fun disconnectReader() = launch { repository.disconnectSession() }
     fun refreshProfiles() = launch(repository::refresh)
-    fun setProfileEnabled(iccid: String, enabled: Boolean) = launch { repository.setProfileEnabled(iccid, enabled) }
+    fun setProfileEnabled(iccid: String, enabled: Boolean) {
+        val profiles = repository.state.value.profiles
+        if (requiresLastEnabledProfileConfirmation(profiles, iccid, enabled)) {
+            pendingProfileDisableConfirmation.value = iccid
+            return
+        }
+        if (enabled && pendingProfileDisableConfirmation.value == iccid) {
+            pendingProfileDisableConfirmation.value = null
+        }
+        launch { repository.setProfileEnabled(iccid, enabled) }
+    }
+    fun cancelLastEnabledProfileDisable() {
+        pendingProfileDisableConfirmation.value = null
+    }
+    fun confirmLastEnabledProfileDisable() {
+        val iccid = pendingProfileDisableConfirmation.value ?: return
+        pendingProfileDisableConfirmation.value = null
+        val stillEnabled = repository.state.value.profiles.any { profile ->
+            profile.iccid == iccid && profile.state == ProfileState.ENABLED
+        }
+        if (stillEnabled) launch { repository.setProfileEnabled(iccid, false) }
+    }
     fun deleteProfile(iccid: String) = launch { repository.deleteProfile(iccid) }
     fun renameProfile(iccid: String, nickname: String) = launch { repository.renameProfile(iccid, nickname) }
-    fun downloadProfile(request: DownloadRequest) = launch { repository.downloadProfile(request) }
-    fun downloadProfileWithoutConfirmation(request: DownloadRequest) = launch {
-        repository.downloadProfile(request, confirmBeforeInstall = false)
+    fun downloadProfile(request: DownloadRequest) {
+        provisioningCoordinator.startSingleDownload(request)
     }
-    fun confirmProfileDownload() = repository.confirmProfileDownload()
-    fun cancelProfileDownload() = repository.cancelProfileDownload()
+    fun startBatchDownload(requests: List<DownloadRequest>) {
+        provisioningCoordinator.startBatchDownload(requests)
+    }
+    fun resumeBatchDownload() {
+        provisioningCoordinator.resumeInterruptedBatch()
+    }
+    fun retryFailedBatchDownload() {
+        provisioningCoordinator.retryFailedBatch()
+    }
+    fun cancelBatchDownload() = provisioningCoordinator.cancelBatchDownload()
+    fun clearBatchDownload() = provisioningCoordinator.clearBatchDownload()
+    fun confirmProfileDownload() = provisioningCoordinator.confirmSingleDownload()
+    fun cancelProfileDownload() = provisioningCoordinator.cancelSingleDownload()
     fun dismissCancelProfileDownload() {
         showCancelDownloadConfirmation.value = false
     }
     fun confirmCancelProfileDownload() {
         showCancelDownloadConfirmation.value = false
         if (backStack.lastOrNull() == AppRoute.ConfirmProfileDownload) {
-            backStack.removeLast()
+            backStack.removeAt(backStack.lastIndex)
         }
-        repository.cancelProfileDownload()
+        provisioningCoordinator.cancelSingleDownload()
     }
     fun finishProfileDownload() {
         showCancelDownloadConfirmation.value = false
+        activationCodeDraft.value = ""
         selectedTab.value = AppTab.PROFILES
         backStack.clear()
         backStack.add(AppRoute.Shell)
@@ -422,189 +587,419 @@ class HyperLpaViewModel(
     }
     fun processNotification(sequenceNumber: Long) = launch { repository.processNotification(sequenceNumber) }
     fun deleteNotification(sequenceNumber: Long) = launch { repository.deleteNotification(sequenceNumber) }
+    fun clearNotificationHistory() = launch { notificationHistoryStore.clear() }
     fun resetEuiccMemory() = launch(repository::resetEuiccMemory)
+    fun setDefaultSmdpAddress(address: String) = launch {
+        repository.setDefaultSmdpAddress(address)
+    }
+    fun discoverProfiles(smdsAddress: String?) = launch {
+        repository.discoverProfiles(smdsAddress)
+    }
+    fun useDiscoveredSmdpAddress(address: String) {
+        activationCodeDraft.value = address
+        navigate(AppRoute.DownloadProfile)
+    }
     fun clearFailure() = repository.clearFailure()
+
+    fun retainNotificationPermissionContinuation(continuation: (Boolean) -> Unit) {
+        notificationPermissionContinuation?.invoke(false)
+        notificationPermissionContinuation = continuation
+    }
+
+    fun completeNotificationPermissionRequest(granted: Boolean) {
+        val continuation = notificationPermissionContinuation
+        notificationPermissionContinuation = null
+        continuation?.invoke(granted)
+    }
+
+    @Synchronized
+    fun beginRuntimePermissionRequest(): Boolean {
+        if (runtimePermissionRequestInProgress) return false
+        runtimePermissionRequestInProgress = true
+        return true
+    }
+
+    @Synchronized
+    fun completeRuntimePermissionRequest() {
+        runtimePermissionRequestInProgress = false
+    }
 
     fun setProfileTags(iccid: String, tags: Set<String>) = launch { metadataStore.setTags(iccid, tags) }
     fun setProfileReminder(iccid: String, label: String, reminderAt: Instant?) = launch {
-        if (reminderAt != null && !state.value.settings.scheduledReminders) {
-            settingsStore.setScheduledReminders(true)
-            metadataStore.syncReminders(currentReminderSchedules(), enabled = true)
+        withProfileReminderIsolation {
+            withContext(NonCancellable) {
+                if (reminderAt != null && !state.value.settings.scheduledReminders) {
+                    settingsStore.setScheduledReminders(true)
+                    metadataStore.syncReminders(currentReminderSchedules(), enabled = true)
+                }
+                metadataStore.setReminder(iccid, label, reminderAt, enabled = reminderAt != null)
+            }
         }
-        metadataStore.setReminder(iccid, label, reminderAt, enabled = reminderAt != null)
     }
     fun setProfileIcon(
         iccid: String,
         uri: String?,
         applyToProvider: Boolean = false,
         providerName: String? = null,
+        onComplete: (Boolean) -> Unit = {},
     ) = launch {
-        val iconsDir = File(getApplication<Application>().filesDir, "profile-icons").apply { mkdirs() }
-        val providerKey = providerIconKey(providerName)
-        val previousUri = if (applyToProvider && providerKey != null) {
-            state.value.providerIcons[providerKey]
-        } else {
-            state.value.metadata[iccid]?.iconUri
-        }
-        if (uri == null) {
-            withContext(Dispatchers.IO) { deleteStoredIconFile(previousUri, iconsDir) }
-            if (applyToProvider && providerKey != null) {
-                metadataStore.setProviderIconUri(providerKey, null)
+        var pendingImport: PendingProfileIconImport? = null
+        var importCommitted = false
+        val result = runCatching {
+            val providerKey = providerIconKey(providerName)
+            require(!applyToProvider || providerKey != null) { "The profile has no provider identity" }
+            if (uri == null) {
+                withContext(NonCancellable) {
+                    if (applyToProvider) {
+                        metadataStore.setProviderIconUri(requireNotNull(providerKey), null)
+                    } else {
+                        metadataStore.setIconUri(iccid, null, providerName)
+                    }
+                    runCatching { metadataStore.cleanupOrphanedIconFiles() }
+                }
+                return@runCatching
+            }
+            val filePrefix = if (applyToProvider) {
+                "provider_${requireNotNull(providerKey).filter { it.isLetterOrDigit() }}"
             } else {
-                metadataStore.setIconUri(iccid, null)
+                "profile_${iccid.filter { it.isLetterOrDigit() }}"
             }
-            return@launch
-        }
-        val filePrefix = if (applyToProvider && providerKey != null) {
-            "provider_${providerKey.filter { it.isLetterOrDigit() }}"
-        } else {
-            "profile_${iccid.filter { it.isLetterOrDigit() }}"
-        }
-        val storedUri = withContext(Dispatchers.IO) {
-            copyIconToPrivateStorage(
-                sourceUri = uri,
-                destination = File(iconsDir, "${filePrefix}_${System.nanoTime()}.img"),
-            )?.also {
-                deleteStoredIconFile(previousUri, iconsDir)
+            val imported = importProfileIcon(uri, filePrefix)
+            pendingImport = imported
+            val storedUri = imported.liveFile.toUri().toString()
+            if (applyToProvider) {
+                commitProviderIconAndClearOverrides(
+                    providerKey = requireNotNull(providerKey),
+                    storedUri = storedUri,
+                    onCommitted = { importCommitted = true },
+                )
+            } else {
+                withContext(NonCancellable) {
+                    metadataStore.setIconUri(iccid, storedUri, providerName)
+                    importCommitted = true
+                    runCatching { metadataStore.cleanupOrphanedIconFiles() }
+                }
             }
-        } ?: return@launch
-        if (applyToProvider && providerKey != null) {
-            clearProfileIconOverridesForProvider(providerKey, iconsDir)
-            metadataStore.setProviderIconUri(providerKey, storedUri)
-        } else {
-            metadataStore.setIconUri(iccid, storedUri)
         }
+        result.exceptionOrNull()?.let { error ->
+            if (!importCommitted) {
+                withContext(NonCancellable + Dispatchers.IO) {
+                    pendingImport?.let(profileIconStorage::discard)
+                }
+            }
+            if (error is CancellationException) throw error
+        }
+        onComplete(result.isSuccess)
     }
 
-    fun applyProfileIconToProvider(iccid: String, providerName: String?) = launch {
-        val providerKey = providerIconKey(providerName) ?: return@launch
-        val sourceUri = state.value.metadata[iccid]?.iconUri
-            ?: state.value.providerIcons[providerKey]
-            ?: return@launch
-        val iconsDir = File(getApplication<Application>().filesDir, "profile-icons").apply { mkdirs() }
-        val previousUri = state.value.providerIcons[providerKey]
-        val storedUri = withContext(Dispatchers.IO) {
-            copyIconToPrivateStorage(
+    fun applyProfileIconToProvider(
+        iccid: String,
+        providerName: String?,
+        onComplete: (Boolean) -> Unit = {},
+    ) = launch {
+        var pendingImport: PendingProfileIconImport? = null
+        var importCommitted = false
+        val result = runCatching {
+            val providerKey = providerIconKey(providerName)
+                ?: error("The profile has no provider identity")
+            val sourceUri = state.value.metadata[iccid]?.iconUri
+                ?: state.value.providerIcons[providerKey]
+                ?: error("No custom image is available")
+            val imported = importProfileIcon(
                 sourceUri = sourceUri,
-                destination = File(
-                    iconsDir,
-                    "provider_${providerKey.filter { it.isLetterOrDigit() }}_${System.nanoTime()}.img",
-                ),
+                filePrefix = "provider_${providerKey.filter { it.isLetterOrDigit() }}",
             )
-        } ?: return@launch
-        clearProfileIconOverridesForProvider(
-            providerKey = providerKey,
-            iconsDir = iconsDir,
-            keepUris = setOfNotNull(storedUri),
-        )
-        if (previousUri != null && previousUri != storedUri) {
-            withContext(Dispatchers.IO) { deleteStoredIconFile(previousUri, iconsDir) }
+            pendingImport = imported
+            val storedUri = imported.liveFile.toUri().toString()
+            commitProviderIconAndClearOverrides(
+                providerKey = providerKey,
+                storedUri = storedUri,
+                onCommitted = { importCommitted = true },
+            )
         }
-        metadataStore.setProviderIconUri(providerKey, storedUri)
+        result.exceptionOrNull()?.let { error ->
+            if (!importCommitted) {
+                withContext(NonCancellable + Dispatchers.IO) {
+                    pendingImport?.let(profileIconStorage::discard)
+                }
+            }
+            if (error is CancellationException) throw error
+        }
+        onComplete(result.isSuccess)
     }
 
-    private suspend fun clearProfileIconOverridesForProvider(
+    private suspend fun commitProviderIconAndClearOverrides(
         providerKey: String,
-        iconsDir: File,
-        keepUris: Set<String> = emptySet(),
-    ) {
+        storedUri: String,
+        onCommitted: () -> Unit,
+    ) = withContext(NonCancellable) {
         val matchingIccids = state.value.lpa.profiles
             .filter { providerIconKey(it.providerName) == providerKey }
             .map(ProfileInfo::iccid)
-        val removedUris = metadataStore.clearProfileIconUris(matchingIccids)
-        withContext(Dispatchers.IO) {
-            removedUris
-                .filterNot(keepUris::contains)
-                .forEach { deleteStoredIconFile(it, iconsDir) }
-        }
+        metadataStore.setProviderIconAndClearProfileOverrides(
+            providerName = providerKey,
+            iconUri = storedUri,
+            profileIccids = matchingIccids,
+        )
+            .also { onCommitted() }
+            .also { runCatching { metadataStore.cleanupOrphanedIconFiles() } }
     }
 
-    private fun copyIconToPrivateStorage(sourceUri: String, destination: File): String? = runCatching {
-        getApplication<Application>().contentResolver.openInputStream(Uri.parse(sourceUri))?.use { input ->
-            destination.outputStream().use { output -> input.copyTo(output) }
-        } ?: return@runCatching null
-        destination.toUri().toString()
-    }.getOrNull()
-
-    private fun deleteStoredIconFile(uri: String?, iconsDir: File) {
-        if (uri.isNullOrBlank()) return
-        runCatching {
-            val file = Uri.parse(uri).path?.let(::File) ?: return
-            if (file.exists() && file.canonicalFile.startsWith(iconsDir.canonicalFile)) {
-                file.delete()
+    private suspend fun importProfileIcon(
+        sourceUri: String,
+        filePrefix: String,
+    ): PendingProfileIconImport {
+        var pending: PendingProfileIconImport? = null
+        try {
+            return withContext(Dispatchers.IO) {
+                val created = profileIconStorage.createPendingImport(filePrefix)
+                pending = created
+                copyIconToPrivateStorage(sourceUri, created.stagingFile)
+                profileIconStorage.promote(created)
+                created
             }
+        } catch (error: Throwable) {
+            pending?.let { abandoned ->
+                withContext(NonCancellable + Dispatchers.IO) {
+                    profileIconStorage.discard(abandoned)
+                }
+            }
+            throw error
         }
     }
-    fun clearOperatorIconCache() = launch {
-        cloudService.clearOperatorIconCache()
-        cloudProfileData.value = CloudProfileData()
-        cloudRefreshToken.value += 1
+
+    private fun copyIconToPrivateStorage(sourceUri: String, destination: File) {
+        val input = getApplication<Application>().contentResolver
+            .openInputStream(sourceUri.toUri())
+            ?: error("The selected image could not be opened")
+        try {
+            input.use { source ->
+                FileOutputStream(destination).use { output ->
+                    val buffer = ByteArray(32 * 1024)
+                    var total = 0L
+                    while (true) {
+                        val count = source.read(buffer)
+                        if (count < 0) break
+                        total += count
+                        require(total <= MaxStoredProfileIconBytes) { "The selected image is too large" }
+                        output.write(buffer, 0, count)
+                    }
+                    output.fd.sync()
+                }
+            }
+            validateStoredIcon(destination)
+        } catch (error: Throwable) {
+            destination.delete()
+            throw error
+        }
     }
 
-    fun createBackup(uri: Uri, onComplete: (Boolean) -> Unit) {
+    private fun validateStoredIcon(file: File) {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.path, bounds)
+        val width = bounds.outWidth
+        val height = bounds.outHeight
+        require(width in 1..MaxStoredProfileIconDimension)
+        require(height in 1..MaxStoredProfileIconDimension)
+        require(width.toLong() * height <= MaxStoredProfileIconPixels)
+
+        var sampleSize = 1
+        while (
+            width / sampleSize > MaxDecodedProfileIconDimension ||
+            height / sampleSize > MaxDecodedProfileIconDimension
+        ) {
+            sampleSize *= 2
+        }
+        val decoded = BitmapFactory.decodeFile(
+            file.path,
+            BitmapFactory.Options().apply { inSampleSize = sampleSize },
+        ) ?: error("The selected image could not be decoded")
+        decoded.recycle()
+    }
+
+    fun clearCloudCaches() = launch {
+        val snapshot = state.value
+        val nextRefreshToken = cloudRefreshToken.value + 1
+        val profileInput = CloudInputs(
+            loadOperatorIcons = snapshot.settings.loadOperatorIcons,
+            estimateProfileSize = snapshot.settings.estimateProfileSize,
+            profiles = snapshot.lpa.profiles,
+            eid = snapshot.lpa.euiccInfo?.eid,
+            metadata = snapshot.metadata,
+            refreshToken = nextRefreshToken,
+        )
+        suppressedCloudProfileSource = profileInput.enrichmentKey.copy(refreshToken = 0)
+        suppressedDownloadPreviewSource = DownloadPreviewCloudInput(
+            settings = snapshot.settings,
+            preview = snapshot.lpa.pendingProfileDownload,
+            eid = snapshot.lpa.euiccInfo?.eid,
+            refreshToken = nextRefreshToken,
+        ).sourceKey
+        cloudRefreshToken.value = nextRefreshToken
+        cloudProfileData.value = CloudProfileData(input = profileInput)
+        downloadPreviewCloudData.value = DownloadPreviewCloudData()
+        cloudService.clearAllCaches()
+    }
+
+    fun exportSupportReport(uri: Uri, onComplete: (Boolean) -> Unit) {
         val snapshot = state.value
         viewModelScope.launch {
             val success = withContext(Dispatchers.IO) {
                 runCatching {
-                    val backup = backupManager.createBackup(
+                    val report = supportReportBuilder.build(
                         settings = snapshot.settings,
-                        metadata = snapshot.metadata,
-                        providerIcons = snapshot.providerIcons,
+                        repositoryState = snapshot.lpa,
+                        notificationHistory = snapshot.notificationHistory,
                     )
                     getApplication<Application>().contentResolver
                         .openOutputStream(uri, "wt")
                         ?.bufferedWriter()
-                        ?.use { writer -> writer.write(backup) }
-                        ?: error("Could not open the backup destination")
+                        ?.use { writer -> writer.write(report) }
+                        ?: error("Could not open the support report destination")
                 }.isSuccess
             }
             onComplete(success)
         }
     }
 
-    fun restoreBackup(uri: Uri, onComplete: (Boolean) -> Unit) {
-        val snapshot = state.value
-        val previousSchedules = currentReminderSchedules()
+    @Synchronized
+    fun prepareBackup(passphrase: String): Boolean {
+        if (passphrase.length !in MinBackupPasswordCharacters..MaxBackupPasswordCharacters) return false
+        if (!_backupOperationInProgress.compareAndSet(expect = false, update = true)) return false
+        pendingBackupPassword?.fill('\u0000')
+        pendingBackupPassword = passphrase.toCharArray()
+        return true
+    }
+
+    @Synchronized
+    fun cancelPreparedBackup() {
+        val password = pendingBackupPassword ?: return
+        pendingBackupPassword = null
+        password.fill('\u0000')
+        _backupOperationInProgress.value = false
+    }
+
+    fun createPreparedBackup(uri: Uri, onComplete: (Boolean) -> Unit) {
+        val password = synchronized(this) {
+            pendingBackupPassword.also { pendingBackupPassword = null }
+        }
+        if (password == null) {
+            _backupOperationInProgress.value = false
+            onComplete(false)
+            return
+        }
         viewModelScope.launch {
-            val restored = withContext(Dispatchers.IO) {
-                runCatching {
-                    val rawBackup = getApplication<Application>().contentResolver
+            var success = false
+            try {
+                dataMutationMutex.withLock {
+                    repository.withExclusiveOperation {
+                        withContext(Dispatchers.IO) {
+                            val backup = backupManager.createBackup(
+                                passphrase = password,
+                            )
+                            getApplication<Application>().contentResolver
+                                .openOutputStream(uri, "wt")
+                                ?.bufferedWriter()
+                                ?.use { writer -> writer.write(backup) }
+                                ?: error("Could not open the backup destination")
+                        }
+                    }
+                }
+                success = true
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // The UI reports a generic failure without exposing path or backup contents.
+            } finally {
+                password.fill('\u0000')
+                _backupOperationInProgress.value = false
+                onComplete(success)
+            }
+        }
+    }
+
+    fun restoreBackup(uri: Uri, passphrase: String, onComplete: (Boolean) -> Unit) {
+        if (!_backupOperationInProgress.compareAndSet(expect = false, update = true)) {
+            onComplete(false)
+            return
+        }
+        val password = passphrase.toCharArray()
+        viewModelScope.launch {
+            var success = false
+            try {
+                val rawBackup = withContext(Dispatchers.IO) {
+                    getApplication<Application>().contentResolver
                         .openInputStream(uri)
                         ?.use { input -> input.readTextLimited(MaxBackupBytes) }
                         ?: error("Could not open the backup")
-                    backupManager.restoreBackup(
-                        rawBackup = rawBackup,
-                        previousMetadata = snapshot.metadata,
-                        previousProviderIcons = snapshot.providerIcons,
-                    )
                 }
-            }
-            restored.getOrNull()?.let { backup ->
-                metadataStore.syncReminders(previousSchedules, enabled = false)
-                val profileLabels = snapshot.lpa.profiles.associate { profile ->
-                    profile.iccid to profile.nickname.ifBlank { profile.name.ifBlank { "eSIM profile" } }
+                dataMutationMutex.withLock {
+                    provisioningCoordinator.withProvisioningQuiesced {
+                        // Once provisioning is idle and the durable restore begins, finish either
+                        // its commit or rollback even if the Activity is recreated. The repository
+                        // closes its live session before the transaction and rebuilds every
+                        // endpoint from the final committed settings without reconnecting.
+                        withContext(NonCancellable) {
+                            repository.withReadersDisconnectedForStateReplacement(
+                                readCommittedSettings = settingsStore::snapshot,
+                            ) {
+                                withContext(Dispatchers.IO) {
+                                    backupManager.restoreBackup(
+                                        rawBackup = rawBackup,
+                                        passphrase = password,
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
-                metadataStore.syncReminders(
-                    reminders = backup.metadata.mapValues { (iccid, metadata) ->
-                        (profileLabels[iccid] ?: "eSIM profile") to metadata.reminderAt
-                    },
-                    enabled = backup.settings.scheduledReminders,
-                )
+                success = true
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // Completion still runs so the screen cannot remain disabled after a failure.
+            } finally {
+                password.fill('\u0000')
+                _backupOperationInProgress.value = false
+                onComplete(success)
             }
-            onComplete(restored.isSuccess)
         }
     }
 
     fun resetSettings(onComplete: (Boolean) -> Unit) {
+        if (!_backupOperationInProgress.compareAndSet(expect = false, update = true)) {
+            onComplete(false)
+            return
+        }
         viewModelScope.launch {
-            val defaults = runCatching { settingsStore.resetToDefaults() }
-            defaults.getOrNull()?.let { settings ->
-                metadataStore.syncReminders(
-                    reminders = currentReminderSchedules(),
-                    enabled = settings.scheduledReminders,
-                )
+            var success = false
+            try {
+                dataMutationMutex.withLock {
+                    provisioningCoordinator.withProvisioningQuiesced {
+                        withContext(NonCancellable) {
+                            repository.withReadersDisconnectedForStateReplacement(
+                                readCommittedSettings = settingsStore::snapshot,
+                            ) {
+                                withProfileReminderIsolation {
+                                    val settings = settingsStore.resetToDefaults()
+                                    metadataStore.syncReminders(
+                                        reminders = currentReminderSchedules(),
+                                        enabled = settings.scheduledReminders,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                success = true
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // Completion still runs so the screen cannot remain disabled after a failure.
+            } finally {
+                _backupOperationInProgress.value = false
+                onComplete(success)
             }
-            onComplete(defaults.isSuccess)
         }
     }
 
@@ -641,7 +1036,9 @@ class HyperLpaViewModel(
     fun setEnableNBridge(value: Boolean) = launch { settingsStore.setEnableNBridge(value) }
     fun setEnableOmapi(value: Boolean) = launch { settingsStore.setEnableOmapi(value) }
     fun setEnableUsbCcid(value: Boolean) = launch { settingsStore.setEnableUsbCcid(value) }
-    fun setEnableTelephony(value: Boolean) = launch { settingsStore.setEnableTelephony(value) }
+    fun setEnableTelephony(value: Boolean) = launch {
+        settingsStore.setEnableTelephony(BuildConfig.HAS_PRIVILEGED_TELEPHONY && value)
+    }
     fun setEnableBle(value: Boolean) = launch { settingsStore.setEnableBle(value) }
     fun setEnableRemote(value: Boolean) = launch { settingsStore.setEnableRemote(value) }
     fun setNotificationInitialLoad(value: Boolean) = launch { settingsStore.setNotificationInitialLoad(value) }
@@ -652,11 +1049,15 @@ class HyperLpaViewModel(
     fun setNotificationAutoSend(value: Boolean) = launch { settingsStore.setNotificationAutoSend(value) }
     fun setNotificationAutoRemove(value: Boolean) = launch { settingsStore.setNotificationAutoRemove(value) }
     fun setScheduledReminders(value: Boolean) = launch {
-        settingsStore.setScheduledReminders(value)
-        metadataStore.syncReminders(
-            reminders = currentReminderSchedules(),
-            enabled = value,
-        )
+        withProfileReminderIsolation {
+            withContext(NonCancellable) {
+                settingsStore.setScheduledReminders(value)
+                metadataStore.syncReminders(
+                    reminders = currentReminderSchedules(),
+                    enabled = value,
+                )
+            }
+        }
     }
     fun setEidRedaction(value: RedactionMode) = launch { settingsStore.setEidRedaction(value) }
     fun setIccidRedaction(value: RedactionMode) = launch { settingsStore.setIccidRedaction(value) }
@@ -669,17 +1070,66 @@ class HyperLpaViewModel(
     fun setEs10xMss(value: Int) = launch { settingsStore.setEs10xMss(value) }
     fun setImei(value: String) = launch { settingsStore.setImei(value) }
     fun setIsdrAids(value: List<String>) = launch { settingsStore.setIsdrAids(value) }
-    fun setRemoteReaderUrls(value: List<String>) = launch { settingsStore.setRemoteReaderUrls(value) }
-
-    private fun launch(block: suspend () -> Unit) {
-        viewModelScope.launch { block() }
+    fun setRemoteReaderUrls(value: List<String>, onComplete: (Boolean) -> Unit = {}) {
+        launch {
+            val success = try {
+                val updated = settingsStore.setRemoteReaderUrls(value)
+                repository.updateSettings(updated)
+                repository.reloadRemoteReadersAfterConfigurationChange()
+                true
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                false
+            }
+            onComplete(success)
+        }
+    }
+    fun setRemoteReaderToken(
+        endpointUrl: String,
+        bearerToken: String?,
+        onComplete: (Boolean) -> Unit = {},
+    ) {
+        launch {
+            val success = try {
+                val updated = settingsStore.setRemoteReaderToken(endpointUrl, bearerToken)
+                repository.updateSettings(updated)
+                repository.reloadRemoteReadersAfterConfigurationChange()
+                true
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                false
+            }
+            onComplete(success)
+        }
     }
 
-    private fun currentReminderSchedules(): Map<String, Pair<String, Instant?>> =
-        state.value.profiles.associate { profile ->
-            val label = profile.nickname.ifBlank { profile.name.ifBlank { "eSIM profile" } }
-            profile.iccid to (label to profile.reminderAt)
+    private fun launch(block: suspend () -> Unit) {
+        viewModelScope.launch {
+            dataMutationMutex.withLock { block() }
         }
+    }
+
+    private fun currentReminderSchedules(): Map<String, Pair<String, Instant?>> {
+        val fallbackProfileName = getApplication<Application>().getString(R.string.profile_default_name)
+        val profileLabels = state.value.lpa.profiles.associate { profile ->
+            val label = profile.nickname.ifBlank { profile.name.ifBlank { fallbackProfileName } }
+            profile.iccid to label
+        }
+        return state.value.metadata.mapValues { (iccid, metadata) ->
+            val label = profileLabels[iccid]
+                ?: metadata.reminderLabel
+                ?: fallbackProfileName
+            label to metadata.reminderAt
+        }
+    }
+
+    override fun onCleared() {
+        synchronized(this) {
+            pendingBackupPassword?.fill('\u0000')
+            pendingBackupPassword = null
+            notificationPermissionContinuation = null
+        }
+    }
 
     class Factory(
         private val application: Application,
@@ -687,6 +1137,9 @@ class HyperLpaViewModel(
         private val metadataStore: ProfileMetadataStore,
         private val repository: LpaRepository,
         private val cloudService: NekokoCloudService,
+        private val notificationHistoryStore: NotificationHistoryStore,
+        private val supportReportBuilder: SupportReportBuilder,
+        private val provisioningCoordinator: ProvisioningCoordinator,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T = HyperLpaViewModel(
@@ -695,7 +1148,101 @@ class HyperLpaViewModel(
             metadataStore = metadataStore,
             repository = repository,
             cloudService = cloudService,
+            notificationHistoryStore = notificationHistoryStore,
+            supportReportBuilder = supportReportBuilder,
+            provisioningCoordinator = provisioningCoordinator,
         ) as T
+    }
+}
+
+internal fun requiresLastEnabledProfileConfirmation(
+    profiles: List<ProfileInfo>,
+    targetIccid: String,
+    requestedEnabled: Boolean,
+): Boolean = !requestedEnabled &&
+    profiles.count { profile -> profile.state == ProfileState.ENABLED } == 1 &&
+    profiles.any { profile ->
+        profile.iccid == targetIccid && profile.state == ProfileState.ENABLED
+    }
+
+internal fun extractActivationCode(value: String): String? {
+    if (value.length > MaxActivationInputCharacters) return null
+    val trimmed = value.trim()
+    if (trimmed.startsWith("LPA:", ignoreCase = true)) return trimmed
+    val uri = runCatching { trimmed.toUri() }.getOrNull() ?: return null
+    if (!uri.isHierarchical) return null
+    return runCatching {
+        listOf("carddata", "activationCode", "activation_code", "code")
+            .firstNotNullOfOrNull { key -> uri.getQueryParameter(key) }
+    }.getOrNull()
+        ?.trim()
+        ?.takeIf { it.startsWith("LPA:", ignoreCase = true) }
+}
+
+data class NavigationSnapshot(
+    val selectedTab: String,
+    val route: String?,
+)
+
+private const val MaxStoredProfileIconBytes = 4L * 1024L * 1024L
+private const val MaxStoredProfileIconDimension = 16_384
+private const val MaxStoredProfileIconPixels = 64_000_000L
+private const val MaxDecodedProfileIconDimension = 2_048
+private const val MinBackupPasswordCharacters = 10
+private const val MaxBackupPasswordCharacters = 128
+private const val MaxActivationInputCharacters = 4_096
+private const val CloudEnrichmentConcurrency = 4
+
+private fun AppRoute?.toPersistedRoute(): String? = when (this) {
+    null,
+    AppRoute.Shell,
+    is AppRoute.ProfileDownloadResult,
+    AppRoute.ConfirmProfileDownload,
+    -> null
+    is AppRoute.ProfileDetails -> "profile:$iccid"
+    AppRoute.DownloadProfile -> "download"
+    AppRoute.BatchDownload -> "batch"
+    AppRoute.EuiccDetails -> "euicc"
+    AppRoute.ReaderSettings -> "readers"
+    AppRoute.NotificationSettings -> "notifications"
+    AppRoute.AppearanceSettings -> "appearance"
+    AppRoute.ProfileDisplaySettings -> "profile-display"
+    AppRoute.PrivacySettings -> "privacy"
+    AppRoute.AdvancedSettings -> "advanced"
+    AppRoute.BackupRestoreSettings -> "backup"
+    AppRoute.AidManager -> "aids"
+    AppRoute.TagsAndReminders -> "tags-reminders"
+    AppRoute.TagManager -> "tags"
+    AppRoute.ScheduledReminders -> "reminders"
+    AppRoute.Statistics -> "statistics"
+    AppRoute.Logs -> "logs"
+    AppRoute.About -> "about"
+}
+
+private fun String?.toAppRoute(): AppRoute? = when {
+    this == null -> null
+    startsWith("profile:") -> substringAfter("profile:")
+        .takeIf(String::isNotBlank)
+        ?.let(AppRoute::ProfileDetails)
+    else -> when (this) {
+        "download" -> AppRoute.DownloadProfile
+        "batch" -> AppRoute.BatchDownload
+        "euicc" -> AppRoute.EuiccDetails
+        "readers" -> AppRoute.ReaderSettings
+        "notifications" -> AppRoute.NotificationSettings
+        "appearance" -> AppRoute.AppearanceSettings
+        "profile-display" -> AppRoute.ProfileDisplaySettings
+        "privacy" -> AppRoute.PrivacySettings
+        "advanced" -> AppRoute.AdvancedSettings
+        "backup" -> AppRoute.BackupRestoreSettings
+        "aids" -> AppRoute.AidManager
+        "tags-reminders" -> AppRoute.TagsAndReminders
+        "tags" -> AppRoute.TagManager
+        "reminders" -> AppRoute.ScheduledReminders
+        "statistics" -> AppRoute.Statistics
+        "logs" -> AppRoute.Logs
+        "about" -> AppRoute.About
+        else -> null
     }
 }
 
@@ -765,6 +1312,23 @@ private data class CloudProfileData(
 private data class DownloadPreviewCloudInput(
     val settings: AppSettings,
     val preview: app.hyperlpa.domain.model.ProfileDownloadPreview?,
+    val eid: String?,
+    val refreshToken: Int,
+) {
+    val sourceKey: DownloadPreviewCloudSourceKey
+        get() = DownloadPreviewCloudSourceKey(
+            loadOperatorIcons = settings.loadOperatorIcons,
+            estimateProfileSize = settings.estimateProfileSize,
+            profile = preview?.profile,
+            eid = eid,
+        )
+}
+
+private data class DownloadPreviewCloudSourceKey(
+    val loadOperatorIcons: Boolean,
+    val estimateProfileSize: Boolean,
+    val profile: ProfileInfo?,
+    val eid: String?,
 )
 
 private data class DownloadPreviewCloudData(
@@ -772,6 +1336,23 @@ private data class DownloadPreviewCloudData(
     val estimatedBytes: Long? = null,
     val loading: Boolean = false,
 )
+
+internal fun boundedOperatorIconMap(
+    entries: List<Pair<String, ByteArray?>>,
+    maxBytes: Long = MaxUiOperatorIconBytes,
+    maxEntries: Int = MaxUiOperatorIconEntries,
+): Map<String, ByteArray> {
+    if (maxBytes <= 0L || maxEntries <= 0) return emptyMap()
+    var retainedBytes = 0L
+    return buildMap {
+        for ((iccid, bytes) in entries) {
+            if (size >= maxEntries || bytes == null || containsKey(iccid)) continue
+            if (bytes.size > maxBytes - retainedBytes) continue
+            put(iccid, bytes)
+            retainedBytes += bytes.size
+        }
+    }
+}
 
 private fun InputStream.readTextLimited(maxBytes: Int): String {
     val output = ByteArrayOutputStream()
@@ -787,4 +1368,7 @@ private fun InputStream.readTextLimited(maxBytes: Int): String {
     return output.toString(Charsets.UTF_8.name())
 }
 
-private const val MaxBackupBytes = 128 * 1024 * 1024
+private const val MaxBackupBytes = 48 * 1024 * 1024
+private const val MaxUiOperatorIconBytes = 8L * 1024 * 1024
+private const val MaxUiOperatorIconEntries = 32
+private const val MaxSearchQueryCharacters = 256

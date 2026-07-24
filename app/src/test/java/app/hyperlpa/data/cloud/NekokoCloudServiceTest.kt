@@ -1,10 +1,36 @@
 package app.hyperlpa.data.cloud
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 
 class NekokoCloudServiceTest {
+    @get:Rule
+    val temporaryFolder = TemporaryFolder()
+
+    @Test
+    fun `memory icon cache evicts by bytes and entry count`() {
+        val cache = ByteArrayLruCache(maxBytes = 6, maxEntries = 2)
+        cache.put("a", ByteArray(3))
+        cache.put("b", ByteArray(3))
+        assertNotNull(cache["a"])
+        cache.put("c", ByteArray(3))
+
+        // Reading a made it most-recently used, so b is the eldest entry.
+        assertNull(cache["b"])
+        assertNotNull(cache["a"])
+        assertNotNull(cache["c"])
+        assertEquals(2, cache.size)
+        assertEquals(6L, cache.byteSize)
+
+        cache.put("oversized", ByteArray(7))
+        assertNull(cache["oversized"])
+        assertEquals(6L, cache.byteSize)
+    }
+
     @Test
     fun `decodes three digit mnc from profile owner`() {
         assertEquals(
@@ -51,6 +77,29 @@ class NekokoCloudServiceTest {
                 gid2 = null,
                 profileName = "Travel",
                 providerName = "Example Mobile",
+            ),
+        )
+    }
+
+    @Test
+    fun `operator catalog rejects oversized or control-character artwork fields`() {
+        val oversized = "x".repeat(257)
+        val catalog = OperatorCatalog.parse(
+            """
+            [[operators]]
+            mnc = "260"
+            icon = "$oversized"
+            icon_scope = "scope\ncontrol"
+            """.trimIndent(),
+        )
+
+        assertNull(
+            catalog.resolve(
+                mnc = "260",
+                gid1 = null,
+                gid2 = null,
+                profileName = null,
+                providerName = null,
             ),
         )
     }
@@ -127,5 +176,38 @@ class NekokoCloudServiceTest {
                 providerName = "Amaysim",
             ),
         )
+    }
+
+    @Test
+    fun `bounded cache reader rejects oversized and missing files`() {
+        val cache = temporaryFolder.newFile("catalog.toml")
+        cache.writeBytes(ByteArray(33) { 'A'.code.toByte() })
+
+        assertNull(readUtf8FileBounded(cache, 32))
+        assertEquals("A".repeat(33), readUtf8FileBounded(cache, 33))
+        assertNull(readUtf8FileBounded(temporaryFolder.root.resolve("missing"), 32))
+    }
+
+    @Test
+    fun `disk cache pruning evicts oldest files by count and total bytes`() {
+        val root = temporaryFolder.newFolder("bounded-cache")
+        val oldest = root.resolve("oldest").apply {
+            writeBytes(ByteArray(4))
+            setLastModified(1L)
+        }
+        val middle = root.resolve("middle").apply {
+            writeBytes(ByteArray(4))
+            setLastModified(2L)
+        }
+        val newest = root.resolve("newest").apply {
+            writeBytes(ByteArray(4))
+            setLastModified(3L)
+        }
+
+        pruneCacheDirectory(root, maxBytes = 8, maxFiles = 2)
+
+        assertEquals(false, oldest.exists())
+        assertEquals(true, middle.exists())
+        assertEquals(true, newest.exists())
     }
 }

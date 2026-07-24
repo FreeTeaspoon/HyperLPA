@@ -1,0 +1,181 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: Version name, for example 1.2.0
+        required: true
+        type: string
+      version_code:
+        description: Positive, monotonically increasing Android version code
+        required: true
+        type: number
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: release
+    env:
+      HYPERLPA_VERSION_NAME: ${{ inputs.version_name }}
+      HYPERLPA_VERSION_CODE: ${{ inputs.version_code }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Check out pinned 9eSIM community key
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: 9esim/9eSIMCommunityKey
+          ref: ddc15a8b8c873d42faa6dcda5db03f5dbc4124c4
+          path: .ci/9esim-community-key
+      - name: Validate release inputs
+        shell: bash
+        run: |
+          [[ "$HYPERLPA_VERSION_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]
+          [[ "$HYPERLPA_VERSION_CODE" =~ ^[1-9][0-9]*$ ]]
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+      - name: Install Android toolchain
+        run: sdkmanager 'platforms;android-37' 'ndk;29.0.14206865'
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+      - name: Configure private signing
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          test -n "$RELEASE_KEYSTORE_BASE64" && test -n "$RELEASE_STORE_PASSWORD"
+          test -n "$RELEASE_KEY_ALIAS" && test -n "$RELEASE_KEY_PASSWORD"
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/hyperlpa-release.keystore"
+          {
+            printf 'storeFile=%s\n' "$RUNNER_TEMP/hyperlpa-release.keystore"
+            printf 'storePasswordBase64=%s\n' "$(printf '%s' "$RELEASE_STORE_PASSWORD" | base64 -w0)"
+            printf 'keyAliasBase64=%s\n' "$(printf '%s' "$RELEASE_KEY_ALIAS" | base64 -w0)"
+            printf 'keyPasswordBase64=%s\n' "$(printf '%s' "$RELEASE_KEY_PASSWORD" | base64 -w0)"
+          } > keystore.properties
+          chmod 600 keystore.properties "$RUNNER_TEMP/hyperlpa-release.keystore"
+      - name: Configure standard 9eSIM signing
+        run: |
+          {
+            printf 'storeFile=%s\n' "$GITHUB_WORKSPACE/.ci/9esim-community-key/9eSIMCommunityKey.jks"
+            printf 'storePassword=%s\n' '147258369'
+            printf 'keyAlias=%s\n' 'key0'
+            printf 'keyPassword=%s\n' '147258369'
+          } > nineesim-keystore.properties
+          chmod 600 nineesim-keystore.properties
+      - name: Verify and build release APKs
+        run: >-
+          ./gradlew --no-daemon --dependency-verification strict
+          :app:lintRelease
+          :app:lintPrivilegedRelease
+          :app:testDebugUnitTest
+          :libs:lpac-jni:testDebugUnitTest
+          :app:assembleRelease
+          :app:assemblePrivilegedRelease
+      - name: Build release app bundles
+        run: >-
+          ./gradlew --no-daemon --dependency-verification strict
+          :app:bundleRelease
+          :app:bundlePrivilegedRelease
+      - name: Verify privileged permission separation
+        shell: bash
+        run: |
+          aapt="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          ordinary_apk="$(find app/build/outputs/apk/release -type f -name '*.apk' | sort | head -n 1)"
+          privileged_apk="$(find app/build/outputs/apk/privilegedRelease -type f -name '*.apk' | sort | head -n 1)"
+          test -n "$aapt"
+          test -n "$ordinary_apk"
+          test -n "$privileged_apk"
+          ordinary_permissions="$("$aapt" dump permissions "$ordinary_apk")"
+          privileged_permissions="$("$aapt" dump permissions "$privileged_apk")"
+          for permission in READ_PHONE_STATE READ_PRIVILEGED_PHONE_STATE MODIFY_PHONE_STATE; do
+            if grep -Fq "android.permission.$permission" <<<"$ordinary_permissions"; then
+              echo "Ordinary release APK unexpectedly declares android.permission.$permission" >&2
+              exit 1
+            fi
+            grep -Fq "android.permission.$permission" <<<"$privileged_permissions"
+          done
+      - name: Verify release signing certificates
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          community_expected="$(openssl x509 -in signing/9esim-community-cert.pem -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':' | tr '[:lower:]' '[:upper:]')"
+          private_expected="$(openssl x509 -in signing/hyperlpa-release-cert.pem -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':' | tr '[:lower:]' '[:upper:]')"
+          apksigner="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -n "$apksigner"
+          truststore="$RUNNER_TEMP/release-verification.p12"
+          keytool -importcert -noprompt \
+            -alias 9esim-community \
+            -file signing/9esim-community-cert.pem \
+            -keystore "$truststore" \
+            -storetype PKCS12 \
+            -storepass public-verification-only >/dev/null
+          keytool -importcert -noprompt \
+            -alias hyperlpa-release \
+            -file signing/hyperlpa-release-cert.pem \
+            -keystore "$truststore" \
+            -storetype PKCS12 \
+            -storepass public-verification-only >/dev/null
+          for variant in release privilegedRelease; do
+            if [[ "$variant" == release ]]; then
+              expected="$community_expected"
+            else
+              expected="$private_expected"
+            fi
+            apks=(app/build/outputs/apk/"$variant"/*.apk)
+            bundles=(app/build/outputs/bundle/"$variant"/*.aab)
+            test "${#apks[@]}" -eq 4
+            test "${#bundles[@]}" -eq 1
+            for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+              matches=(app/build/outputs/apk/"$variant"/*-"$abi"-"$variant".apk)
+              test "${#matches[@]}" -eq 1
+            done
+            for apk in "${apks[@]}"; do
+              report="$("$apksigner" verify --verbose --print-certs "$apk")"
+              grep -Fq 'Verified using v1 scheme (JAR signing): false' <<<"$report"
+              grep -Fq 'Verified using v3 scheme (APK Signature Scheme v3): true' <<<"$report"
+              grep -Fq 'Verified using v4 scheme (APK Signature Scheme v4): false' <<<"$report"
+              grep -Fq 'Number of signers: 1' <<<"$report"
+              actual="$(sed -n 's/^.*Signer.*certificate SHA-256 digest: //p' <<<"$report" | head -n 1 | tr '[:lower:]' '[:upper:]')"
+              test "$actual" = "$expected"
+            done
+            for bundle in "${bundles[@]}"; do
+              # Strict verification rejects unsigned entries appended later.
+              jarsigner -verify -strict \
+                -keystore "$truststore" \
+                -storetype PKCS12 \
+                -storepass public-verification-only \
+                "$bundle"
+              cert_report="$(LC_ALL=C keytool -printcert -jarfile "$bundle")"
+              test "$(grep -Ec '^Signer #[0-9]+:' <<<"$cert_report")" -eq 1
+              actual="$(sed -n 's/^[[:space:]]*SHA256: //p' <<<"$cert_report" | head -n 1 | tr -d ':' | tr '[:lower:]' '[:upper:]')"
+              test "$actual" = "$expected"
+            done
+          done
+      - name: Remove private signing material
+        if: always()
+        run: |
+          rm -f -- keystore.properties nineesim-keystore.properties
+          rm -f -- "$RUNNER_TEMP/hyperlpa-release.keystore"
+          rm -f -- "$RUNNER_TEMP/release-verification.p12"
+      - name: Upload signed release artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hyperlpa-${{ inputs.version_name }}
+          path: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/bundle/release/*.aab
+            app/build/outputs/native-debug-symbols/release/**
+            app/build/outputs/apk/privilegedRelease/*.apk
+            app/build/outputs/bundle/privilegedRelease/*.aab
+            app/build/outputs/native-debug-symbols/privilegedRelease/**
+          if-no-files-found: error

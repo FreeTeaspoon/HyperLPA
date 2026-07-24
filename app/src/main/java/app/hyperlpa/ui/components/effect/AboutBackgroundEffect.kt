@@ -17,6 +17,8 @@ import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.node.DrawModifierNode
 import androidx.compose.ui.node.ModifierNodeElement
 import androidx.compose.ui.node.invalidateDraw
+import androidx.compose.ui.platform.InspectorInfo
+import app.hyperlpa.ui.components.animation.rememberSystemAnimationsEnabled
 import app.hyperlpa.ui.theme.LocalDarkTheme
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -43,14 +45,16 @@ fun AboutBackgroundEffect(
         return
     }
     Box(modifier = modifier) {
+        val animationsEnabled = rememberSystemAnimationsEnabled()
+        val playing = dynamicBackground && animationsEnabled
         val surface = MiuixTheme.colorScheme.surface
         val isDark = LocalDarkTheme.current
         val painter = remember { AboutBackgroundPainter() }
         val preset = remember(isDark) { AboutBackgroundConfig.get(isDark) }
         val colorStage = remember { Animatable(0f) }
 
-        LaunchedEffect(dynamicBackground, preset) {
-            if (!dynamicBackground) return@LaunchedEffect
+        LaunchedEffect(playing, preset) {
+            if (!playing) return@LaunchedEffect
             var targetStage = floor(colorStage.value) + 1f
             while (isActive) {
                 delay((preset.colorInterpPeriod * 500).toLong())
@@ -71,7 +75,7 @@ fun AboutBackgroundEffect(
                     preset = preset,
                     isDark = isDark,
                     surface = surface,
-                    playing = dynamicBackground,
+                    playing = playing,
                     colorStage = { colorStage.value },
                     alpha = alpha,
                 ),
@@ -252,6 +256,13 @@ private data class AboutBackgroundElement(
 
     override fun update(node: AboutBackgroundNode) {
         node.update(painter, preset, isDark, surface, playing, colorStage, alpha)
+    }
+
+    override fun InspectorInfo.inspectableProperties() {
+        name = "aboutBackground"
+        properties["isDark"] = isDark
+        properties["surface"] = surface
+        properties["playing"] = playing
     }
 }
 

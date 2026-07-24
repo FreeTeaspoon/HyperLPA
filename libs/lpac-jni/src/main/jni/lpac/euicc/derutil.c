@@ -1,11 +1,16 @@
 #include "derutil.h"
 
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 
 int euicc_derutil_unpack_first(struct euicc_derutil_node *result, const uint8_t *buffer, uint32_t buffer_len) {
     const uint8_t *cptr;
     uint32_t rlen;
+
+    if (result == NULL || buffer == NULL) {
+        return -1;
+    }
 
     cptr = buffer;
     rlen = buffer_len;
@@ -25,6 +30,9 @@ int euicc_derutil_unpack_first(struct euicc_derutil_node *result, const uint8_t 
             return -1;
         }
         result->tag = (result->tag << 8) | *cptr;
+        if ((*cptr & 0x80) != 0) {
+            return -1;
+        }
         cptr++;
         rlen--;
     }
@@ -39,7 +47,7 @@ int euicc_derutil_unpack_first(struct euicc_derutil_node *result, const uint8_t 
 
     if (result->length & 0x80) {
         uint8_t lengthlen = result->length & 0x7F;
-        if (rlen < lengthlen) {
+        if (lengthlen == 0 || lengthlen > sizeof(result->length) || rlen < lengthlen || *cptr == 0) {
             return -1;
         }
 
@@ -48,6 +56,9 @@ int euicc_derutil_unpack_first(struct euicc_derutil_node *result, const uint8_t 
             result->length = (result->length << 8) | *cptr;
             cptr++;
             rlen--;
+        }
+        if (result->length < 0x80) {
+            return -1;
         }
     }
 
@@ -67,9 +78,26 @@ int euicc_derutil_unpack_next(struct euicc_derutil_node *result, struct euicc_de
                               uint32_t buffer_len) {
     const uint8_t *cptr;
     uint32_t rlen;
+    uintptr_t buffer_address;
+    uintptr_t previous_address;
 
-    cptr = prev->self.ptr + prev->self.length;
-    rlen = buffer_len - (cptr - buffer);
+    if (result == NULL || prev == NULL || buffer == NULL) {
+        return -1;
+    }
+    buffer_address = (uintptr_t)buffer;
+    previous_address = (uintptr_t)prev->self.ptr;
+    if (previous_address < buffer_address || previous_address - buffer_address > buffer_len ||
+        prev->self.length > buffer_len - (previous_address - buffer_address)) {
+        return -1;
+    }
+
+    rlen = buffer_len - (uint32_t)(previous_address - buffer_address) - prev->self.length;
+    cptr = buffer + (buffer_len - rlen);
+    if (rlen == 0) {
+        memset(result, 0, sizeof(*result));
+        result->self.ptr = cptr;
+        return 1;
+    }
 
     return euicc_derutil_unpack_first(result, cptr, rlen);
 }
@@ -244,16 +272,30 @@ int euicc_derutil_pack_alloc(uint8_t **buffer, uint32_t *buffer_len, struct euic
     return 0;
 }
 
-long euicc_derutil_convert_bin2long(const uint8_t *buffer, uint32_t buffer_len) {
-    long result = 0;
-    for (uint32_t i = 0; i < buffer_len; i++) {
-        result = (result << 8) | buffer[i];
+int euicc_derutil_convert_bin2long(long *result, const uint8_t *buffer, uint32_t buffer_len) {
+    unsigned long value = 0;
+
+    if (result == NULL || buffer == NULL || buffer_len == 0 || buffer_len > sizeof(value)) {
+        return -1;
     }
-    return result;
+
+    for (uint32_t i = 0; i < buffer_len; i++) {
+        if (value > ((unsigned long)LONG_MAX - buffer[i]) / 256UL) {
+            return -1;
+        }
+        value = value * 256UL + buffer[i];
+    }
+
+    *result = (long)value;
+    return 0;
 }
 
 int euicc_derutil_convert_long2bin(uint8_t *buffer, uint32_t *buffer_len, long value) {
     uint8_t required_len = 1;
+
+    if (buffer == NULL || buffer_len == NULL || value < 0) {
+        return -1;
+    }
 
     for (size_t i = 1; i < sizeof(value); i++) {
         if ((value >> (i * 8))) {
@@ -293,6 +335,9 @@ static uint32_t euicc_derutil_convert_bits2bin_sizeof(const uint32_t *bits, uint
 }
 
 int euicc_derutil_convert_bits2bin(uint8_t *buffer, uint32_t buffer_len, const uint32_t *bits, uint32_t bits_count) {
+    if (buffer == NULL || (bits == NULL && bits_count != 0)) {
+        return -1;
+    }
     if (buffer_len < euicc_derutil_convert_bits2bin_sizeof(bits, bits_count)) {
         return -1;
     }
@@ -310,6 +355,9 @@ int euicc_derutil_convert_bits2bin(uint8_t *buffer, uint32_t buffer_len, const u
 
 int euicc_derutil_convert_bits2bin_alloc(uint8_t **buffer, uint32_t *buffer_len, const uint32_t *bits,
                                          uint32_t bits_count) {
+    if (buffer == NULL || buffer_len == NULL || (bits == NULL && bits_count != 0)) {
+        return -1;
+    }
     *buffer_len = euicc_derutil_convert_bits2bin_sizeof(bits, bits_count);
     *buffer = malloc(*buffer_len);
     if (!*buffer) {
@@ -323,11 +371,15 @@ int euicc_derutil_convert_bin2bits_str(const char ***output, const uint8_t *buff
     int flags_reg;
     int flags_count = 0;
     const char **wptr;
-    char unused;
+    uint8_t unused;
+    uint8_t final_byte_mask;
 
+    if (output == NULL) {
+        return -1;
+    }
     *output = NULL;
-
-    if (buffer_len < 1) {
+    if (desc == NULL || buffer_len < 1 ||
+        euicc_derutil_validate_bit_string(buffer, (uint32_t)buffer_len) < 0) {
         return -1;
     }
 
@@ -336,12 +388,14 @@ int euicc_derutil_convert_bin2bits_str(const char ***output, const uint8_t *buff
     buffer++;
     buffer_len--;
 
+    final_byte_mask = unused == 0 ? UINT8_MAX : (uint8_t)(UINT8_MAX << unused);
+
     for (max_cap_len = 0; desc[max_cap_len]; max_cap_len++)
         ;
 
     for (int j = 0; j < buffer_len; j++) {
         if (j == buffer_len - 1) {
-            flags_reg = buffer[j] & ~(0xFF >> (8 - unused));
+            flags_reg = buffer[j] & final_byte_mask;
         } else {
             flags_reg = buffer[j];
         }
@@ -361,7 +415,7 @@ int euicc_derutil_convert_bin2bits_str(const char ***output, const uint8_t *buff
 
     for (int j = 0; j < buffer_len; j++) {
         if (j == buffer_len - 1) {
-            flags_reg = buffer[j] & ~(0xFF >> (8 - unused));
+            flags_reg = buffer[j] & final_byte_mask;
         } else {
             flags_reg = buffer[j];
         }
@@ -371,6 +425,77 @@ int euicc_derutil_convert_bin2bits_str(const char ***output, const uint8_t *buff
                 *(wptr++) = desc[j * 8 + i];
             }
             flags_reg <<= 1;
+        }
+    }
+
+    return 0;
+}
+
+int euicc_derutil_validate_bit_string(const uint8_t *buffer, uint32_t buffer_len) {
+    uint8_t unused;
+    uint8_t final_byte_mask;
+
+    if (buffer == NULL || buffer_len == 0) {
+        return -1;
+    }
+    unused = buffer[0];
+    if (unused > 7 || (buffer_len == 1 && unused != 0)) {
+        return -1;
+    }
+    final_byte_mask = unused == 0 ? UINT8_MAX : (uint8_t)(UINT8_MAX << unused);
+    if (buffer_len > 1 && (buffer[buffer_len - 1] & (uint8_t)~final_byte_mask) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+int euicc_derutil_validate_utf8(const uint8_t *buffer, uint32_t buffer_len, uint32_t max_code_points) {
+    uint32_t offset = 0;
+    uint32_t code_points = 0;
+
+    if (buffer == NULL && buffer_len != 0) {
+        return -1;
+    }
+
+    while (offset < buffer_len) {
+        const uint8_t first = buffer[offset];
+        uint32_t sequence_len;
+
+        if (first == 0) {
+            return -1;
+        } else if (first <= 0x7F) {
+            sequence_len = 1;
+        } else if (first >= 0xC2 && first <= 0xDF) {
+            sequence_len = 2;
+        } else if (first >= 0xE0 && first <= 0xEF) {
+            sequence_len = 3;
+        } else if (first >= 0xF0 && first <= 0xF4) {
+            sequence_len = 4;
+        } else {
+            return -1;
+        }
+
+        if (sequence_len > buffer_len - offset) {
+            return -1;
+        }
+        for (uint32_t i = 1; i < sequence_len; i++) {
+            if ((buffer[offset + i] & 0xC0) != 0x80) {
+                return -1;
+            }
+        }
+
+        /* Reject overlong encodings, UTF-16 surrogates, and values > U+10FFFF. */
+        if ((first == 0xE0 && buffer[offset + 1] < 0xA0) ||
+            (first == 0xED && buffer[offset + 1] > 0x9F) ||
+            (first == 0xF0 && buffer[offset + 1] < 0x90) ||
+            (first == 0xF4 && buffer[offset + 1] > 0x8F)) {
+            return -1;
+        }
+
+        offset += sequence_len;
+        code_points++;
+        if (code_points > max_code_points) {
+            return -1;
         }
     }
 
