@@ -1,0 +1,118 @@
+name: ChatGPT build Miuix-LPA 9eSIM release
+
+on:
+  pull_request:
+    branches:
+      - chatgpt/miuix-lpa-9esim-base-8f31c4
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out Miuix-LPA with submodules
+        uses: actions/checkout@v4
+        with:
+          repository: YuKongA/Miuix-LPA
+          ref: main
+          submodules: recursive
+          fetch-depth: 1
+          path: source
+
+      - name: Check out audited 9eSIM Community Key
+        uses: actions/checkout@v4
+        with:
+          repository: 9esim/9eSIMCommunityKey
+          ref: ddc15a8b8c873d42faa6dcda5db03f5dbc4124c4
+          fetch-depth: 1
+          path: ninekey
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Prepare Android SDK packages
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          for pkg in \
+            "platforms;android-37" \
+            "ndk;29.0.14206865" \
+            "cmake;3.22.1"; do
+            sdkmanager "$pkg" || true
+          done
+
+      - name: Configure 9eSIM community signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEYSTORE="$GITHUB_WORKSPACE/ninekey/9eSIMCommunityKey.jks"
+          test -f "$KEYSTORE"
+          cat > source/local.properties <<EOF
+          sdk.dir=$ANDROID_HOME
+          NINE_ESIM_KEYSTORE_PATH=$KEYSTORE
+          NINE_ESIM_KEYSTORE_PASS=147258369
+          NINE_ESIM_KEY_ALIAS=key0
+          NINE_ESIM_KEY_PASSWORD=147258369
+          EOF
+
+      - name: Build 9eSIM-signed release APK
+        working-directory: source
+        shell: bash
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon :app:assembleRelease -PuseNineEsim --stacktrace
+
+      - name: Verify 9eSIM certificate and package output
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p output
+          APK="$(find source/app/build/outputs/apk/release -type f -name '*.apk' | head -n 1)"
+          test -n "$APK"
+          cp "$APK" output/Miuix-LPA-v1.0.0-release-9eSIM.apk
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          "$APKSIGNER" verify --verbose --print-certs output/Miuix-LPA-v1.0.0-release-9eSIM.apk | tee output/apk-signature.txt
+          ACTUAL_SHA1="$(grep -i 'certificate SHA-1 digest' output/apk-signature.txt | head -n 1 | sed 's/.*: //' | tr '[:upper:]' '[:lower:]' | tr -d ':')"
+          EXPECTED_SHA1="d1c0f48b370e74d4ea4770ed4c3cd70a3198d31f"
+          test "$ACTUAL_SHA1" = "$EXPECTED_SHA1"
+          sha256sum output/Miuix-LPA-v1.0.0-release-9eSIM.apk > output/SHA256SUMS.txt
+          cat > output/build-info.txt <<EOF
+          Signing identity: 9eSIM Community Key
+          Key repository commit: ddc15a8b8c873d42faa6dcda5db03f5dbc4124c4
+          Alias: key0
+          Expected certificate SHA-1: D1:C0:F4:8B:37:0E:74:D4:EA:47:70:ED:4C:3C:D7:0A:31:98:D3:1F
+          Build command: ./gradlew :app:assembleRelease -PuseNineEsim
+          EOF
+
+      - name: Check out private delivery repository
+        uses: actions/checkout@v4
+        with:
+          repository: FreeTeaspoon/HyperLPA
+          ref: main
+          path: delivery-repo
+          fetch-depth: 1
+
+      - name: Push 9eSIM APK to temporary private delivery branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd delivery-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan chatgpt/miuix-lpa-9esim-delivery-8f31c4
+          git rm -rf . >/dev/null 2>&1 || true
+          mkdir -p chatgpt-delivery-9esim
+          cp "$GITHUB_WORKSPACE"/output/* chatgpt-delivery-9esim/
+          git add chatgpt-delivery-9esim
+          git commit -m "Deliver 9eSIM-signed Miuix-LPA APK"
+          git push --force origin HEAD:chatgpt/miuix-lpa-9esim-delivery-8f31c4
