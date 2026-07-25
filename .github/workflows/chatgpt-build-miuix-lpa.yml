@@ -1,0 +1,113 @@
+name: ChatGPT build Miuix-LPA release
+
+on:
+  pull_request:
+    branches:
+      - chatgpt/miuix-lpa-build-base-5a07d52f
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out Miuix-LPA with submodules
+        uses: actions/checkout@v4
+        with:
+          repository: YuKongA/Miuix-LPA
+          ref: main
+          submodules: recursive
+          fetch-depth: 1
+          path: source
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build tools
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager \
+            "platforms;android-37" \
+            "build-tools;37.0.0" \
+            "ndk;29.0.14206865" \
+            "cmake;3.22.1"
+
+      - name: Generate private release key
+        id: signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          STORE_PASS="$(openssl rand -hex 24)"
+          KEY_ALIAS="miuix-lpa-release"
+          KEYSTORE="$GITHUB_WORKSPACE/miuix-lpa-release.jks"
+          keytool -genkeypair -v \
+            -storetype PKCS12 \
+            -keystore "$KEYSTORE" \
+            -storepass "$STORE_PASS" \
+            -keypass "$STORE_PASS" \
+            -alias "$KEY_ALIAS" \
+            -keyalg RSA \
+            -keysize 4096 \
+            -validity 10000 \
+            -dname "CN=Miuix LPA Release, OU=Local Build, O=Private, L=Melbourne, ST=Victoria, C=AU"
+          {
+            echo "STORE_PASS=$STORE_PASS"
+            echo "KEY_ALIAS=$KEY_ALIAS"
+            echo "KEYSTORE=$KEYSTORE"
+          } >> "$GITHUB_ENV"
+
+      - name: Configure signing
+        shell: bash
+        run: |
+          cat > source/local.properties <<EOF
+          sdk.dir=$ANDROID_HOME
+          KEYSTORE_PATH=$KEYSTORE
+          KEYSTORE_PASS=$STORE_PASS
+          KEY_ALIAS=$KEY_ALIAS
+          KEY_PASSWORD=$STORE_PASS
+          EOF
+
+      - name: Build signed release APK
+        working-directory: source
+        shell: bash
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon :app:assembleRelease --stacktrace
+
+      - name: Verify and package output
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p output
+          APK="$(find source/app/build/outputs/apk/release -type f -name '*.apk' | head -n 1)"
+          test -n "$APK"
+          cp "$APK" output/Miuix-LPA-v1.0.0-release-signed.apk
+          cp "$KEYSTORE" output/miuix-lpa-release.jks
+          cat > output/signing-credentials.txt <<EOF
+          Keystore file: miuix-lpa-release.jks
+          Store password: $STORE_PASS
+          Key alias: $KEY_ALIAS
+          Key password: $STORE_PASS
+          Keep this keystore and password safe. Future updates must use the same key.
+          EOF
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          "$APKSIGNER" verify --verbose --print-certs output/Miuix-LPA-v1.0.0-release-signed.apk | tee output/apk-signature.txt
+          sha256sum output/Miuix-LPA-v1.0.0-release-signed.apk output/miuix-lpa-release.jks > output/SHA256SUMS.txt
+
+      - name: Upload APK and private signing backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: Miuix-LPA-release-signed-with-key
+          path: output/
+          if-no-files-found: error
+          retention-days: 7
