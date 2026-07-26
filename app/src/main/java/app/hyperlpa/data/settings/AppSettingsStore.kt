@@ -77,6 +77,17 @@ enum class NavigationLabels {
     ICON_ONLY,
 }
 
+const val MIN_INTERFACE_SCALE = 0.8f
+const val MAX_INTERFACE_SCALE = 1.1f
+const val DEFAULT_INTERFACE_SCALE = 1f
+
+fun normalizedInterfaceScale(value: Float): Float =
+    if (value.isFinite()) {
+        value.coerceIn(MIN_INTERFACE_SCALE, MAX_INTERFACE_SCALE)
+    } else {
+        DEFAULT_INTERFACE_SCALE
+    }
+
 @Serializable
 enum class ProfileLayout {
     LIST,
@@ -115,8 +126,8 @@ data class AppSettings(
     val accent: ThemeAccent = ThemeAccent.SYSTEM,
     val palette: ThemePalette = ThemePalette.TONAL_SPOT,
     val blurEnabled: Boolean = true,
-    val predictiveBack: Boolean = true,
-    val densityScale: Float = 1f,
+    val predictiveBack: Boolean = false,
+    val densityScale: Float = DEFAULT_INTERFACE_SCALE,
     val navigationStyle: NavigationStyle = NavigationStyle.STANDARD,
     val floatingBottomBarStyle: FloatingBottomBarStyle = FloatingBottomBarStyle.MIUIX,
     val navigationLabels: NavigationLabels = NavigationLabels.ICON_AND_TEXT,
@@ -210,7 +221,7 @@ class AppSettingsStore(context: Context) {
     suspend fun setPalette(value: ThemePalette) = set(Keys.Palette, value.name)
     suspend fun setBlurEnabled(value: Boolean) = set(Keys.BlurEnabled, value)
     suspend fun setPredictiveBack(value: Boolean) = set(Keys.PredictiveBack, value)
-    suspend fun setDensityScale(value: Float) = set(Keys.DensityScale, value.coerceIn(1f, 1.1f))
+    suspend fun setDensityScale(value: Float) = set(Keys.DensityScale, normalizedInterfaceScale(value))
     suspend fun setNavigationStyle(value: NavigationStyle) = set(Keys.NavigationStyle, value.name)
     suspend fun setFloatingBottomBarStyle(value: FloatingBottomBarStyle) =
         set(Keys.FloatingBottomBarStyle, value.name)
@@ -361,7 +372,7 @@ class AppSettingsStore(context: Context) {
         this[Keys.Palette] = settings.palette.name
         this[Keys.BlurEnabled] = settings.blurEnabled
         this[Keys.PredictiveBack] = settings.predictiveBack
-        this[Keys.DensityScale] = settings.densityScale.coerceIn(1f, 1.1f)
+        this[Keys.DensityScale] = normalizedInterfaceScale(settings.densityScale)
         this[Keys.NavigationStyle] = settings.navigationStyle.name
         this[Keys.FloatingBottomBarStyle] = settings.floatingBottomBarStyle.name
         this[Keys.NavigationLabels] = settings.navigationLabels.name
@@ -467,8 +478,10 @@ class AppSettingsStore(context: Context) {
         accent = preferences.enum(Keys.Accent, ThemeAccent.SYSTEM),
         palette = preferences.enum(Keys.Palette, ThemePalette.TONAL_SPOT),
         blurEnabled = preferences[Keys.BlurEnabled] ?: true,
-        predictiveBack = preferences[Keys.PredictiveBack] ?: true,
-        densityScale = (preferences[Keys.DensityScale] ?: 1f).coerceIn(1f, 1.1f),
+        predictiveBack = preferences[Keys.PredictiveBack] ?: false,
+        densityScale = normalizedInterfaceScale(
+            preferences[Keys.DensityScale] ?: DEFAULT_INTERFACE_SCALE,
+        ),
         navigationStyle = preferences.enum(Keys.NavigationStyle, NavigationStyle.STANDARD),
         floatingBottomBarStyle = preferences.enum(
             Keys.FloatingBottomBarStyle,

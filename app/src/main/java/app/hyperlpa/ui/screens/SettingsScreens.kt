@@ -62,6 +62,8 @@ import app.hyperlpa.data.settings.MaximumAidCandidates
 import app.hyperlpa.data.settings.MaximumAidEditorCharacters
 import app.hyperlpa.data.settings.MaximumRemoteReaderEditorCharacters
 import app.hyperlpa.data.settings.MaximumRemoteReaderEndpoints
+import app.hyperlpa.data.settings.MAX_INTERFACE_SCALE
+import app.hyperlpa.data.settings.MIN_INTERFACE_SCALE
 import app.hyperlpa.data.settings.NavigationLabels
 import app.hyperlpa.data.settings.NavigationStyle
 import app.hyperlpa.data.settings.PhoneFormatStrategy
@@ -74,6 +76,7 @@ import app.hyperlpa.data.settings.ThemePalette
 import app.hyperlpa.data.settings.RemoteReaderSettingsValidationError
 import app.hyperlpa.data.settings.RemoteReaderSettingsValidationException
 import app.hyperlpa.data.settings.isValidRemoteReaderToken
+import app.hyperlpa.data.settings.normalizedInterfaceScale
 import app.hyperlpa.data.settings.validateIsdrAids
 import app.hyperlpa.data.settings.validateRemoteReaderSettings
 import app.hyperlpa.domain.model.ReaderKind
@@ -121,11 +124,12 @@ fun AppearanceSettingsScreen(
     settings: AppSettings,
     onBack: () -> Unit,
     viewModel: HyperLpaViewModel,
+    onPredictiveBackChange: ((Boolean) -> Unit)? = viewModel::setPredictiveBack,
 ) {
     val scrollBehavior = MiuixScrollBehavior()
     var densityDraft by remember(settings.densityScale) {
         mutableFloatStateOf(
-            (settings.densityScale.coerceIn(1f, 1.1f) * 100f).roundToInt().toFloat(),
+            (normalizedInterfaceScale(settings.densityScale) * 100f).roundToInt().toFloat(),
         )
     }
     var showDensityDialog by rememberSaveable { mutableStateOf(false) }
@@ -158,6 +162,7 @@ fun AppearanceSettingsScreen(
                 .fillMaxSize()
                 .horizontalCutoutPadding()
                 .then(if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier),
+            maxWidth = null,
         ) { sidePadding ->
             LazyColumn(
                 modifier = Modifier
@@ -171,7 +176,6 @@ fun AppearanceSettingsScreen(
                     top = innerPadding.calculateTopPadding(),
                     bottom = innerPadding.calculateBottomPadding() + 24.dp,
                 ),
-                overscrollEffect = null,
             ) {
                 item { SectionHeading(stringResource(R.string.appearance_color_theme)) }
                 item {
@@ -236,12 +240,14 @@ fun AppearanceSettingsScreen(
                             enabled = blurSupported,
                             onCheckedChange = viewModel::setBlurEnabled,
                         )
-                        SwitchPreference(
-                            title = stringResource(R.string.appearance_predictive_back),
-                            summary = stringResource(R.string.appearance_predictive_back_summary),
-                            checked = settings.predictiveBack,
-                            onCheckedChange = viewModel::setPredictiveBack,
-                        )
+                        if (onPredictiveBackChange != null) {
+                            SwitchPreference(
+                                title = stringResource(R.string.appearance_predictive_back),
+                                summary = stringResource(R.string.appearance_predictive_back_summary),
+                                checked = settings.predictiveBack,
+                                onCheckedChange = onPredictiveBackChange,
+                            )
+                        }
                         ArrowPreference(
                             title = stringResource(R.string.appearance_interface_scale),
                             summary = stringResource(R.string.appearance_interface_scale_summary),
@@ -257,14 +263,18 @@ fun AppearanceSettingsScreen(
                             },
                             bottomAction = {
                                 Slider(
-                                    value = densityDraft.coerceIn(100f, 110f),
+                                    value = densityDraft.coerceIn(
+                                        MIN_INTERFACE_SCALE * 100f,
+                                        MAX_INTERFACE_SCALE * 100f,
+                                    ),
                                     onValueChange = { densityDraft = it },
                                     onValueChangeFinished = {
                                         viewModel.setDensityScale(densityDraft / 100f)
                                     },
-                                    valueRange = 100f..110f,
+                                    valueRange =
+                                        (MIN_INTERFACE_SCALE * 100f)..(MAX_INTERFACE_SCALE * 100f),
                                     showKeyPoints = true,
-                                    keyPoints = listOf(100f, 105f, 110f),
+                                    keyPoints = listOf(80f, 90f, 100f, 110f),
                                     magnetThreshold = 0.01f,
                                     hapticEffect = SliderDefaults.SliderHapticEffect.Step,
                                     modifier = Modifier.fillMaxWidth(),
@@ -363,7 +373,10 @@ fun AppearanceSettingsScreen(
                 text = stringResource(R.string.common_confirm),
                 onClick = {
                     val percent = densityText.toIntOrNull()
-                        ?.coerceIn(100, 110)
+                        ?.coerceIn(
+                            (MIN_INTERFACE_SCALE * 100f).roundToInt(),
+                            (MAX_INTERFACE_SCALE * 100f).roundToInt(),
+                        )
                         ?: densityDraft.roundToInt()
                     densityDraft = percent.toFloat()
                     haptic.performHapticFeedback(HapticFeedbackType.Confirm)
