@@ -219,7 +219,7 @@
     <string name="appearance_predictive_back">Predictive Back Gesture</string>
     <string name="appearance_predictive_back_summary">Enable predictive back animation</string>
     <string name="appearance_interface_scale">Interface Scale</string>
-    <string name="appearance_interface_scale_summary">Increase the global display scale (100% - 110%)</string>
+    <string name="appearance_interface_scale_summary">Adjust the global display scale (80% - 110%)</string>
     <string name="appearance_scale_percent">%1$d%%</string>
     <string name="appearance_bottom_navigation">Bottom Navigation</string>
     <string name="appearance_floating_bottom_bar">Floating Bottom Bar</string>

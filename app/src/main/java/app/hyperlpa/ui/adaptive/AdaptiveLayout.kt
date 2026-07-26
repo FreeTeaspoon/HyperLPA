@@ -53,12 +53,16 @@ fun rememberIsWideWindow(): Boolean = rememberWindowMode() != WindowMode.COMPACT
 @Composable
 fun CenteredContent(
     modifier: Modifier = Modifier,
-    maxWidth: Dp = MaximumContentWidth,
+    maxWidth: Dp? = MaximumContentWidth,
     content: @Composable (sidePadding: Dp) -> Unit,
 ) {
     val wide = rememberIsWideWindow()
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-        val sidePadding = if (wide) ((this.maxWidth - maxWidth) / 2).coerceAtLeast(0.dp) else 0.dp
+        val sidePadding = if (wide && maxWidth != null) {
+            ((this.maxWidth - maxWidth) / 2).coerceAtLeast(0.dp)
+        } else {
+            0.dp
+        }
         content(sidePadding)
     }
 }

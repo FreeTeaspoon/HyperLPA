@@ -16,6 +16,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Density
 import androidx.core.view.WindowCompat
 import app.hyperlpa.data.settings.AppSettings
+import app.hyperlpa.data.settings.normalizedInterfaceScale
 import app.hyperlpa.data.settings.ThemeAccent
 import app.hyperlpa.data.settings.ThemeMode
 import app.hyperlpa.data.settings.ThemePalette
@@ -81,9 +82,7 @@ fun HyperLpaTheme(
         val platformDensity = LocalDensity.current
         val scaledDensity = remember(platformDensity, settings.densityScale) {
             Density(
-                // Never shrink dp below the platform density: doing so turns nominal
-                // 48 dp controls into physically undersized touch targets.
-                density = platformDensity.density * settings.densityScale.coerceIn(1f, 1.1f),
+                density = platformDensity.density * normalizedInterfaceScale(settings.densityScale),
                 fontScale = platformDensity.fontScale,
             )
         }
