@@ -60,7 +60,7 @@ fun GroupedCard(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp)
-            .padding(bottom = 12.dp),
+            .padding(bottom = 6.dp),
         cornerRadius = 16.dp,
         insideMargin = PaddingValues(0.dp),
         pressFeedbackType = if (onClick != null || onLongPress != null) {

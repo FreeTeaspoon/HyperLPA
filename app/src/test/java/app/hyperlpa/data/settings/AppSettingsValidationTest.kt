@@ -7,6 +7,24 @@ import org.junit.Test
 
 class AppSettingsValidationTest {
     @Test
+    fun appearanceDefaultsMatchReference() {
+        val settings = AppSettings()
+
+        assertEquals(false, settings.predictiveBack)
+        assertEquals(DEFAULT_INTERFACE_SCALE, settings.densityScale)
+        assertEquals(NavigationStyle.STANDARD, settings.navigationStyle)
+        assertEquals(NavigationLabels.ICON_AND_TEXT, settings.navigationLabels)
+    }
+
+    @Test
+    fun interfaceScaleIsNormalizedToSupportedRange() {
+        assertEquals(0.8f, normalizedInterfaceScale(0.5f))
+        assertEquals(1f, normalizedInterfaceScale(1f))
+        assertEquals(1.1f, normalizedInterfaceScale(1.5f))
+        assertEquals(DEFAULT_INTERFACE_SCALE, normalizedInterfaceScale(Float.NaN))
+    }
+
+    @Test
     fun aidsAreNormalizedDeduplicatedAndBoundedByIsoLength() {
         val valid = "a0000005591010ffffffff8900000100"
         val normalized = normalizeIsdrAids(

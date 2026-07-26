@@ -15,8 +15,9 @@ The About screen layout and animated background effect are adapted from Mishka
 under GPL-3.0.
 
 The Appearance & Theme screen and floating-navigation behavior are adapted
-from the user's NZB Direct project. Its Liquid Glass support files retain the
-Apache-2.0 notices from compose-miuix-ui contributors and AndroidLiquidGlass.
+from Mishka and the user's NZB Direct project. Its Liquid Glass support files
+retain the Apache-2.0 notices from compose-miuix-ui contributors and
+AndroidLiquidGlass.
 
 The privileged telephony, RemoCard v2, ESTKme RED/RED 2, SimLink and BeeSIM
 reader implementations are Kotlin adaptations of protocol behavior published
