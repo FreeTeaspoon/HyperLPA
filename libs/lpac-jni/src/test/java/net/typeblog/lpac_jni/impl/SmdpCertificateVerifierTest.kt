@@ -33,12 +33,17 @@ class SmdpCertificateVerifierTest {
     }
 
     @Test
-    fun wrapsMalformedSubjectAlternativeName() {
+    fun rejectsMalformedSubjectAlternativeName() {
         val error = assertThrows(SmdpOidVerificationException::class.java) {
             verifySmdpCertificateOid(MalformedSubjectAlternativeNameCertificate, "1.2.3.4")
         }
 
-        assertTrue(error.cause is CertificateParsingException)
+        // Some JDKs surface CertificateParsingException from getSubjectAlternativeNames();
+        // others drop the malformed SAN and fail the OID match. Either path must reject.
+        assertTrue(
+            error.cause is CertificateParsingException ||
+                error.message == "The SM-DP+ authentication certificate does not match the activation code",
+        )
     }
 
     private companion object {
