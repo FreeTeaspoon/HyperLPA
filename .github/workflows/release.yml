@@ -25,9 +25,9 @@ jobs:
       HYPERLPA_VERSION_NAME: ${{ inputs.version_name }}
       HYPERLPA_VERSION_CODE: ${{ inputs.version_code }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check out pinned 9eSIM community key
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: 9esim/9eSIMCommunityKey
           ref: ddc15a8b8c873d42faa6dcda5db03f5dbc4124c4
@@ -37,14 +37,14 @@ jobs:
         run: |
           [[ "$HYPERLPA_VERSION_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]
           [[ "$HYPERLPA_VERSION_CODE" =~ ^[1-9][0-9]*$ ]]
-      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
         with:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
       - name: Install Android toolchain
         run: sdkmanager 'platforms;android-37.0' 'ndk;29.0.14206865'
-      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+      - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
       - name: Configure private signing
         env:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
@@ -168,7 +168,7 @@ jobs:
           rm -f -- "$RUNNER_TEMP/hyperlpa-release.keystore"
           rm -f -- "$RUNNER_TEMP/release-verification.p12"
       - name: Upload signed release artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hyperlpa-${{ inputs.version_name }}
           path: |
