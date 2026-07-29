@@ -8,7 +8,6 @@ import app.hyperlpa.domain.model.DownloadRequest
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.KeyStore
-import java.security.SecureRandom
 import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -22,7 +21,6 @@ internal class EncryptedProvisioningQueueStore(context: Context) {
     private val directory = File(context.noBackupFilesDir, QueueDirectoryName)
     private val queueFile = File(directory, QueueFileName)
     private val atomicFile = AtomicFile(queueFile)
-    private val random = SecureRandom()
     private val json = Json {
         encodeDefaults = true
         explicitNulls = false
@@ -109,11 +107,12 @@ internal class EncryptedProvisioningQueueStore(context: Context) {
     }
 
     private fun encrypt(plaintext: ByteArray): ByteArray {
-        val nonce = ByteArray(NonceBytes).also(random::nextBytes)
         val cipher = Cipher.getInstance(CipherTransformation)
-        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey(), GCMParameterSpec(GcmTagBits, nonce))
+        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
         cipher.updateAAD(EnvelopeMagic)
         val ciphertext = cipher.doFinal(plaintext)
+        val nonce = cipher.iv
+        check(nonce.size == NonceBytes) { "Unexpected AES-GCM nonce size" }
         return EnvelopeMagic + nonce + ciphertext
     }
 
