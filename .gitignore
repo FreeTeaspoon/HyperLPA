@@ -14,3 +14,4 @@ nineesim-keystore.properties
 *.pkcs12
 .kotlin/
 .DS_Store
+/files
