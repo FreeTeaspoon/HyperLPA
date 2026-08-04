@@ -35,7 +35,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.onSizeChanged
@@ -245,24 +244,8 @@ private fun AboutContent(
                     },
             ) {
                 Image(
-                    modifier = Modifier
-                        .requiredSize(250.dp)
-                        .then(
-                            if (blurEnabled) {
-                                Modifier.textureBlur(
-                                    backdrop = contentBackdrop,
-                                    shape = RoundedCornerShape(0.dp),
-                                    blurRadius = 150f,
-                                    colors = BlurColors(blendColors = logoBlendColors),
-                                    contentBlendMode = BlendMode.DstIn,
-                                    enabled = true,
-                                )
-                            } else {
-                                Modifier
-                            },
-                        ),
+                    modifier = Modifier.requiredSize(108.dp),
                     painter = painterResource(R.drawable.about_logo),
-                    colorFilter = ColorFilter.tint(MiuixTheme.colorScheme.onBackground),
                     contentDescription = stringResource(R.string.app_name),
                 )
             }
