@@ -55,6 +55,7 @@ data class ProfileInfo(
     val dpOid: String? = null,
     val profilePolicyRules: Set<String> = emptySet(),
     val tags: Set<String> = emptySet(),
+    val isPinned: Boolean = false,
     val reminderAt: Instant? = null,
     val customIconUri: String? = null,
     val estimatedBytes: Long? = null,

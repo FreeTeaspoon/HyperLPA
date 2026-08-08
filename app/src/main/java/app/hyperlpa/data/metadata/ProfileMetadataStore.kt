@@ -8,6 +8,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import androidx.work.await
 import androidx.work.WorkManager
 import app.hyperlpa.R
+import app.hyperlpa.domain.model.takeUnicodeCodePoints
 import app.hyperlpa.reminders.ProfileReminderWorker
 import app.hyperlpa.reminders.reminderWorkIdentityTag
 import app.hyperlpa.reminders.scheduleProfileReminder
@@ -40,6 +41,7 @@ data class StoredProfileMetadata(
     val installedEid: String? = null,
     /** Last normalized provider identity observed for this ICCID. */
     val providerKey: String? = null,
+    val isPinned: Boolean = false,
 )
 
 data class ProfileMetadata(
@@ -51,6 +53,7 @@ data class ProfileMetadata(
     val installedBytes: Long? = null,
     val installedEid: String? = null,
     val providerKey: String? = null,
+    val isPinned: Boolean = false,
 )
 
 internal data class ProfileReminderDeliveryRecord(
@@ -67,6 +70,7 @@ data class ProviderIconMutationResult(
 data class ProfileMetadataSnapshot(
     val metadata: Map<String, StoredProfileMetadata>,
     val providerIcons: Map<String, String>,
+    val euiccNames: Map<String, String> = emptyMap(),
 )
 
 class ProfileMetadataStore(context: Context) {
@@ -92,6 +96,10 @@ class ProfileMetadataStore(context: Context) {
                 .orEmpty()
         }
 
+    val euiccNames: Flow<Map<String, String>> = dataStore.data
+        .catch { error -> if (error is IOException) emit(emptyPreferences()) else throw error }
+        .map { preferences -> readEuiccNames(preferences[EuiccNamesJson]) }
+
     /** Reads metadata and provider icons from one coherent DataStore preferences emission. */
     suspend fun snapshot(): ProfileMetadataSnapshot {
         val preferences = dataStore.data.first()
@@ -102,6 +110,7 @@ class ProfileMetadataStore(context: Context) {
                     runCatching { json.decodeFromString<Map<String, String>>(raw) }.getOrNull()
                 }
                 .orEmpty(),
+            euiccNames = readEuiccNames(preferences[EuiccNamesJson]),
         )
     }
 
@@ -111,12 +120,27 @@ class ProfileMetadataStore(context: Context) {
             dataStore.edit { preferences ->
                 preferences[MetadataJson] = json.encodeToString(snapshot.metadata)
                 preferences[ProviderIconsJson] = json.encodeToString(snapshot.providerIcons)
+                preferences[EuiccNamesJson] = json.encodeToString(sanitizeEuiccNames(snapshot.euiccNames))
+            }
+        }
+    }
+
+    suspend fun setEuiccName(eid: String, name: String?) {
+        dataStore.edit { preferences ->
+            val current = readEuiccNames(preferences[EuiccNamesJson])
+            val updated = applyEuiccNameMutation(current, eid, name)
+            if (updated != current) {
+                preferences[EuiccNamesJson] = json.encodeToString(updated)
             }
         }
     }
 
     suspend fun setTags(iccid: String, tags: Set<String>) {
         update(iccid) { copy(tags = normalizeProfileTags(tags)) }
+    }
+
+    suspend fun setPinned(iccid: String, pinned: Boolean) {
+        update(iccid) { copy(isPinned = pinned) }
     }
 
     suspend fun setReminder(
@@ -511,12 +535,14 @@ class ProfileMetadataStore(context: Context) {
     suspend fun replaceAll(
         metadata: Map<String, ProfileMetadata>,
         providerIcons: Map<String, String>,
+        euiccNames: Map<String, String> = emptyMap(),
     ) {
         commitReminderMutation {
             val storedMetadata = metadata.mapValues { (_, value) -> value.toStored() }
             dataStore.edit { preferences ->
                 preferences[MetadataJson] = json.encodeToString(storedMetadata)
                 preferences[ProviderIconsJson] = json.encodeToString(providerIcons)
+                preferences[EuiccNamesJson] = json.encodeToString(sanitizeEuiccNames(euiccNames))
             }
         }
     }
@@ -573,6 +599,11 @@ class ProfileMetadataStore(context: Context) {
         else -> runCatching { json.decodeFromString<Map<String, String>>(raw) }.getOrNull()
     }
 
+    private fun readEuiccNames(raw: String?): Map<String, String> = sanitizeEuiccNames(
+        raw?.let { value -> runCatching { json.decodeFromString<Map<String, String>>(value) }.getOrNull() }
+            .orEmpty(),
+    )
+
     private fun StoredProfileMetadata.toDomain(): ProfileMetadata = ProfileMetadata(
         tags = tags,
         reminderAt = reminderEpochMillis?.let(Instant::ofEpochMilli),
@@ -582,6 +613,7 @@ class ProfileMetadataStore(context: Context) {
         installedBytes = installedBytes,
         installedEid = installedEid,
         providerKey = providerKey,
+        isPinned = isPinned,
     )
 
     private fun ProfileMetadata.toStored(): StoredProfileMetadata = StoredProfileMetadata(
@@ -593,11 +625,13 @@ class ProfileMetadataStore(context: Context) {
         installedBytes = installedBytes?.takeIf { it > 0 },
         installedEid = installedEid,
         providerKey = providerIconKey(providerKey),
+        isPinned = isPinned,
     )
 
     private companion object {
         val MetadataJson = stringPreferencesKey("metadata_json")
         val ProviderIconsJson = stringPreferencesKey("provider_icons_json")
+        val EuiccNamesJson = stringPreferencesKey("euicc_names_json")
     }
 }
 
@@ -692,6 +726,37 @@ internal fun buildPersistedReminderSchedules(
 internal fun normalizeReminderLabel(label: String?): String? =
     label?.trim()?.take(MaxReminderLabelLength)?.takeIf(String::isNotEmpty)
 
+internal fun normalizeEuiccEid(eid: String?): String? = eid
+    ?.trim()
+    ?.takeIf { value -> value.length == 32 && value.all(Char::isDigit) }
+
+internal fun normalizeEuiccName(name: String?): String? = name
+    ?.trim()
+    ?.takeUnicodeCodePoints(MaxEuiccNameLength)
+    ?.takeIf(String::isNotEmpty)
+
+internal fun sanitizeEuiccNames(names: Map<String, String>): Map<String, String> = names.mapNotNull { (eid, name) ->
+    val normalizedEid = normalizeEuiccEid(eid) ?: return@mapNotNull null
+    val normalizedName = normalizeEuiccName(name) ?: return@mapNotNull null
+    normalizedEid to normalizedName
+}.toMap()
+
+internal fun applyEuiccNameMutation(
+    names: Map<String, String>,
+    eid: String,
+    name: String?,
+): Map<String, String> {
+    val normalizedEid = normalizeEuiccEid(eid) ?: return names
+    val updated = names.toMutableMap()
+    val normalizedName = normalizeEuiccName(name)
+    if (normalizedName == null) {
+        updated.remove(normalizedEid)
+    } else {
+        updated[normalizedEid] = normalizedName
+    }
+    return updated
+}
+
 internal fun normalizeProfileTags(tags: Iterable<String>): Set<String> {
     val normalized = linkedMapOf<String, String>()
     tags.forEach { rawTag ->
@@ -702,3 +767,4 @@ internal fun normalizeProfileTags(tags: Iterable<String>): Set<String> {
 }
 
 private const val MaxReminderLabelLength = 128
+private const val MaxEuiccNameLength = 64
