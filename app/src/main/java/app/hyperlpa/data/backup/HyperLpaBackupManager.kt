@@ -8,6 +8,8 @@ import app.hyperlpa.R
 import app.hyperlpa.data.metadata.ProfileMetadata
 import app.hyperlpa.data.metadata.ProfileMetadataSnapshot
 import app.hyperlpa.data.metadata.ProfileMetadataStore
+import app.hyperlpa.data.metadata.normalizeEuiccEid
+import app.hyperlpa.data.metadata.normalizeEuiccName
 import app.hyperlpa.data.metadata.normalizeReminderLabel
 import app.hyperlpa.data.settings.AppSettings
 import app.hyperlpa.data.settings.AppSettingsRecoverySnapshot
@@ -67,10 +69,12 @@ class HyperLpaBackupManager(
                     installedBytes = value.installedBytes,
                     installedEid = value.installedEid,
                     providerKey = value.providerKey,
+                    isPinned = value.isPinned,
                     iconBase64 = value.iconUri?.let(::encodeIcon),
                 )
             },
             providerIcons = metadata.providerIcons.mapValues { (_, uri) -> encodeIcon(uri) },
+            euiccNames = metadata.euiccNames,
         )
         encryptBackup(backup, passphrase)
     }
@@ -111,6 +115,7 @@ class HyperLpaBackupManager(
                 installedBytes = value.installedBytes?.takeIf { it > 0 },
                 installedEid = value.installedEid,
                 providerKey = value.providerKey,
+                isPinned = value.isPinned,
             )
         }
         val restoredProviderIcons = backup.providerIcons.keys.mapIndexed { index, provider ->
@@ -141,7 +146,7 @@ class HyperLpaBackupManager(
             }
 
             settingsStore.replaceSettings(restoredSettings)
-            metadataStore.replaceAll(restoredMetadata, restoredProviderIcons)
+            metadataStore.replaceAll(restoredMetadata, restoredProviderIcons, backup.euiccNames)
             val previousReminderIccids = previousMetadata.metadata
                 .filterValues { metadata -> metadata.reminderEpochMillis != null }
                 .keys
@@ -415,6 +420,7 @@ internal data class HyperLpaBackup(
     val settings: AppSettings,
     val profiles: Map<String, BackupProfileMetadata> = emptyMap(),
     val providerIcons: Map<String, String> = emptyMap(),
+    val euiccNames: Map<String, String> = emptyMap(),
 )
 
 @Serializable
@@ -426,6 +432,7 @@ internal data class BackupProfileMetadata(
     val installedBytes: Long? = null,
     val installedEid: String? = null,
     val providerKey: String? = null,
+    val isPinned: Boolean = false,
     val iconBase64: String? = null,
 )
 
@@ -451,6 +458,9 @@ internal fun decodeBackup(rawBackup: String): HyperLpaBackup {
     require(backup.profiles.size <= MaxBackedUpProfiles) { "The backup contains too many profiles" }
     require(backup.providerIcons.size <= MaxBackedUpProviderIcons) {
         "The backup contains too many provider icons"
+    }
+    require(backup.euiccNames.size <= MaxBackedUpEuiccs) {
+        "The backup contains too many eUICCs"
     }
     var encodedIconCharacters = 0L
     backup.profiles.forEach { (iccid, metadata) ->
@@ -479,6 +489,10 @@ internal fun decodeBackup(rawBackup: String): HyperLpaBackup {
     backup.providerIcons.forEach { (provider, icon) ->
         require(provider.length <= 128) { "The backup contains an invalid provider name" }
         encodedIconCharacters += icon.length
+    }
+    backup.euiccNames.forEach { (eid, name) ->
+        require(normalizeEuiccEid(eid) == eid) { "The backup contains an invalid eUICC EID" }
+        require(normalizeEuiccName(name) == name) { "The backup contains an invalid eUICC name" }
     }
     require(encodedIconCharacters <= MaxAggregateEncodedIconCharacters) {
         "The backup contains too much icon data"
@@ -615,6 +629,7 @@ private const val EncryptedBackupFormat = "hyperlpa-encrypted-backup"
 private const val CurrentEnvelopeVersion = 1
 private const val MaxBackedUpProfiles = 128
 private const val MaxBackedUpProviderIcons = 512
+private const val MaxBackedUpEuiccs = 128
 private const val MaxBackupPlaintextBytes = 32 * 1024 * 1024
 private const val MaxAggregateEncodedIconCharacters = 28L * 1024 * 1024
 private const val MaxEncryptedBackupCharacters = 48 * 1024 * 1024

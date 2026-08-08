@@ -153,6 +153,8 @@ fun DetailLazyScaffold(
                                     .matchParentSize()
                                     .graphicsLayer { alpha = collapsedBarProgress },
                                 alpha = 0.8f,
+                                progressive = true,
+                                scrollBehavior = scrollBehavior,
                             ) {}
                         } else {
                             Box(
@@ -175,7 +177,11 @@ fun DetailLazyScaffold(
                     }
                 } else {
                     val topBarColor = if (backdrop == null) MiuixTheme.colorScheme.surface else Color.Transparent
-                    BlurredBar(backdrop = backdrop) {
+                    BlurredBar(
+                        backdrop = backdrop,
+                        progressive = true,
+                        scrollBehavior = scrollBehavior,
+                    ) {
                         if (title.isBlank()) {
                             SmallTopAppBar(
                                 title = title,

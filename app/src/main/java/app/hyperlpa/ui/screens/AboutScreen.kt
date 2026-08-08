@@ -115,6 +115,8 @@ fun AboutScreen(onBack: () -> Unit) {
             BlurredBar(
                 backdrop = if (blurActive) backdrop else null,
                 alpha = 0.8f,
+                progressive = true,
+                scrollBehavior = scrollBehavior,
             ) {
                 SmallTopAppBar(
                     modifier = Modifier.horizontalCutoutPadding(),
