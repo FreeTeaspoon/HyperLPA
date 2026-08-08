@@ -152,6 +152,7 @@ fun ProfileDetailsScreen(
     hasProviderIcon: Boolean,
     onBack: () -> Unit,
     onEnableChange: (Boolean) -> Unit,
+    onSetPinned: (Boolean) -> Unit,
     onRename: (String) -> Unit,
     onDelete: () -> Unit,
     onSetTags: (Set<String>) -> Unit,
@@ -170,6 +171,7 @@ fun ProfileDetailsScreen(
     var showReminder by remember { mutableStateOf(false) }
     var showIconOptions by remember { mutableStateOf(false) }
     var showRemoveProfileIconConfirmation by remember { mutableStateOf(false) }
+    var showRemoveProviderIconConfirmation by remember { mutableStateOf(false) }
     var pickForProvider by rememberSaveable(profile?.iccid) { mutableStateOf(false) }
     var technicalDetailsExpanded by rememberSaveable(profile?.iccid) { mutableStateOf(false) }
     val context = LocalContext.current
@@ -247,6 +249,16 @@ fun ProfileDetailsScreen(
                             stringResource(R.string.profile_enabled_summary)
                         } else {
                             stringResource(R.string.profile_disabled_summary)
+                        },
+                    )
+                    SwitchPreference(
+                        checked = profile.isPinned,
+                        onCheckedChange = onSetPinned,
+                        title = stringResource(R.string.profile_pinned),
+                        summary = if (profile.isPinned) {
+                            stringResource(R.string.profile_pinned_summary)
+                        } else {
+                            stringResource(R.string.profile_unpinned_summary)
                         },
                     )
                     ArrowPreference(
@@ -630,8 +642,8 @@ fun ProfileDetailsScreen(
                     stringResource(R.string.profile_icon_remove_provider, providerLabel),
                     stringResource(R.string.profile_icon_remove_provider_summary),
                 ) {
-                    onSetIcon(null, true, reportIconResult)
                     showIconOptions = false
+                    showRemoveProviderIconConfirmation = true
                 }
             }
             BottomSheetFooterSpacer()
@@ -651,6 +663,23 @@ fun ProfileDetailsScreen(
             onConfirm = {
                 showRemoveProfileIconConfirmation = false
                 onSetIcon(null, false, reportIconResult)
+            },
+        )
+    }
+
+    OverlayDialog(
+        show = showRemoveProviderIconConfirmation,
+        title = stringResource(R.string.profile_icon_remove_provider_title, providerLabel),
+        summary = stringResource(R.string.profile_icon_remove_provider_confirmation_summary),
+        onDismissRequest = { showRemoveProviderIconConfirmation = false },
+    ) {
+        DialogActionRow(
+            onCancel = { showRemoveProviderIconConfirmation = false },
+            confirmText = stringResource(R.string.common_remove),
+            destructive = true,
+            onConfirm = {
+                showRemoveProviderIconConfirmation = false
+                onSetIcon(null, true, reportIconResult)
             },
         )
     }
@@ -1534,12 +1563,14 @@ fun BatchDownloadScreen(
 @Composable
 fun EuiccDetailsScreen(
     info: EuiccInfo?,
+    cardName: String?,
     reader: ReaderInfo?,
     installedProfileCount: Int,
     enabledProfileCount: Int,
     discoveredSmdpAddresses: List<String>,
     settings: AppSettings,
     onBack: () -> Unit,
+    onSetCardName: (String) -> Unit,
     onReset: () -> Unit,
     onSetDefaultSmdpAddress: (String) -> Unit,
     onDiscoverProfiles: (String?) -> Unit,
@@ -1557,6 +1588,8 @@ fun EuiccDetailsScreen(
     var smdsDraft by remember(info?.rootSmdsAddress) {
         mutableStateOf(info?.rootSmdsAddress.orEmpty())
     }
+    var showCardNameEditor by remember { mutableStateOf(false) }
+    var cardNameDraft by remember(info?.eid, cardName) { mutableStateOf(cardName.orEmpty()) }
     DetailLazyScaffold(title = stringResource(R.string.euicc_information_title), onBack = onBack) { _ ->
         if (info == null) {
             item {
@@ -1570,8 +1603,16 @@ fun EuiccDetailsScreen(
             item { SectionHeading(stringResource(R.string.euicc_identity)) }
             item {
                 GroupedCard {
+                    ArrowPreference(
+                        title = stringResource(R.string.euicc_card_name),
+                        summary = cardName ?: stringResource(R.string.euicc_card_name_not_set),
+                        onClick = {
+                            cardNameDraft = cardName.orEmpty()
+                            showCardNameEditor = true
+                        },
+                    )
                     ValuePreference(
-                        title = "EID",
+                        title = stringResource(R.string.euicc_eid),
                         value = redactIdentifier(info.eid, settings.eidRedaction),
                     )
                     ValuePreference(
@@ -1809,6 +1850,30 @@ fun EuiccDetailsScreen(
             showSmdsEditor = false
         },
     )
+    OverlayDialog(
+        show = showCardNameEditor && info != null,
+        title = stringResource(R.string.euicc_card_name),
+        summary = stringResource(R.string.euicc_card_name_dialog_summary),
+        onDismissRequest = { showCardNameEditor = false },
+    ) {
+        TextField(
+            value = cardNameDraft,
+            onValueChange = { cardNameDraft = it.takeUnicodeCodePoints(MaxEuiccNameCharacters) },
+            label = stringResource(R.string.euicc_card_name),
+            useLabelAsPlaceholder = true,
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(18.dp))
+        DialogActionRow(
+            onCancel = { showCardNameEditor = false },
+            confirmText = stringResource(R.string.common_save),
+            onConfirm = {
+                onSetCardName(cardNameDraft.trim())
+                showCardNameEditor = false
+            },
+        )
+    }
     OverlayDialog(
         show = showReset,
         title = stringResource(R.string.euicc_reset_first_title),
@@ -2799,6 +2864,7 @@ private fun formatBytes(bytes: Long): String {
 private const val MaxBatchInputCharacters = 128 * 1024
 private const val MaxActivationInputCharacters = 4_096
 private const val MaxProvisioningAddressCharacters = 253
+private const val MaxEuiccNameCharacters = 64
 private const val MaxSearchQueryCharacters = 256
 private const val MaxQrEncodedImageBytes = 16 * 1024 * 1024
 private const val MaxQrDecodedEdge = 2_048
