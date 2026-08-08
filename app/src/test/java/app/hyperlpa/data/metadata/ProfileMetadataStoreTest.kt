@@ -62,6 +62,17 @@ class ProfileMetadataStoreTest {
     }
 
     @Test
+    fun euiccNamesAreBoundToValidEidsAndBlankNamesAreRemoved() {
+        val eid = "89049032000000000000000000000000"
+        val named = applyEuiccNameMutation(emptyMap(), eid, "  Travel card  ")
+
+        assertEquals(mapOf(eid to "Travel card"), named)
+        assertEquals(emptyMap<String, String>(), applyEuiccNameMutation(named, eid, "  "))
+        assertEquals(named, applyEuiccNameMutation(named, "not-an-eid", "Other card"))
+        assertEquals(64, normalizeEuiccName("x".repeat(128))?.length)
+    }
+
+    @Test
     fun providerIconAndProfileOverridesMutateTogether() {
         val mutation = applyProviderIconMutation(
             metadata = mapOf(
@@ -128,9 +139,11 @@ class ProfileMetadataStoreTest {
                     reminderLabel = "Travel plan",
                     reminderDeliveryClaimToken = "claim",
                     providerKey = "carrier",
+                    isPinned = true,
                 ),
             ),
             providerIcons = mapOf("carrier" to "file:///provider"),
+            euiccNames = mapOf("89049032000000000000000000000000" to "Travel card"),
         )
 
         val restored = Json.decodeFromString<ProfileMetadataSnapshot>(Json.encodeToString(snapshot))

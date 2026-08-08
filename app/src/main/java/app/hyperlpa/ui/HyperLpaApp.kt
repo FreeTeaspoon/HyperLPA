@@ -176,6 +176,7 @@ fun HyperLpaApp(
                     ),
                     onBack = viewModel::navigateBack,
                     onEnableChange = { enabled -> viewModel.setProfileEnabled(route.iccid, enabled) },
+                    onSetPinned = { pinned -> viewModel.setProfilePinned(route.iccid, pinned) },
                     onRename = { nickname -> viewModel.renameProfile(route.iccid, nickname) },
                     onDelete = { viewModel.deleteProfile(route.iccid) },
                     onSetTags = { tags -> viewModel.setProfileTags(route.iccid, tags) },
@@ -292,6 +293,7 @@ fun HyperLpaApp(
             entry<AppRoute.EuiccDetails> {
                 EuiccDetailsScreen(
                     info = currentState.value.lpa.euiccInfo,
+                    cardName = currentState.value.currentEuiccName,
                     reader = currentState.value.lpa.selectedReader,
                     installedProfileCount = currentState.value.lpa.profiles.size,
                     enabledProfileCount = currentState.value.lpa.profiles.count {
@@ -300,6 +302,11 @@ fun HyperLpaApp(
                     discoveredSmdpAddresses = currentState.value.lpa.discoveredSmdpAddresses,
                     settings = currentState.value.settings,
                     onBack = viewModel::navigateBack,
+                    onSetCardName = { name ->
+                        currentState.value.lpa.euiccInfo?.eid?.let { eid ->
+                            viewModel.setEuiccName(eid, name)
+                        }
+                    },
                     onReset = viewModel::resetEuiccMemory,
                     onSetDefaultSmdpAddress = viewModel::setDefaultSmdpAddress,
                     onDiscoverProfiles = viewModel::discoverProfiles,
@@ -675,7 +682,11 @@ private fun MainTabPage(
         modifier = Modifier.fillMaxSize(),
         containerColor = MiuixTheme.colorScheme.surface,
         topBar = {
-            BlurredBar(backdrop = backdrop) {
+            BlurredBar(
+                backdrop = backdrop,
+                progressive = true,
+                scrollBehavior = scrollBehavior,
+            ) {
                 AdaptiveTopAppBar(
                     title = stringResource(tab.titleRes),
                     color = topBarColor,
@@ -730,6 +741,8 @@ private fun MainTabPage(
                     onOpenEuiccDetails = { viewModel.navigate(AppRoute.EuiccDetails) },
                     onOpenProfile = { profile -> viewModel.navigate(AppRoute.ProfileDetails(profile.iccid)) },
                     onEnableChange = viewModel::setProfileEnabled,
+                    onSetPinned = viewModel::setProfilePinned,
+                    onRename = viewModel::renameProfile,
                     onDownload = { viewModel.navigate(AppRoute.DownloadProfile) },
                     onRefresh = viewModel::refreshProfiles,
                 )
@@ -828,20 +841,21 @@ private fun LastEnabledProfileDisableDialog(
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             TextButton(
                 text = stringResource(app.hyperlpa.R.string.common_cancel),
                 onClick = onCancel,
+                modifier = Modifier.weight(1f),
             )
-            Spacer(Modifier.size(8.dp))
             TextButton(
                 text = stringResource(app.hyperlpa.R.string.last_profile_disable_action),
                 onClick = onConfirm,
                 colors = ButtonDefaults.textButtonColors(
                     textColor = MiuixTheme.colorScheme.error,
                 ),
+                modifier = Modifier.weight(1f),
             )
         }
     }

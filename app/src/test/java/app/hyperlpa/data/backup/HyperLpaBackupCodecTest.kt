@@ -28,10 +28,12 @@ class HyperLpaBackupCodecTest {
                 installedBytes = 524_288,
                 installedEid = "89049032000000000000000000000000",
                 providerKey = "example mobile",
+                isPinned = true,
                 iconBase64 = "AQID",
             ),
         ),
         providerIcons = mapOf("example mobile" to "BAUG"),
+        euiccNames = mapOf("89049032000000000000000000000000" to "Travel card"),
     )
 
     @Test

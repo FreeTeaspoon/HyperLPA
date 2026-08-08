@@ -147,7 +147,11 @@ fun AppearanceSettingsScreen(
     Scaffold(
         containerColor = MiuixTheme.colorScheme.surface,
         topBar = {
-            BlurredBar(backdrop) {
+            BlurredBar(
+                backdrop = backdrop,
+                progressive = true,
+                scrollBehavior = scrollBehavior,
+            ) {
                 AdaptiveTopAppBar(
                     title = stringResource(R.string.settings_appearance_theme),
                     color = if (backdrop != null) Color.Transparent else MiuixTheme.colorScheme.surface,

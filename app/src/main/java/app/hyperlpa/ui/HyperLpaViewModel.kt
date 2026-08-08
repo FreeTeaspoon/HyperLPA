@@ -21,6 +21,7 @@ import app.hyperlpa.data.metadata.PendingProfileIconImport
 import app.hyperlpa.data.metadata.ProfileMetadata
 import app.hyperlpa.data.metadata.ProfileIconStorage
 import app.hyperlpa.data.metadata.ProfileMetadataStore
+import app.hyperlpa.data.metadata.normalizeEuiccEid
 import app.hyperlpa.data.metadata.providerIconKey
 import app.hyperlpa.data.settings.AppSettings
 import app.hyperlpa.data.settings.AppSettingsStore
@@ -81,6 +82,7 @@ data class HyperLpaUiState(
     val activationCodeDraft: String = "",
     val metadata: Map<String, ProfileMetadata> = emptyMap(),
     val providerIcons: Map<String, String> = emptyMap(),
+    val euiccNames: Map<String, String> = emptyMap(),
     val operatorIcons: Map<String, ByteArray> = emptyMap(),
     val profileSizePredictions: Map<String, Long> = emptyMap(),
     val downloadPreviewIcon: ByteArray? = null,
@@ -91,6 +93,9 @@ data class HyperLpaUiState(
     val profileEnrichmentReady: Boolean = false,
     val notificationHistory: List<NotificationHistoryEntry> = emptyList(),
 ) {
+    val currentEuiccName: String?
+        get() = normalizeEuiccEid(lpa.euiccInfo?.eid)?.let { eid -> euiccNames[eid] }
+
     val profiles: List<ProfileInfo> by lazy {
         profilesWithOptimisticSwitch(lpa.profiles, lpa.operation)
             .map { profile ->
@@ -105,6 +110,7 @@ data class HyperLpaUiState(
                     customIconUri = extra?.iconUri
                         ?: providerKey?.let(providerIcons::get),
                     smdpAddress = extra?.smdpAddress ?: profile.smdpAddress,
+                    isPinned = extra?.isPinned == true,
                     estimatedBytes = measuredBytes ?: profileSizePredictions[profile.iccid],
                     sizeIsEstimated = measuredBytes == null &&
                         profileSizePredictions[profile.iccid] != null,
@@ -127,7 +133,9 @@ data class HyperLpaUiState(
                     ProfileSort.ICCID -> compareBy { it.iccid }
                     ProfileSort.STATE -> compareBy { it.state.ordinal }
                 }
-                profiles.sortedWith(if (settings.sortAscending) comparator else comparator.reversed())
+                profiles
+                    .sortedWith(if (settings.sortAscending) comparator else comparator.reversed())
+                    .sortedWith(compareByDescending<ProfileInfo> { it.isPinned })
             }
     }
 }
@@ -208,6 +216,7 @@ class HyperLpaViewModel(
         showCancelDownloadConfirmation,
         notificationHistoryStore.history,
         pendingProfileDisableConfirmation,
+        metadataStore.euiccNames,
     ) { values ->
         val settings = values[0] as AppSettings
         val lpa = values[1] as LpaRepositoryState
@@ -240,6 +249,7 @@ class HyperLpaViewModel(
             showCancelDownloadConfirmation = values[10] as Boolean,
             notificationHistory = values[11] as List<NotificationHistoryEntry>,
             pendingProfileDisableConfirmation = values[12] as String?,
+            euiccNames = values[13] as Map<String, String>,
             profileEnrichmentReady = lpa.profiles.isEmpty() ||
                 (!settings.loadOperatorIcons && !settings.estimateProfileSize) ||
                 cloudData.input?.enrichmentKey == expectedCloudInput.enrichmentKey,
@@ -625,6 +635,12 @@ class HyperLpaViewModel(
     }
 
     fun setProfileTags(iccid: String, tags: Set<String>) = launch { metadataStore.setTags(iccid, tags) }
+    fun setProfilePinned(iccid: String, pinned: Boolean) = launch {
+        metadataStore.setPinned(iccid, pinned)
+    }
+    fun setEuiccName(eid: String, name: String?) = launch {
+        metadataStore.setEuiccName(eid, name)
+    }
     fun setProfileReminder(iccid: String, label: String, reminderAt: Instant?) = launch {
         withProfileReminderIsolation {
             withContext(NonCancellable) {

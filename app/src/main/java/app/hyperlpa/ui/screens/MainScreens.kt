@@ -10,11 +10,16 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.captionBar
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -27,6 +32,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,7 +41,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -53,6 +61,7 @@ import app.hyperlpa.domain.model.LpaOperation
 import app.hyperlpa.domain.model.NotificationOperation
 import app.hyperlpa.domain.model.ProfileInfo
 import app.hyperlpa.domain.model.ProfileState
+import app.hyperlpa.domain.model.takeUnicodeCodePoints
 import app.hyperlpa.ui.HyperLpaUiState
 import app.hyperlpa.ui.BluetoothReaderAvailability
 import app.hyperlpa.ui.BluetoothReaderUiState
@@ -93,6 +102,8 @@ import top.yukonga.miuix.kmp.icon.extended.Messages
 import top.yukonga.miuix.kmp.icon.extended.Refresh
 import top.yukonga.miuix.kmp.icon.extended.Search
 import top.yukonga.miuix.kmp.icon.extended.Send
+import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
+import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -113,12 +124,17 @@ fun ProfilesScreen(
     onOpenEuiccDetails: () -> Unit,
     onOpenProfile: (ProfileInfo) -> Unit,
     onEnableChange: (String, Boolean) -> Unit,
+    onSetPinned: (String, Boolean) -> Unit,
+    onRename: (String, String) -> Unit,
     onDownload: () -> Unit,
     onRefresh: () -> Unit,
 ) {
     // Keep both layout positions alive while switching between list and waterfall.
     val listState = rememberLazyListState()
     val gridState = rememberLazyGridState()
+    // Keep the selected profile in a holder so only the overlay reads its value. A long press
+    // must not invalidate the home list while the bottom-sheet entrance animation is running.
+    val profileActionsState = remember { mutableStateOf<ProfileInfo?>(null) }
     val profiles = state.profiles
     val artworkLoadState = rememberProfileArtworkBitmaps(
         profiles = profiles,
@@ -229,6 +245,7 @@ fun ProfilesScreen(
                             state = state,
                             onOpen = { onOpenProfile(profile) },
                             onEnableChange = { enabled -> onEnableChange(profile.iccid, enabled) },
+                            onLongPress = { profileActionsState.value = profile },
                         )
                     }
                 }
@@ -265,6 +282,7 @@ fun ProfilesScreen(
                                 state = state,
                                 onOpen = { onOpenProfile(profile) },
                                 onEnableChange = { enabled -> onEnableChange(profile.iccid, enabled) },
+                                onLongPress = { profileActionsState.value = profile },
                             )
                         }
                     } else {
@@ -302,6 +320,139 @@ fun ProfilesScreen(
             }
         }
     }
+
+    ProfileActionsOverlay(
+        profileState = profileActionsState,
+        onEnableChange = onEnableChange,
+        onSetPinned = onSetPinned,
+        onRename = onRename,
+    )
+}
+
+@Composable
+private fun ProfileActionsOverlay(
+    profileState: MutableState<ProfileInfo?>,
+    onEnableChange: (String, Boolean) -> Unit,
+    onSetPinned: (String, Boolean) -> Unit,
+    onRename: (String, String) -> Unit,
+) {
+    var renameProfile by remember { mutableStateOf<ProfileInfo?>(null) }
+    var pendingRenameProfile by remember { mutableStateOf<ProfileInfo?>(null) }
+    var isClosing by remember { mutableStateOf(false) }
+    var renameValue by remember(renameProfile?.iccid) {
+        mutableStateOf(renameProfile?.nickname.orEmpty())
+    }
+    val profile = profileState.value
+
+    LaunchedEffect(profile?.iccid) {
+        if (profile != null) isClosing = false
+    }
+
+    OverlayBottomSheet(
+        show = profile != null && !isClosing,
+        title = stringResource(R.string.profile_actions_title),
+        onDismissRequest = { isClosing = true },
+        onDismissFinished = {
+            val nextRenameProfile = pendingRenameProfile
+            pendingRenameProfile = null
+            profileState.value = null
+            isClosing = false
+            if (nextRenameProfile != null) renameProfile = nextRenameProfile
+        },
+    ) {
+        profile?.let { selectedProfile ->
+            val isEnabled = selectedProfile.state == ProfileState.ENABLED
+            Column {
+                ArrowPreference(
+                    title = stringResource(
+                        if (selectedProfile.isPinned) {
+                            R.string.profile_action_unpin
+                        } else {
+                            R.string.profile_action_pin
+                        },
+                    ),
+                    summary = stringResource(
+                        if (selectedProfile.isPinned) {
+                            R.string.profile_action_unpin_summary
+                        } else {
+                            R.string.profile_action_pin_summary
+                        },
+                    ),
+                    onClick = {
+                        onSetPinned(selectedProfile.iccid, !selectedProfile.isPinned)
+                        isClosing = true
+                    },
+                )
+                ArrowPreference(
+                    title = stringResource(R.string.profile_rename),
+                    summary = stringResource(R.string.profile_rename_summary),
+                    onClick = {
+                        pendingRenameProfile = selectedProfile
+                        isClosing = true
+                    },
+                )
+                ArrowPreference(
+                    title = stringResource(
+                        if (isEnabled) {
+                            R.string.profile_action_disable
+                        } else {
+                            R.string.profile_action_enable
+                        },
+                    ),
+                    summary = stringResource(
+                        if (isEnabled) {
+                            R.string.profile_action_disable_summary
+                        } else {
+                            R.string.profile_action_enable_summary
+                        },
+                    ),
+                    onClick = {
+                        onEnableChange(selectedProfile.iccid, !isEnabled)
+                        isClosing = true
+                    },
+                )
+                ProfileActionSheetFooterSpacer()
+            }
+        }
+    }
+
+    OverlayDialog(
+        show = renameProfile != null,
+        title = stringResource(R.string.profile_rename),
+        summary = stringResource(R.string.profile_rename_summary),
+        onDismissRequest = { renameProfile = null },
+    ) {
+        Column {
+            TextField(
+                value = renameValue,
+                onValueChange = { renameValue = it.takeUnicodeCodePoints(64) },
+                label = stringResource(R.string.profile_name),
+                useLabelAsPlaceholder = true,
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(18.dp))
+            Row(Modifier.fillMaxWidth()) {
+                TextButton(
+                    text = stringResource(R.string.common_cancel),
+                    onClick = { renameProfile = null },
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(16.dp))
+                TextButton(
+                    text = stringResource(R.string.profile_rename_action),
+                    onClick = {
+                        renameProfile?.let { selectedProfile ->
+                            onRename(selectedProfile.iccid, renameValue.trim())
+                        }
+                        renameProfile = null
+                    },
+                    colors = ButtonDefaults.textButtonColorsPrimary(),
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -324,6 +475,7 @@ private fun ProfilesHeader(
     }
     Column(modifier = Modifier.fillMaxWidth()) {
         val showEid = state.settings.showEidOnHome && state.lpa.euiccInfo != null
+        val cardName = state.currentEuiccName
         if (state.settings.showReaderSelectorOnHome || showEid) {
             GroupedCard {
                 if (state.settings.showReaderSelectorOnHome) {
@@ -351,12 +503,17 @@ private fun ProfilesHeader(
                 }
                 if (showEid) {
                     val info = requireNotNull(state.lpa.euiccInfo)
+                    val redactedEid = redactIdentifier(
+                        value = info.eid,
+                        mode = state.settings.eidRedaction,
+                    )
                     ArrowPreference(
-                        title = "EID",
-                        summary = redactIdentifier(
-                            value = info.eid,
-                            mode = state.settings.eidRedaction,
-                        ),
+                        title = cardName ?: stringResource(R.string.euicc_eid),
+                        summary = if (cardName == null) {
+                            redactedEid
+                        } else {
+                            stringResource(R.string.euicc_eid_named_summary, redactedEid)
+                        },
                         onClick = onOpenEuiccDetails,
                     )
                 }
@@ -401,6 +558,7 @@ private fun ProfileCard(
     state: HyperLpaUiState,
     onOpen: () -> Unit,
     onEnableChange: (Boolean) -> Unit,
+    onLongPress: () -> Unit,
 ) {
     val isEnabled = profile.state == ProfileState.ENABLED
     val fallbackName = stringResource(R.string.profile_default_name)
@@ -426,6 +584,7 @@ private fun ProfileCard(
         if (isEnabled) R.string.profile_disable_named else R.string.profile_enable_named,
         displayName.fullText,
     )
+    val profileActionsDescription = stringResource(R.string.profile_actions_title)
 
     Card(
         modifier = Modifier
@@ -433,11 +592,20 @@ private fun ProfileCard(
             .padding(horizontal = 12.dp)
             .padding(bottom = 8.dp)
             .defaultMinSize(minHeight = 48.dp)
-            .semantics { contentDescription = cardDescription },
+            .semantics {
+                contentDescription = cardDescription
+                customActions = listOf(
+                    CustomAccessibilityAction(profileActionsDescription) {
+                        onLongPress()
+                        true
+                    },
+                )
+            },
         cornerRadius = 16.dp,
         insideMargin = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
         pressFeedbackType = PressFeedbackType.Sink,
         onClick = onOpen,
+        onLongPress = onLongPress,
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -535,6 +703,13 @@ private fun ProfileCard(
             }
         }
     }
+}
+
+@Composable
+private fun ProfileActionSheetFooterSpacer() {
+    val systemBarPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() +
+        WindowInsets.captionBar.asPaddingValues().calculateBottomPadding()
+    Spacer(Modifier.height(systemBarPadding + 16.dp))
 }
 
 @Composable
