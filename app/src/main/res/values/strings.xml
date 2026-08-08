@@ -97,6 +97,15 @@
     <string name="profile_open_named">Open profile %1$s</string>
     <string name="profile_enable_named">Enable profile %1$s</string>
     <string name="profile_disable_named">Disable profile %1$s</string>
+    <string name="profile_actions_title">Profile actions</string>
+    <string name="profile_action_pin">Pin profile</string>
+    <string name="profile_action_pin_summary">Move this profile to the top of the profile list</string>
+    <string name="profile_action_unpin">Unpin profile</string>
+    <string name="profile_action_unpin_summary">Remove this profile from the pinned section</string>
+    <string name="profile_action_enable">Enable profile</string>
+    <string name="profile_action_enable_summary">Enable this profile on the connected eUICC</string>
+    <string name="profile_action_disable">Disable profile</string>
+    <string name="profile_action_disable_summary">Disable this profile on the connected eUICC</string>
     <string name="profile_artwork_description">%1$s icon</string>
     <string name="profile_size_estimated">~%1$s</string>
     <string name="size_bytes">%1$d B</string>
@@ -528,6 +537,9 @@
     <string name="profile_enabled">Enabled</string>
     <string name="profile_enabled_summary">This profile is currently active</string>
     <string name="profile_disabled_summary">Enable this profile on the connected eUICC</string>
+    <string name="profile_pinned">Pinned</string>
+    <string name="profile_pinned_summary">This profile stays at the top of the profile list</string>
+    <string name="profile_unpinned_summary">Keep this profile with the other profiles</string>
     <string name="profile_detail_display_name">Display name</string>
     <string name="profile_use_profile_name">Use profile name</string>
     <string name="profile_custom_icon">Custom icon</string>
@@ -599,6 +611,8 @@
     <string name="profile_icon_remove_profile_summary">Restore the shared provider icon or operator artwork</string>
     <string name="profile_icon_remove_provider">Remove shared %1$s icon</string>
     <string name="profile_icon_remove_provider_summary">Clear the icon used by every profile with this provider name</string>
+    <string name="profile_icon_remove_provider_title">Remove shared %1$s icon?</string>
+    <string name="profile_icon_remove_provider_confirmation_summary">This clears the shared icon for every profile with this provider. Profiles without a personal icon will use the default provider artwork instead.</string>
     <string name="profile_icon_remove_title">Remove icon for this profile?</string>
     <string name="profile_icon_remove_summary">The shared provider icon or operator artwork will be shown instead.</string>
     <string name="profile_icon_import_failed">The selected image could not be imported. Choose a valid image no larger than 4 MB.</string>
@@ -705,6 +719,11 @@
     <string name="euicc_not_connected">No eUICC connected</string>
     <string name="euicc_not_connected_message">Select a reader before opening eUICC information.</string>
     <string name="euicc_identity">Identity</string>
+    <string name="euicc_card_name">Card name</string>
+    <string name="euicc_card_name_not_set">Not set</string>
+    <string name="euicc_card_name_dialog_summary">Stored locally and linked to this EID. Leave it blank to remove the name.</string>
+    <string name="euicc_eid">EID</string>
+    <string name="euicc_eid_named_summary">EID · %1$s</string>
     <string name="euicc_category">eUICC category</string>
     <string name="euicc_sas_accreditation">SAS accreditation</string>
     <string name="euicc_firmware">Firmware</string>
