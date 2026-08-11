@@ -142,10 +142,9 @@ fun ProfilesScreen(
         sourceKey = state.lpa.euiccInfo?.eid,
         enabled = state.settings.showProfileIconOnHome,
     )
-    val artworkReady = artworkLoadState.ready &&
-        (!state.settings.showProfileIconOnHome ||
-            !state.settings.loadOperatorIcons ||
-            state.profileEnrichmentReady)
+    // Remote operator artwork and size predictions are optional enhancements. They must not
+    // hold the locally-read eUICC profiles behind a network timeout.
+    val artworkReady = artworkLoadState.ready
     val hasNoSearchResults = state.searchQuery.isNotBlank() &&
         state.lpa.profiles.isNotEmpty() &&
         profiles.isEmpty()
