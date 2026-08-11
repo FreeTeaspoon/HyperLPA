@@ -42,6 +42,8 @@ data class StoredProfileMetadata(
     /** Last normalized provider identity observed for this ICCID. */
     val providerKey: String? = null,
     val isPinned: Boolean = false,
+    /** Prevents this profile from inheriting a shared provider icon. */
+    val isProviderIconHidden: Boolean = false,
 )
 
 data class ProfileMetadata(
@@ -54,6 +56,7 @@ data class ProfileMetadata(
     val installedEid: String? = null,
     val providerKey: String? = null,
     val isPinned: Boolean = false,
+    val isProviderIconHidden: Boolean = false,
 )
 
 internal data class ProfileReminderDeliveryRecord(
@@ -364,8 +367,30 @@ class ProfileMetadataStore(context: Context) {
         update(iccid) {
             copy(
                 iconUri = iconUri,
+                isProviderIconHidden = if (iconUri != null) false else isProviderIconHidden,
                 providerKey = observedProviderKey ?: providerKey,
             )
+        }
+    }
+
+    /** Sets whether this profile opts out of the shared provider icon. */
+    suspend fun setProviderIconHidden(
+        iccid: String,
+        hidden: Boolean,
+        providerName: String? = null,
+    ) {
+        val observedProviderKey = providerIconKey(providerName)
+        dataStore.edit { preferences ->
+            val current = readStored(preferences[MetadataJson])
+            val updated = applyProfileIconVisibility(
+                metadata = current,
+                iccid = iccid,
+                hidden = hidden,
+                providerKey = observedProviderKey,
+            )
+            if (updated != current) {
+                preferences[MetadataJson] = json.encodeToString(updated)
+            }
         }
     }
 
@@ -614,6 +639,7 @@ class ProfileMetadataStore(context: Context) {
         installedEid = installedEid,
         providerKey = providerKey,
         isPinned = isPinned,
+        isProviderIconHidden = isProviderIconHidden,
     )
 
     private fun ProfileMetadata.toStored(): StoredProfileMetadata = StoredProfileMetadata(
@@ -626,6 +652,7 @@ class ProfileMetadataStore(context: Context) {
         installedEid = installedEid,
         providerKey = providerIconKey(providerKey),
         isPinned = isPinned,
+        isProviderIconHidden = isProviderIconHidden,
     )
 
     private companion object {
@@ -667,7 +694,11 @@ internal fun applyProviderIconMutation(
     (profileIccids + matchingPersistedIccids).toSet().forEach { iccid ->
         val existing = nextMetadata[iccid] ?: StoredProfileMetadata()
         existing.iconUri?.let(removedProfileIconUris::add)
-        val updated = existing.copy(iconUri = null, providerKey = providerKey)
+        val updated = existing.copy(
+            iconUri = null,
+            providerKey = providerKey,
+            isProviderIconHidden = false,
+        )
         if (updated != existing || iccid !in nextMetadata) {
             nextMetadata[iccid] = updated
         }
@@ -691,8 +722,30 @@ internal fun applyProviderIdentityUpdates(
     providerKeysByIccid.forEach { (iccid, providerKey) ->
         val existing = updated[iccid] ?: StoredProfileMetadata()
         if (existing.providerKey != providerKey) {
-            updated[iccid] = existing.copy(providerKey = providerKey)
+            updated[iccid] = existing.copy(
+                providerKey = providerKey,
+                isProviderIconHidden = false,
+            )
         }
+    }
+    return updated
+}
+
+internal fun applyProfileIconVisibility(
+    metadata: Map<String, StoredProfileMetadata>,
+    iccid: String,
+    hidden: Boolean,
+    providerKey: String?,
+): Map<String, StoredProfileMetadata> {
+    val updated = metadata.toMutableMap()
+    val existing = updated[iccid] ?: StoredProfileMetadata()
+    val next = existing.copy(
+        iconUri = if (hidden) null else existing.iconUri,
+        providerKey = providerIconKey(providerKey) ?: existing.providerKey,
+        isProviderIconHidden = hidden,
+    )
+    if (next != existing || iccid !in updated) {
+        updated[iccid] = next
     }
     return updated
 }
