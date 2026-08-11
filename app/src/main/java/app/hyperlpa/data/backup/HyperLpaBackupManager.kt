@@ -70,6 +70,7 @@ class HyperLpaBackupManager(
                     installedEid = value.installedEid,
                     providerKey = value.providerKey,
                     isPinned = value.isPinned,
+                    isProviderIconHidden = value.isProviderIconHidden,
                     iconBase64 = value.iconUri?.let(::encodeIcon),
                 )
             },
@@ -116,6 +117,7 @@ class HyperLpaBackupManager(
                 installedEid = value.installedEid,
                 providerKey = value.providerKey,
                 isPinned = value.isPinned,
+                isProviderIconHidden = value.isProviderIconHidden,
             )
         }
         val restoredProviderIcons = backup.providerIcons.keys.mapIndexed { index, provider ->
@@ -434,6 +436,7 @@ internal data class BackupProfileMetadata(
     val providerKey: String? = null,
     val isPinned: Boolean = false,
     val iconBase64: String? = null,
+    val isProviderIconHidden: Boolean = false,
 )
 
 @Serializable

@@ -30,6 +30,7 @@ class HyperLpaBackupCodecTest {
                 providerKey = "example mobile",
                 isPinned = true,
                 iconBase64 = "AQID",
+                isProviderIconHidden = true,
             ),
         ),
         providerIcons = mapOf("example mobile" to "BAUG"),
