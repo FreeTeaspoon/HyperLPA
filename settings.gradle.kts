@@ -23,5 +23,7 @@ includeBuild("third_party/miuix") {
     dependencySubstitution {
         substitute(module("top.yukonga.miuix.kmp:miuix-blur-android"))
             .using(project(":miuix-blur"))
+        substitute(module("top.yukonga.miuix.kmp:miuix-nav"))
+            .using(project(":miuix-nav"))
     }
 }

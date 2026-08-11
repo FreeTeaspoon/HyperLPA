@@ -3,6 +3,7 @@ package app.hyperlpa.ui.navigation
 import androidx.compose.runtime.Immutable
 import androidx.annotation.StringRes
 import app.hyperlpa.R
+import top.yukonga.miuix.kmp.nav.core.NavKey
 
 enum class AppTab {
     PROFILES,
@@ -12,7 +13,7 @@ enum class AppTab {
 }
 
 @Immutable
-sealed interface AppRoute {
+sealed interface AppRoute : NavKey {
     data object Shell : AppRoute
     data class ProfileDetails(val iccid: String) : AppRoute
     data object DownloadProfile : AppRoute
