@@ -3,6 +3,7 @@ package app.hyperlpa.data.metadata
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -80,6 +81,7 @@ class ProfileMetadataStoreTest {
                 "two-disconnected" to StoredProfileMetadata(
                     iconUri = "file:///two",
                     providerKey = "carrier",
+                    isProviderIconHidden = true,
                 ),
                 "other" to StoredProfileMetadata(
                     iconUri = "file:///other",
@@ -104,7 +106,42 @@ class ProfileMetadataStoreTest {
         assertEquals(setOf("Travel"), mutation.metadata.getValue("one").tags)
         assertNull(mutation.metadata.getValue("two-disconnected").iconUri)
         assertEquals("carrier", mutation.metadata.getValue("two-disconnected").providerKey)
+        assertFalse(mutation.metadata.getValue("two-disconnected").isProviderIconHidden)
         assertEquals("file:///other", mutation.metadata.getValue("other").iconUri)
+    }
+
+    @Test
+    fun profileIconVisibilityIsScopedToOneProfile() {
+        val metadata = mapOf(
+            "one" to StoredProfileMetadata(
+                iconUri = "file:///one",
+                providerKey = "carrier",
+            ),
+            "other" to StoredProfileMetadata(
+                iconUri = "file:///other",
+                providerKey = "carrier",
+            ),
+        )
+
+        val hidden = applyProfileIconVisibility(
+            metadata = metadata,
+            iccid = "one",
+            hidden = true,
+            providerKey = "carrier",
+        )
+
+        assertNull(hidden.getValue("one").iconUri)
+        assertEquals("carrier", hidden.getValue("one").providerKey)
+        assertTrue(hidden.getValue("one").isProviderIconHidden)
+        assertEquals(metadata.getValue("other"), hidden.getValue("other"))
+
+        val restored = applyProfileIconVisibility(
+            metadata = hidden,
+            iccid = "one",
+            hidden = false,
+            providerKey = "carrier",
+        )
+        assertFalse(restored.getValue("one").isProviderIconHidden)
     }
 
     @Test
@@ -140,6 +177,7 @@ class ProfileMetadataStoreTest {
                     reminderDeliveryClaimToken = "claim",
                     providerKey = "carrier",
                     isPinned = true,
+                    isProviderIconHidden = true,
                 ),
             ),
             providerIcons = mapOf("carrier" to "file:///provider"),
