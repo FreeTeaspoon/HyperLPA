@@ -2,9 +2,18 @@ package app.hyperlpa.data
 
 import app.hyperlpa.domain.model.ProfileState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LpaRepositoryReconciliationTest {
+    @Test
+    fun initialNotificationDeliveryRequiresAutomaticSendAndValidatedInternet() {
+        assertFalse(shouldAttemptInitialNotificationDelivery(notificationAutoSend = false, hasValidatedInternet = true))
+        assertFalse(shouldAttemptInitialNotificationDelivery(notificationAutoSend = true, hasValidatedInternet = false))
+        assertTrue(shouldAttemptInitialNotificationDelivery(notificationAutoSend = true, hasValidatedInternet = true))
+    }
+
     @Test
     fun selectedReaderNeverFallsThroughToAnotherAvailableReader() {
         assertEquals(
