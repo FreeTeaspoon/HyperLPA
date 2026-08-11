@@ -103,12 +103,14 @@ data class HyperLpaUiState(
                 val measuredBytes = extra
                     ?.installedBytes
                     ?.takeIf { extra.installedEid == null || extra.installedEid == lpa.euiccInfo?.eid }
-                val providerKey = providerIconKey(profile.providerName)
                 profile.copy(
                     tags = extra?.tags.orEmpty(),
                     reminderAt = extra?.reminderAt,
-                    customIconUri = extra?.iconUri
-                        ?: providerKey?.let(providerIcons::get),
+                    customIconUri = resolveProfileIconUri(
+                        metadata = extra,
+                        providerName = profile.providerName,
+                        providerIcons = providerIcons,
+                    ),
                     smdpAddress = extra?.smdpAddress ?: profile.smdpAddress,
                     isPinned = extra?.isPinned == true,
                     estimatedBytes = measuredBytes ?: profileSizePredictions[profile.iccid],
@@ -139,6 +141,14 @@ data class HyperLpaUiState(
             }
     }
 }
+
+internal fun resolveProfileIconUri(
+    metadata: ProfileMetadata?,
+    providerName: String?,
+    providerIcons: Map<String, String>,
+): String? = metadata?.iconUri ?: providerIconKey(providerName)
+    ?.takeIf { metadata?.isProviderIconHidden != true }
+    ?.let(providerIcons::get)
 
 internal fun profilesWithOptimisticSwitch(
     profiles: List<ProfileInfo>,
@@ -703,6 +713,30 @@ class HyperLpaViewModel(
                     pendingImport?.let(profileIconStorage::discard)
                 }
             }
+            if (error is CancellationException) throw error
+        }
+        onComplete(result.isSuccess)
+    }
+
+    fun setProfileProviderIconHidden(
+        iccid: String,
+        hidden: Boolean,
+        providerName: String? = null,
+        onComplete: (Boolean) -> Unit = {},
+    ) = launch {
+        val result = runCatching {
+            withContext(NonCancellable) {
+                metadataStore.setProviderIconHidden(
+                    iccid = iccid,
+                    hidden = hidden,
+                    providerName = providerName,
+                )
+                if (hidden) {
+                    runCatching { metadataStore.cleanupOrphanedIconFiles() }
+                }
+            }
+        }
+        result.exceptionOrNull()?.let { error ->
             if (error is CancellationException) throw error
         }
         onComplete(result.isSuccess)
