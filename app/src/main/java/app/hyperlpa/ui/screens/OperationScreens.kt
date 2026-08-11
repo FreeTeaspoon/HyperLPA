@@ -150,6 +150,7 @@ fun ProfileDetailsScreen(
     operatorIcon: ByteArray?,
     hasProfileIcon: Boolean,
     hasProviderIcon: Boolean,
+    isProviderIconHidden: Boolean,
     onBack: () -> Unit,
     onEnableChange: (Boolean) -> Unit,
     onSetPinned: (Boolean) -> Unit,
@@ -159,6 +160,7 @@ fun ProfileDetailsScreen(
     onSetReminder: (String, Instant?) -> Unit,
     onRequestNotificationPermission: ((Boolean) -> Unit) -> Unit,
     onSetIcon: (uri: String?, applyToProvider: Boolean, onComplete: (Boolean) -> Unit) -> Unit,
+    onSetProviderIconHidden: (hidden: Boolean, onComplete: (Boolean) -> Unit) -> Unit,
     onApplyIconToProvider: (onComplete: (Boolean) -> Unit) -> Unit,
 ) {
     var showRename by remember { mutableStateOf(false) }
@@ -171,6 +173,7 @@ fun ProfileDetailsScreen(
     var showReminder by remember { mutableStateOf(false) }
     var showIconOptions by remember { mutableStateOf(false) }
     var showRemoveProfileIconConfirmation by remember { mutableStateOf(false) }
+    var showRemoveSharedProviderIconForProfileConfirmation by remember { mutableStateOf(false) }
     var showRemoveProviderIconConfirmation by remember { mutableStateOf(false) }
     var pickForProvider by rememberSaveable(profile?.iccid) { mutableStateOf(false) }
     var technicalDetailsExpanded by rememberSaveable(profile?.iccid) { mutableStateOf(false) }
@@ -270,6 +273,7 @@ fun ProfileDetailsScreen(
                         title = stringResource(R.string.profile_custom_icon),
                         summary = when {
                             hasProfileIcon -> stringResource(R.string.profile_custom_icon_profile_summary)
+                            isProviderIconHidden -> stringResource(R.string.profile_custom_icon_hidden_summary)
                             hasProviderIcon -> stringResource(
                                 R.string.profile_custom_icon_provider_summary,
                                 providerLabel,
@@ -637,6 +641,24 @@ fun ProfileDetailsScreen(
                     showRemoveProfileIconConfirmation = true
                 }
             }
+            if (hasProviderIcon && !hasProfileIcon && !isProviderIconHidden) {
+                ReminderOption(
+                    stringResource(R.string.profile_icon_remove_shared_profile),
+                    stringResource(R.string.profile_icon_remove_shared_profile_summary),
+                ) {
+                    showIconOptions = false
+                    showRemoveSharedProviderIconForProfileConfirmation = true
+                }
+            }
+            if (hasProviderIcon && isProviderIconHidden) {
+                ReminderOption(
+                    stringResource(R.string.profile_icon_restore_profile),
+                    stringResource(R.string.profile_icon_restore_profile_summary),
+                ) {
+                    onSetProviderIconHidden(false, reportIconResult)
+                    showIconOptions = false
+                }
+            }
             if (hasProviderIcon) {
                 ReminderOption(
                     stringResource(R.string.profile_icon_remove_provider, providerLabel),
@@ -648,6 +670,23 @@ fun ProfileDetailsScreen(
             }
             BottomSheetFooterSpacer()
         }
+    }
+
+    OverlayDialog(
+        show = showRemoveSharedProviderIconForProfileConfirmation,
+        title = stringResource(R.string.profile_icon_remove_title),
+        summary = stringResource(R.string.profile_icon_remove_shared_profile_confirmation_summary),
+        onDismissRequest = { showRemoveSharedProviderIconForProfileConfirmation = false },
+    ) {
+        DialogActionRow(
+            onCancel = { showRemoveSharedProviderIconForProfileConfirmation = false },
+            confirmText = stringResource(R.string.common_remove),
+            destructive = true,
+            onConfirm = {
+                showRemoveSharedProviderIconForProfileConfirmation = false
+                onSetProviderIconHidden(true, reportIconResult)
+            },
+        )
     }
 
     OverlayDialog(
