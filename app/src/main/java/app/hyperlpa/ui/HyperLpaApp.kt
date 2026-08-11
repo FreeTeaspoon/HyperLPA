@@ -170,6 +170,8 @@ fun HyperLpaApp(
                     suggestedTags = currentState.value.profiles.flatMap { it.tags }.toSet(),
                     operatorIcon = currentState.value.operatorIcons[route.iccid],
                     hasProfileIcon = currentState.value.metadata[route.iccid]?.iconUri != null,
+                    isProviderIconHidden = currentState.value.metadata[route.iccid]
+                        ?.isProviderIconHidden == true,
                     hasProviderIcon = hasProviderIcon(
                         providerName = profile?.providerName,
                         providerIcons = currentState.value.providerIcons,
@@ -187,6 +189,14 @@ fun HyperLpaApp(
                             iccid = route.iccid,
                             uri = uri,
                             applyToProvider = applyToProvider,
+                            providerName = profile?.providerName,
+                            onComplete = onComplete,
+                        )
+                    },
+                    onSetProviderIconHidden = { hidden, onComplete ->
+                        viewModel.setProfileProviderIconHidden(
+                            iccid = route.iccid,
+                            hidden = hidden,
                             providerName = profile?.providerName,
                             onComplete = onComplete,
                         )

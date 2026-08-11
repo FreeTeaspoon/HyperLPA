@@ -545,6 +545,7 @@
     <string name="profile_custom_icon">Custom icon</string>
     <string name="profile_custom_icon_profile_summary">Using a custom image for this profile</string>
     <string name="profile_custom_icon_provider_summary">Using a shared icon for %1$s</string>
+    <string name="profile_custom_icon_hidden_summary">Not using the shared provider icon for this profile</string>
     <string name="profile_custom_icon_choose_summary">Choose a photo to replace the operator icon</string>
     <string name="profile_tags">Tags</string>
     <string name="profile_no_tags">No tags</string>
@@ -609,6 +610,11 @@
     <string name="profile_icon_use_provider_summary">Share the artwork already shown on this profile</string>
     <string name="profile_icon_remove_profile">Remove icon for this profile</string>
     <string name="profile_icon_remove_profile_summary">Restore the shared provider icon or operator artwork</string>
+    <string name="profile_icon_remove_shared_profile">Remove shared icon for this profile</string>
+    <string name="profile_icon_remove_shared_profile_summary">Only this profile will stop using the shared provider icon</string>
+    <string name="profile_icon_remove_shared_profile_confirmation_summary">This profile will stop using the shared provider icon. Other profiles will keep it and this profile will use operator artwork instead.</string>
+    <string name="profile_icon_restore_profile">Use shared icon for this profile</string>
+    <string name="profile_icon_restore_profile_summary">Show the shared provider icon on this profile again</string>
     <string name="profile_icon_remove_provider">Remove shared %1$s icon</string>
     <string name="profile_icon_remove_provider_summary">Clear the icon used by every profile with this provider name</string>
     <string name="profile_icon_remove_provider_title">Remove shared %1$s icon?</string>
