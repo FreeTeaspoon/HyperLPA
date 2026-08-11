@@ -44,14 +44,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.navigation3.runtime.entryProvider
-import androidx.navigation3.ui.NavDisplay
-import androidx.navigation3.ui.NavDisplayTransitionEffects
 import androidx.navigationevent.NavigationEventInfo
 import androidx.navigationevent.compose.NavigationBackHandler
 import androidx.navigationevent.compose.rememberNavigationEventState
@@ -128,13 +127,20 @@ import top.yukonga.miuix.kmp.icon.extended.Download
 import top.yukonga.miuix.kmp.icon.extended.Messages
 import top.yukonga.miuix.kmp.icon.extended.Settings
 import top.yukonga.miuix.kmp.icon.extended.Tune
+import top.yukonga.miuix.kmp.nav.core.NavBackStack
+import top.yukonga.miuix.kmp.nav.core.NavCornerClipMode
+import top.yukonga.miuix.kmp.nav.core.NavDisplay
+import top.yukonga.miuix.kmp.nav.core.NavDisplayEffects
+import top.yukonga.miuix.kmp.nav.core.rememberNavSystemCornerRadius
+import top.yukonga.miuix.kmp.nav.transition.NavSwipeDirection
+import top.yukonga.miuix.kmp.nav.transition.NavTransitions
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 @Composable
 fun HyperLpaApp(
     state: HyperLpaUiState,
-    backStack: List<AppRoute>,
+    backStack: NavBackStack,
     viewModel: HyperLpaViewModel,
     notificationPermissionGranted: Boolean,
     onRequestNotificationPermission: ((Boolean) -> Unit) -> Unit,
@@ -152,9 +158,32 @@ fun HyperLpaApp(
     val currentOnRefreshReaders = rememberUpdatedState(onRefreshReaders)
     val currentOnRequestBluetoothPermission = rememberUpdatedState(onRequestBluetoothPermission)
     val currentOnOpenBluetoothSettings = rememberUpdatedState(onOpenBluetoothSettings)
-    val entries = remember {
-        entryProvider<AppRoute> {
-            entry<AppRoute.Shell> {
+    val navCornerRadius = if (rememberIsWideWindow()) 0.dp else rememberNavSystemCornerRadius()
+    val navSurface = MiuixTheme.colorScheme.surface
+    val swipeBackDirection = when (LocalLayoutDirection.current) {
+        LayoutDirection.Rtl -> NavSwipeDirection.RightToLeft
+        else -> NavSwipeDirection.LeftToRight
+    }
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        containerColor = navSurface,
+    ) { _ ->
+        Box(Modifier.fillMaxSize()) {
+            NavDisplay(
+                backStack = backStack,
+                onBack = viewModel::navigateBack,
+                transition = NavTransitions.MiuixDefault,
+                effects = NavDisplayEffects(
+                    enableCornerClip = true,
+                    cornerClipRadius = navCornerRadius,
+                    cornerClipMode = NavCornerClipMode.Leading,
+                    dimAmount = 0.5f,
+                    blockInputDuringTransition = false,
+                    backdropColor = navSurface,
+                ),
+            ) {
+            entry<AppRoute.Shell>(swipeDismiss = swipeBackDirection) {
                 MainShell(
                     state = currentState.value,
                     viewModel = viewModel,
@@ -162,7 +191,7 @@ fun HyperLpaApp(
                     onRefreshReaders = { currentOnRefreshReaders.value() },
                 )
             }
-            entry<AppRoute.ProfileDetails> { route ->
+            entry<AppRoute.ProfileDetails>(swipeDismiss = swipeBackDirection) { route ->
                 val profile = currentState.value.profiles.firstOrNull { it.iccid == route.iccid }
                 ProfileDetailsScreen(
                     profile = profile,
@@ -210,7 +239,7 @@ fun HyperLpaApp(
                     },
                 )
             }
-            entry<AppRoute.DownloadProfile> {
+            entry<AppRoute.DownloadProfile>(swipeDismiss = swipeBackDirection) {
                 val singleDownloadActive by viewModel.singleDownloadActive.collectAsStateWithLifecycle()
                 DownloadProfileScreen(
                     initialValue = currentState.value.activationCodeDraft,
@@ -222,7 +251,7 @@ fun HyperLpaApp(
                     onContinue = viewModel::downloadProfile,
                 )
             }
-            entry<AppRoute.ConfirmProfileDownload> {
+            entry<AppRoute.ConfirmProfileDownload>(swipeDismiss = swipeBackDirection) {
                 val livePreview = currentState.value.lpa.pendingProfileDownload
                 var retainedPreview by remember { mutableStateOf(livePreview) }
                 var retainedIcon by remember { mutableStateOf(currentState.value.downloadPreviewIcon) }
@@ -272,7 +301,7 @@ fun HyperLpaApp(
                     )
                 }
             }
-            entry<AppRoute.ProfileDownloadResult> { route ->
+            entry<AppRoute.ProfileDownloadResult>(swipeDismiss = swipeBackDirection) { route ->
                 val result = route.result
                 val profile = currentState.value.profiles
                     .firstOrNull { it.iccid == result.profile.iccid }
@@ -287,7 +316,7 @@ fun HyperLpaApp(
                     onDone = viewModel::finishProfileDownload,
                 )
             }
-            entry<AppRoute.BatchDownload> {
+            entry<AppRoute.BatchDownload>(swipeDismiss = swipeBackDirection) {
                 val batchState by viewModel.batchDownloadState.collectAsStateWithLifecycle()
                 BatchDownloadScreen(
                     imei = currentState.value.settings.imei,
@@ -300,7 +329,7 @@ fun HyperLpaApp(
                     onClear = viewModel::clearBatchDownload,
                 )
             }
-            entry<AppRoute.EuiccDetails> {
+            entry<AppRoute.EuiccDetails>(swipeDismiss = swipeBackDirection) {
                 EuiccDetailsScreen(
                     info = currentState.value.lpa.euiccInfo,
                     cardName = currentState.value.currentEuiccName,
@@ -323,7 +352,7 @@ fun HyperLpaApp(
                     onUseDiscoveredAddress = viewModel::useDiscoveredSmdpAddress,
                 )
             }
-            entry<AppRoute.ReaderSettings> {
+            entry<AppRoute.ReaderSettings>(swipeDismiss = swipeBackDirection) {
                 ReaderSettingsScreen(
                     state = currentState.value,
                     onBack = viewModel::navigateBack,
@@ -336,55 +365,55 @@ fun HyperLpaApp(
                     onOpenBluetoothSettings = { currentOnOpenBluetoothSettings.value() },
                 )
             }
-            entry<AppRoute.NotificationSettings> {
+            entry<AppRoute.NotificationSettings>(swipeDismiss = swipeBackDirection) {
                 NotificationSettingsScreen(
                     settings = currentState.value.settings,
                     onBack = viewModel::navigateBack,
                     viewModel = viewModel,
                 )
             }
-            entry<AppRoute.AppearanceSettings> {
+            entry<AppRoute.AppearanceSettings>(swipeDismiss = swipeBackDirection) {
                 AppearanceSettingsScreen(
                     settings = currentState.value.settings,
                     onBack = viewModel::navigateBack,
                     viewModel = viewModel,
                 )
             }
-            entry<AppRoute.ProfileDisplaySettings> {
+            entry<AppRoute.ProfileDisplaySettings>(swipeDismiss = swipeBackDirection) {
                 ProfileDisplaySettingsScreen(
                     settings = currentState.value.settings,
                     onBack = viewModel::navigateBack,
                     viewModel = viewModel,
                 )
             }
-            entry<AppRoute.PrivacySettings> {
+            entry<AppRoute.PrivacySettings>(swipeDismiss = swipeBackDirection) {
                 PrivacySettingsScreen(
                     settings = currentState.value.settings,
                     onBack = viewModel::navigateBack,
                     viewModel = viewModel,
                 )
             }
-            entry<AppRoute.AdvancedSettings> {
+            entry<AppRoute.AdvancedSettings>(swipeDismiss = swipeBackDirection) {
                 AdvancedSettingsScreen(
                     settings = currentState.value.settings,
                     onBack = viewModel::navigateBack,
                     viewModel = viewModel,
                 )
             }
-            entry<AppRoute.BackupRestoreSettings> {
+            entry<AppRoute.BackupRestoreSettings>(swipeDismiss = swipeBackDirection) {
                 BackupRestoreSettingsScreen(
                     onBack = viewModel::navigateBack,
                     viewModel = viewModel,
                 )
             }
-            entry<AppRoute.AidManager> {
+            entry<AppRoute.AidManager>(swipeDismiss = swipeBackDirection) {
                 AidManagerScreen(
                     aids = currentState.value.settings.isdrAids,
                     onBack = viewModel::navigateBack,
                     onSave = viewModel::setIsdrAids,
                 )
             }
-            entry<AppRoute.TagsAndReminders> {
+            entry<AppRoute.TagsAndReminders>(swipeDismiss = swipeBackDirection) {
                 TagsAndRemindersScreen(
                     settings = currentState.value.settings,
                     notificationPermissionGranted = currentNotificationPermissionGranted.value,
@@ -397,14 +426,14 @@ fun HyperLpaApp(
                     onTestNotification = onTestProfileReminder,
                 )
             }
-            entry<AppRoute.TagManager> {
+            entry<AppRoute.TagManager>(swipeDismiss = swipeBackDirection) {
                 TagManagerScreen(
                     profiles = currentState.value.profiles,
                     onBack = viewModel::navigateBack,
                     onSetTags = viewModel::setProfileTags,
                 )
             }
-            entry<AppRoute.ScheduledReminders> {
+            entry<AppRoute.ScheduledReminders>(swipeDismiss = swipeBackDirection) {
                 ScheduledRemindersScreen(
                     profiles = currentState.value.profiles,
                     onBack = viewModel::navigateBack,
@@ -418,42 +447,24 @@ fun HyperLpaApp(
                     },
                 )
             }
-            entry<AppRoute.Statistics> {
+            entry<AppRoute.Statistics>(swipeDismiss = swipeBackDirection) {
                 StatisticsScreen(
                     profiles = currentState.value.profiles,
                     notifications = currentState.value.lpa.notifications,
                     onBack = viewModel::navigateBack,
                 )
             }
-            entry<AppRoute.Logs> {
+            entry<AppRoute.Logs>(swipeDismiss = swipeBackDirection) {
                 LogsScreen(
                     logs = currentState.value.lpa.logs,
                     onBack = viewModel::navigateBack,
                     onExportSupportReport = viewModel::exportSupportReport,
                 )
             }
-            entry<AppRoute.About> {
+            entry<AppRoute.About>(swipeDismiss = swipeBackDirection) {
                 AboutScreen(onBack = viewModel::navigateBack)
             }
         }
-    }
-
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        containerColor = MiuixTheme.colorScheme.surface,
-    ) { _ ->
-        Box(Modifier.fillMaxSize()) {
-            NavDisplay(
-                backStack = backStack,
-                onBack = viewModel::navigateBack,
-                entryProvider = entries,
-                transitionEffects = NavDisplayTransitionEffects(
-                    enableCornerClip = true,
-                    dimAmount = 0.5f,
-                    blockInputDuringTransition = true,
-                    popDirectionFollowsSwipeEdge = false,
-                ),
-            )
 
             OperationProgressDialog(operation = state.lpa.operation)
             ProfileInstallProgressDialog(operation = state.lpa.operation)

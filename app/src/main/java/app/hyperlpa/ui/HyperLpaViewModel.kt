@@ -3,7 +3,6 @@ package app.hyperlpa.ui
 import android.app.Application
 import android.graphics.BitmapFactory
 import android.net.Uri
-import androidx.compose.runtime.mutableStateListOf
 import androidx.core.net.toUri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
@@ -45,6 +44,9 @@ import app.hyperlpa.provisioning.ProvisioningCoordinator
 import app.hyperlpa.reminders.withProfileReminderIsolation
 import app.hyperlpa.ui.navigation.AppRoute
 import app.hyperlpa.ui.navigation.AppTab
+import top.yukonga.miuix.kmp.nav.core.NavBackStack
+import top.yukonga.miuix.kmp.nav.core.NavKey
+import top.yukonga.miuix.kmp.nav.core.navBackStackOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -186,8 +188,8 @@ class HyperLpaViewModel(
 ) : AndroidViewModel(application) {
     private val backupManager = HyperLpaBackupManager(application, settingsStore, metadataStore)
     private val profileIconStorage = ProfileIconStorage(application)
-    private val backStack = mutableStateListOf<AppRoute>(AppRoute.Shell)
-    val navigationBackStack: List<AppRoute> = backStack
+    private val backStack = navBackStackOf(AppRoute.Shell)
+    val navigationBackStack: NavBackStack = backStack
     private val selectedTab = MutableStateFlow(AppTab.PROFILES)
     private val searchQuery = MutableStateFlow("")
     private val activationCodeDraft = MutableStateFlow("")
@@ -1243,13 +1245,13 @@ private const val MaxBackupPasswordCharacters = 128
 private const val MaxActivationInputCharacters = 4_096
 private const val CloudEnrichmentConcurrency = 4
 
-private fun AppRoute?.toPersistedRoute(): String? = when (this) {
+private fun NavKey?.toPersistedRoute(): String? = when (val route = this as? AppRoute) {
     null,
     AppRoute.Shell,
     is AppRoute.ProfileDownloadResult,
     AppRoute.ConfirmProfileDownload,
     -> null
-    is AppRoute.ProfileDetails -> "profile:$iccid"
+    is AppRoute.ProfileDetails -> "profile:${route.iccid}"
     AppRoute.DownloadProfile -> "download"
     AppRoute.BatchDownload -> "batch"
     AppRoute.EuiccDetails -> "euicc"
