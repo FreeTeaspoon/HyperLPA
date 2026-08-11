@@ -1,6 +1,8 @@
 package app.hyperlpa.data
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import androidx.compose.runtime.Immutable
 import app.hyperlpa.BuildConfig
 import app.hyperlpa.R
@@ -69,6 +71,11 @@ import java.util.concurrent.atomic.AtomicBoolean
 private const val MaxReaderProfiles = 128
 private const val MaxReaderNotifications = 128
 
+internal fun shouldAttemptInitialNotificationDelivery(
+    notificationAutoSend: Boolean,
+    hasValidatedInternet: Boolean,
+): Boolean = notificationAutoSend && hasValidatedInternet
+
 private enum class SessionRefreshScope {
     FULL,
     PROFILE_SWITCH_STATE,
@@ -111,6 +118,7 @@ class LpaRepository(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : AutoCloseable {
     private val appContext = context.applicationContext
+    private val connectivityManager = appContext.getSystemService(ConnectivityManager::class.java)
     private val verboseLoggingEnabled = MutableStateFlow(false)
     private val providers = listOf<Pair<ReaderKind, ReaderProvider>>(
         ReaderKind.NBRIDGE to NBridgeReaderProvider(appContext),
@@ -1164,7 +1172,7 @@ class LpaRepository(
                 SessionRefreshScope.PROFILE_SWITCH_STATE -> refreshProfileSwitchStateInternal()
             }
             if (refreshScope == SessionRefreshScope.FULL && settings.notificationInitialLoad) {
-                val notificationsChanged = processNotificationsSafely("reader connection")
+                val notificationsChanged = processInitialNotificationsIfOnline()
                 if (notificationsChanged) refreshInternal()
             }
             selectedReaderTargetId = endpoint.info.id
@@ -1662,6 +1670,39 @@ class LpaRepository(
             )
             false
         }
+
+    /**
+     * Initial profile loading must not wait for a mobile data route that is present but unusable.
+     * Pending notifications remain on the eUICC and can be sent manually or on a later
+     * connection with validated internet access.
+     */
+    private suspend fun processInitialNotificationsIfOnline(): Boolean {
+        if (!shouldAttemptInitialNotificationDelivery(settings.notificationAutoSend, hasValidatedInternet())) {
+            if (settings.notificationAutoSend && hasPendingNotifications()) {
+                log(
+                    LogLevel.INFO,
+                    "Notifications",
+                    "Skipped automatic delivery after reader connection because validated internet " +
+                        "access is unavailable",
+                )
+            }
+            return false
+        }
+        return processNotificationsSafely("reader connection")
+    }
+
+    private fun hasPendingNotifications(): Boolean = runCatching {
+        requireSession().assistant.notifications.isNotEmpty()
+    }.getOrDefault(false)
+
+    private fun hasValidatedInternet(): Boolean {
+        val manager = connectivityManager ?: return false
+        val network = runCatching { manager.activeNetwork }.getOrNull() ?: return false
+        val capabilities = runCatching { manager.getNetworkCapabilities(network) }.getOrNull()
+            ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
 
     private suspend fun refreshNotificationsSafely(operationName: String) {
         try {
