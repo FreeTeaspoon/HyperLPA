@@ -81,6 +81,7 @@ import app.hyperlpa.ui.screens.ProfileDownloadConfirmationScreen
 import app.hyperlpa.ui.screens.ProfileDownloadResultScreen
 import app.hyperlpa.ui.screens.EuiccDetailsScreen
 import app.hyperlpa.ui.screens.LogsScreen
+import app.hyperlpa.ui.screens.NotificationHistoryScreen
 import app.hyperlpa.ui.screens.NotificationSettingsScreen
 import app.hyperlpa.ui.screens.NotificationsScreen
 import app.hyperlpa.ui.screens.PrivacySettingsScreen
@@ -126,6 +127,7 @@ import top.yukonga.miuix.kmp.icon.extended.BankCards
 import top.yukonga.miuix.kmp.icon.extended.Download
 import top.yukonga.miuix.kmp.icon.extended.Messages
 import top.yukonga.miuix.kmp.icon.extended.Settings
+import top.yukonga.miuix.kmp.icon.extended.Timer
 import top.yukonga.miuix.kmp.icon.extended.Tune
 import top.yukonga.miuix.kmp.nav.core.NavBackStack
 import top.yukonga.miuix.kmp.nav.core.NavCornerClipMode
@@ -370,6 +372,12 @@ fun HyperLpaApp(
                     settings = currentState.value.settings,
                     onBack = viewModel::navigateBack,
                     viewModel = viewModel,
+                )
+            }
+            entry<AppRoute.NotificationHistory>(swipeDismiss = swipeBackDirection) {
+                NotificationHistoryScreen(
+                    state = currentState.value,
+                    onBack = viewModel::navigateBack,
                 )
             }
             entry<AppRoute.AppearanceSettings>(swipeDismiss = swipeBackDirection) {
@@ -722,7 +730,16 @@ private fun MainTabPage(
                                     )
                                 }
                             }
-                            AppTab.NOTIFICATIONS -> Unit
+                            AppTab.NOTIFICATIONS -> {
+                                IconButton(onClick = { viewModel.navigate(AppRoute.NotificationHistory) }) {
+                                    Icon(
+                                        MiuixIcons.Timer,
+                                        contentDescription = stringResource(
+                                            app.hyperlpa.R.string.notification_history_title,
+                                        ),
+                                    )
+                                }
+                            }
                             AppTab.TOOLS,
                             AppTab.SETTINGS,
                             -> Unit
@@ -775,7 +792,6 @@ private fun MainTabPage(
                     onProcess = viewModel::processNotification,
                     onDelete = viewModel::deleteNotification,
                     onRefresh = viewModel::refreshProfiles,
-                    onClearHistory = viewModel::clearNotificationHistory,
                 )
                 AppTab.TOOLS -> ToolsScreen(
                     state = state,

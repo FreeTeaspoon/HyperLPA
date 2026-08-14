@@ -25,6 +25,7 @@ sealed interface AppRoute : NavKey {
     data object EuiccDetails : AppRoute
     data object ReaderSettings : AppRoute
     data object NotificationSettings : AppRoute
+    data object NotificationHistory : AppRoute
     data object AppearanceSettings : AppRoute
     data object ProfileDisplaySettings : AppRoute
     data object PrivacySettings : AppRoute

@@ -120,7 +120,7 @@
     <string name="notifications_no_reader_message">Connect a reader on the Profiles page to load notifications.</string>
     <string name="notifications_none_pending">No pending notifications</string>
     <string name="notifications_none_pending_message">Profile management notifications are already up to date.</string>
-    <string name="notification_history_section">Outcome history</string>
+    <string name="notification_history_title">Notification history</string>
     <string name="notification_history_empty">No notification history</string>
     <string name="notification_history_empty_message">Send and removal outcomes will be saved here without profile identifiers or full addresses.</string>
     <plurals name="notification_history_saved_count">

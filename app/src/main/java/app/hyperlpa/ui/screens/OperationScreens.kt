@@ -34,7 +34,6 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -118,7 +117,6 @@ import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
-import top.yukonga.miuix.kmp.basic.Surface
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
@@ -1278,17 +1276,12 @@ fun ProfileDownloadResultScreen(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 28.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Surface(
-                    shape = CircleShape,
-                    color = MiuixTheme.colorScheme.primaryContainer,
-                    contentColor = MiuixTheme.colorScheme.onPrimaryContainer,
-                ) {
-                    Icon(
-                        imageVector = MiuixIcons.Ok,
-                        contentDescription = null,
-                        modifier = Modifier.padding(22.dp).size(42.dp),
-                    )
-                }
+                Icon(
+                    imageVector = MiuixIcons.Ok,
+                    contentDescription = null,
+                    modifier = Modifier.size(42.dp),
+                    tint = MiuixTheme.colorScheme.primary,
+                )
                 Spacer(Modifier.height(20.dp))
                 Text(
                     text = stringResource(R.string.download_success_title),
@@ -2713,30 +2706,21 @@ private fun LogCard(entry: ActivityLogEntry) {
     GroupedCard {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    shape = CircleShape,
-                    color = when (entry.level) {
-                        LogLevel.ERROR -> MiuixTheme.colorScheme.errorContainer
-                        LogLevel.WARNING -> MiuixTheme.colorScheme.secondaryContainer
-                        else -> MiuixTheme.colorScheme.primaryContainer
+                Icon(
+                    imageVector = when (entry.level) {
+                        LogLevel.ERROR -> MiuixIcons.Delete
+                        LogLevel.WARNING -> MiuixIcons.Info
+                        LogLevel.DEBUG -> MiuixIcons.Search
+                        LogLevel.INFO -> MiuixIcons.Refresh
                     },
-                    contentColor = when (entry.level) {
-                        LogLevel.ERROR -> MiuixTheme.colorScheme.onErrorContainer
-                        LogLevel.WARNING -> MiuixTheme.colorScheme.onSecondaryContainer
-                        else -> MiuixTheme.colorScheme.onPrimaryContainer
+                    contentDescription = null,
+                    modifier = Modifier.size(24.dp),
+                    tint = when (entry.level) {
+                        LogLevel.ERROR -> MiuixTheme.colorScheme.error
+                        LogLevel.WARNING -> MiuixTheme.colorScheme.secondary
+                        else -> MiuixTheme.colorScheme.primary
                     },
-                ) {
-                    Icon(
-                        imageVector = when (entry.level) {
-                            LogLevel.ERROR -> MiuixIcons.Delete
-                            LogLevel.WARNING -> MiuixIcons.Info
-                            LogLevel.DEBUG -> MiuixIcons.Search
-                            LogLevel.INFO -> MiuixIcons.Refresh
-                        },
-                        contentDescription = null,
-                        modifier = Modifier.padding(9.dp).size(18.dp),
-                    )
-                }
+                )
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(entry.tag, style = MiuixTheme.textStyles.title3, fontWeight = FontWeight.SemiBold)
