@@ -911,7 +911,7 @@ fun ReaderSettingsScreen(
                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
             )
         }
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(12.dp))
         DialogButtons(
             onDismiss = { if (!remoteTokenSaving) remoteTokenEndpoint = null },
             confirmEnabled = tokenValid && !remoteTokenSaving,
@@ -1386,7 +1386,7 @@ fun BackupRestoreSettingsScreen(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 modifier = Modifier.fillMaxWidth(),
             )
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(12.dp))
             SettingsConfirmationActions(
                 confirmText = stringResource(R.string.backup_encrypt_save),
                 enabled = backupPassword.length >= 10 && backupPassword == backupPasswordConfirmation,
@@ -1441,7 +1441,7 @@ fun BackupRestoreSettingsScreen(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 modifier = Modifier.fillMaxWidth(),
             )
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(12.dp))
             SettingsConfirmationActions(
                 confirmText = stringResource(R.string.backup_decrypt_restore),
                 enabled = restorePassword.isNotEmpty(),
@@ -1498,13 +1498,15 @@ private fun SettingsConfirmationActions(
     onCancel: () -> Unit,
     onConfirm: () -> Unit,
 ) {
-    Row(Modifier.fillMaxWidth()) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         TextButton(
             text = stringResource(R.string.common_cancel),
             onClick = onCancel,
             modifier = Modifier.weight(1f),
         )
-        Spacer(Modifier.width(16.dp))
         TextButton(
             text = confirmText,
             onClick = onConfirm,
@@ -1646,7 +1648,7 @@ private fun TextEditorDialog(
                     style = MiuixTheme.textStyles.footnote1,
                 )
             }
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(12.dp))
             DialogButtons(
                 onDismiss = onDismiss,
                 onConfirm = onConfirm,
@@ -1682,7 +1684,7 @@ private fun NumberEditorDialog(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.fillMaxWidth(),
             )
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(12.dp))
             DialogButtons(onDismiss = onDismiss, onConfirm = onConfirm)
         }
     }
@@ -1694,13 +1696,15 @@ private fun DialogButtons(
     onConfirm: () -> Unit,
     confirmEnabled: Boolean = true,
 ) {
-    Row(Modifier.fillMaxWidth()) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         TextButton(
             text = stringResource(R.string.common_cancel),
             onClick = onDismiss,
             modifier = Modifier.weight(1f),
         )
-        Spacer(Modifier.width(16.dp))
         TextButton(
             text = stringResource(R.string.common_confirm),
             onClick = onConfirm,
