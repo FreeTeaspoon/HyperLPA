@@ -1564,47 +1564,57 @@ fun AidManagerScreen(
             TipCard(text = stringResource(R.string.aid_manager_summary))
         }
         item {
-            GroupedCard {
-                Column(Modifier.padding(16.dp)) {
-                    TextField(
-                        value = text,
-                        onValueChange = { value ->
-                            inputTooLong = value.length > MaximumAidEditorCharacters
-                            if (!inputTooLong) text = value
-                        },
-                        label = stringResource(R.string.aid_manager_input_label),
-                        useLabelAsPlaceholder = true,
-                        minLines = 7,
-                        maxLines = 12,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    if (validationMessage != null) {
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            text = validationMessage,
-                            color = MiuixTheme.colorScheme.error,
-                            style = MiuixTheme.textStyles.footnote1,
-                        )
-                    }
-                    Spacer(Modifier.height(16.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        TextButton(
-                            text = stringResource(R.string.common_restore_defaults),
-                            onClick = { text = DefaultIsdrAids.joinToString("\n") },
-                            modifier = Modifier.weight(1f),
-                        )
-                        TextButton(
-                            text = stringResource(R.string.common_save),
-                            onClick = {
-                                onSave(parsed)
-                                onBack()
-                            },
-                            enabled = validation.isSuccess && !inputTooLong,
-                            colors = ButtonDefaults.textButtonColorsPrimary(),
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
-                }
+            TextField(
+                value = text,
+                onValueChange = { value ->
+                    inputTooLong = value.length > MaximumAidEditorCharacters
+                    if (!inputTooLong) text = value
+                },
+                label = stringResource(R.string.aid_manager_input_label),
+                useLabelAsPlaceholder = true,
+                minLines = 7,
+                maxLines = 12,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp)
+                    .padding(top = 4.dp, bottom = if (validationMessage == null) 12.dp else 0.dp),
+            )
+        }
+        validationMessage?.let { message ->
+            item {
+                Text(
+                    text = message,
+                    color = MiuixTheme.colorScheme.error,
+                    style = MiuixTheme.textStyles.footnote1,
+                    modifier = Modifier
+                        .padding(horizontal = 28.dp)
+                        .padding(top = 10.dp),
+                )
+            }
+        }
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp)
+                    .padding(top = if (validationMessage != null) 12.dp else 0.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                TextButton(
+                    text = stringResource(R.string.common_restore_defaults),
+                    onClick = { text = DefaultIsdrAids.joinToString("\n") },
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(
+                    text = stringResource(R.string.common_save),
+                    onClick = {
+                        onSave(parsed)
+                        onBack()
+                    },
+                    enabled = validation.isSuccess && !inputTooLong,
+                    colors = ButtonDefaults.textButtonColorsPrimary(),
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
     }
