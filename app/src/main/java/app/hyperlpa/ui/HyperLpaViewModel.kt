@@ -609,7 +609,6 @@ class HyperLpaViewModel(
     }
     fun processNotification(sequenceNumber: Long) = launch { repository.processNotification(sequenceNumber) }
     fun deleteNotification(sequenceNumber: Long) = launch { repository.deleteNotification(sequenceNumber) }
-    fun clearNotificationHistory() = launch { notificationHistoryStore.clear() }
     fun resetEuiccMemory() = launch(repository::resetEuiccMemory)
     fun setDefaultSmdpAddress(address: String) = launch {
         repository.setDefaultSmdpAddress(address)
@@ -1257,6 +1256,7 @@ private fun NavKey?.toPersistedRoute(): String? = when (val route = this as? App
     AppRoute.EuiccDetails -> "euicc"
     AppRoute.ReaderSettings -> "readers"
     AppRoute.NotificationSettings -> "notifications"
+    AppRoute.NotificationHistory -> "notification-history"
     AppRoute.AppearanceSettings -> "appearance"
     AppRoute.ProfileDisplaySettings -> "profile-display"
     AppRoute.PrivacySettings -> "privacy"
@@ -1282,6 +1282,7 @@ private fun String?.toAppRoute(): AppRoute? = when {
         "euicc" -> AppRoute.EuiccDetails
         "readers" -> AppRoute.ReaderSettings
         "notifications" -> AppRoute.NotificationSettings
+        "notification-history" -> AppRoute.NotificationHistory
         "appearance" -> AppRoute.AppearanceSettings
         "profile-display" -> AppRoute.ProfileDisplaySettings
         "privacy" -> AppRoute.PrivacySettings
