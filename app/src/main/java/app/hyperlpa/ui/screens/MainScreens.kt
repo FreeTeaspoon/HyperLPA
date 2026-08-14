@@ -29,7 +29,6 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
@@ -73,6 +72,7 @@ import app.hyperlpa.ui.components.PageStateHost
 import app.hyperlpa.ui.components.PageStateKind
 import app.hyperlpa.ui.components.ResolvedProfileArtwork
 import app.hyperlpa.ui.components.SectionHeading
+import app.hyperlpa.ui.components.DetailLazyScaffold
 import app.hyperlpa.ui.components.formatProfileDisplayName
 import app.hyperlpa.ui.components.redactIdentifier
 import app.hyperlpa.ui.components.rememberProfileArtworkBitmaps
@@ -87,7 +87,6 @@ import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.PullToRefresh
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
-import top.yukonga.miuix.kmp.basic.Surface
 import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
@@ -737,7 +736,6 @@ fun NotificationsScreen(
     onProcess: (Long) -> Unit,
     onDelete: (Long) -> Unit,
     onRefresh: () -> Unit,
-    onClearHistory: () -> Unit,
 ) {
     PullToRefresh(
         isRefreshing = state.lpa.operation is LpaOperation.Refreshing,
@@ -783,43 +781,45 @@ fun NotificationsScreen(
                         NotificationCard(notification = notification, onProcess = onProcess, onDelete = onDelete)
                     }
                 }
-                item { SectionHeading(stringResource(R.string.notification_history_section)) }
-                if (state.notificationHistory.isEmpty()) {
-                    item {
-                        EmptyState(
-                            title = stringResource(R.string.notification_history_empty),
-                            message = stringResource(R.string.notification_history_empty_message),
-                            icon = MiuixIcons.Messages,
-                        )
-                    }
-                } else {
-                    item {
-                        GroupedCard {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    text = pluralStringResource(
-                                        R.plurals.notification_history_saved_count,
-                                        state.notificationHistory.size,
-                                        state.notificationHistory.size,
-                                    ),
-                                    style = MiuixTheme.textStyles.body2,
-                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                )
-                                TextButton(
-                                    text = stringResource(R.string.common_clear),
-                                    onClick = onClearHistory,
-                                )
-                            }
-                        }
-                    }
-                    items(state.notificationHistory.asReversed()) { entry ->
-                        NotificationHistoryCard(entry = entry)
-                    }
+            }
+        }
+    }
+}
+
+@Composable
+fun NotificationHistoryScreen(
+    state: HyperLpaUiState,
+    onBack: () -> Unit,
+) {
+    DetailLazyScaffold(
+        title = stringResource(R.string.notification_history_title),
+        onBack = onBack,
+    ) {
+        if (state.notificationHistory.isEmpty()) {
+            item {
+                EmptyState(
+                    title = stringResource(R.string.notification_history_empty),
+                    message = stringResource(R.string.notification_history_empty_message),
+                    icon = MiuixIcons.Messages,
+                )
+            }
+        } else {
+            item {
+                GroupedCard {
+                    Text(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        text = pluralStringResource(
+                            R.plurals.notification_history_saved_count,
+                            state.notificationHistory.size,
+                            state.notificationHistory.size,
+                        ),
+                        style = MiuixTheme.textStyles.body2,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
                 }
+            }
+            items(state.notificationHistory.asReversed()) { entry ->
+                NotificationHistoryCard(entry = entry)
             }
         }
     }
@@ -1210,13 +1210,7 @@ private fun ToolPreference(
         title = title,
         summary = summary,
         startAction = {
-            Surface(
-                shape = CircleShape,
-                color = MiuixTheme.colorScheme.primaryContainer,
-                contentColor = MiuixTheme.colorScheme.onPrimaryContainer,
-            ) {
-                Icon(icon, contentDescription = null, modifier = Modifier.padding(9.dp).size(20.dp))
-            }
+            Icon(icon, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
         },
         onClick = onClick,
     )
