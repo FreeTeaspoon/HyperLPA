@@ -468,7 +468,7 @@ fun ProfileDetailsScreen(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(12.dp))
             DialogActionRow(
                 onCancel = { showRename = false },
                 confirmText = stringResource(R.string.profile_rename_action),
@@ -1377,7 +1377,7 @@ fun ProfileDownloadResultScreen(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(12.dp))
             DialogActionRow(
                 onCancel = { showRename = false },
                 confirmText = stringResource(R.string.profile_rename_action),
@@ -1896,7 +1896,7 @@ fun EuiccDetailsScreen(
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(12.dp))
         DialogActionRow(
             onCancel = { showCardNameEditor = false },
             confirmText = stringResource(R.string.common_save),
@@ -1995,7 +1995,7 @@ private fun ProvisioningAddressDialog(
                 modifier = Modifier.padding(top = 8.dp),
             )
         }
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(12.dp))
         DialogActionRow(
             onCancel = onDismiss,
             confirmText = confirmText,
@@ -2752,9 +2752,11 @@ private fun DialogActionRow(
     onConfirm: () -> Unit,
 ) {
     val resolvedCancelText = cancelText ?: stringResource(R.string.common_cancel)
-    Row(Modifier.fillMaxWidth()) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         TextButton(text = resolvedCancelText, onClick = onCancel, modifier = Modifier.weight(1f))
-        Spacer(Modifier.width(16.dp))
         TextButton(
             text = confirmText,
             onClick = onConfirm,
