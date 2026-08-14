@@ -57,6 +57,60 @@ out:
     return res;
 }
 
+JNIEXPORT jstring JNICALL
+Java_net_typeblog_lpac_1jni_LpacJni_dumpNotificationPayload(JNIEnv *env, jobject thiz, jlong handle,
+                                                             jlong seq_number) {
+    struct euicc_ctx *ctx = (struct euicc_ctx *) handle;
+    struct es10b_pending_notification notification;
+    jstring result = NULL;
+
+    (void) thiz;
+    if (ctx == NULL || seq_number < 0 || (uint64_t)seq_number > ULONG_MAX)
+        return NULL;
+
+    memset(&notification, 0, sizeof(notification));
+    if (es10b_retrieve_notifications_list(ctx, &notification, (unsigned long) seq_number) < 0)
+        return NULL;
+
+    result = toJString(env, notification.b64_PendingNotification);
+    es10b_pending_notification_free(&notification);
+    return result;
+}
+
+JNIEXPORT jint JNICALL
+Java_net_typeblog_lpac_1jni_LpacJni_replayNotification(JNIEnv *env, jobject thiz, jlong handle,
+                                                        jstring notification_address,
+                                                        jstring pending_notification) {
+    struct euicc_ctx *ctx = (struct euicc_ctx *) handle;
+    const char *address = NULL;
+    const char *payload = NULL;
+    int res = -1;
+
+    (void) thiz;
+    if (ctx == NULL || notification_address == NULL || pending_notification == NULL)
+        return -1;
+
+    address = (*env)->GetStringUTFChars(env, notification_address, NULL);
+    payload = (*env)->GetStringUTFChars(env, pending_notification, NULL);
+    if (address == NULL || payload == NULL)
+        goto out;
+    if (address[0] == '\0' || strlen(address) > 253U ||
+        strpbrk(address, "/\\?#$@\r\n\t ") != NULL || payload[0] == '\0')
+        goto out;
+
+    ctx->http.server_address = address;
+    res = es9p_handle_notification(ctx, payload);
+
+out:
+    euicc_http_cleanup(ctx);
+    ctx->http.server_address = NULL;
+    if (payload != NULL)
+        (*env)->ReleaseStringUTFChars(env, pending_notification, payload);
+    if (address != NULL)
+        (*env)->ReleaseStringUTFChars(env, notification_address, address);
+    return res;
+}
+
 JNIEXPORT jint JNICALL
 Java_net_typeblog_lpac_1jni_LpacJni_es10bDeleteNotification(JNIEnv *env, jobject thiz, jlong handle,
                                                             jlong seq_number) {
