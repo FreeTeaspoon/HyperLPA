@@ -8,6 +8,7 @@ import app.hyperlpa.BuildConfig
 import app.hyperlpa.R
 import app.hyperlpa.data.cloud.decodeMccMnc
 import app.hyperlpa.data.history.NotificationHistoryAction
+import app.hyperlpa.data.history.NotificationHistoryEntry
 import app.hyperlpa.data.history.NotificationHistoryStatus
 import app.hyperlpa.data.history.NotificationHistoryStore
 import app.hyperlpa.data.history.NotificationHistoryTrigger
@@ -899,6 +900,7 @@ class LpaRepository(
             val assistant = requireSession().assistant
             val notification = mutableState.value.notifications
                 .firstOrNull { it.sequenceNumber == sequenceNumber }
+                ?.withCapturedPayload(assistant)
             val sent = try {
                 assistant.handleNotification(sequenceNumber)
             } catch (error: Throwable) {
@@ -908,6 +910,7 @@ class LpaRepository(
                     trigger = NotificationHistoryTrigger.MANUAL,
                     operation = notification?.operation ?: NotificationOperation.UNKNOWN,
                     endpointAddress = notification?.address,
+                    notification = notification,
                     failureCode = "exception",
                 )
                 throw error
@@ -918,6 +921,7 @@ class LpaRepository(
                 trigger = NotificationHistoryTrigger.MANUAL,
                 operation = notification?.operation ?: NotificationOperation.UNKNOWN,
                 endpointAddress = notification?.address,
+                notification = notification,
                 failureCode = if (sent) null else "rejected",
             )
             check(sent) { appContext.getString(R.string.failure_notification_send) }
@@ -931,6 +935,7 @@ class LpaRepository(
                         trigger = NotificationHistoryTrigger.MANUAL,
                         operation = notification?.operation ?: NotificationOperation.UNKNOWN,
                         endpointAddress = notification?.address,
+                        notification = notification,
                         failureCode = "exception",
                     )
                     throw error
@@ -941,6 +946,7 @@ class LpaRepository(
                     trigger = NotificationHistoryTrigger.MANUAL,
                     operation = notification?.operation ?: NotificationOperation.UNKNOWN,
                     endpointAddress = notification?.address,
+                    notification = notification,
                     failureCode = if (removed) null else "rejected",
                 )
                 check(removed) { appContext.getString(R.string.failure_notification_sent_remove) }
@@ -955,6 +961,7 @@ class LpaRepository(
             prepareMutationSession()
             val notification = mutableState.value.notifications
                 .firstOrNull { it.sequenceNumber == sequenceNumber }
+                ?.withCapturedPayload(requireSession().assistant)
             val removed = try {
                 requireSession().assistant.deleteNotification(sequenceNumber)
             } catch (error: Throwable) {
@@ -964,6 +971,7 @@ class LpaRepository(
                     trigger = NotificationHistoryTrigger.MANUAL,
                     operation = notification?.operation ?: NotificationOperation.UNKNOWN,
                     endpointAddress = notification?.address,
+                    notification = notification,
                     failureCode = "exception",
                 )
                 throw error
@@ -974,6 +982,7 @@ class LpaRepository(
                 trigger = NotificationHistoryTrigger.MANUAL,
                 operation = notification?.operation ?: NotificationOperation.UNKNOWN,
                 endpointAddress = notification?.address,
+                notification = notification,
                 failureCode = if (removed) null else "rejected",
             )
             check(removed) { appContext.getString(R.string.failure_notification_remove) }
@@ -981,6 +990,76 @@ class LpaRepository(
             refreshAfterMutation("Notification removal")
         }
     }
+
+    /**
+     * Re-sends a notification from history. New history entries carry the signed payload and can
+     * therefore be sent after the eUICC has removed the notification. Legacy entries fall back to
+     * the card's pending sequence when it is still present.
+     */
+    suspend fun resendNotification(entry: NotificationHistoryEntry) =
+        operationMutex.withLock {
+            val sequenceNumber = entry.sequenceNumber
+                ?: throw IllegalStateException(appContext.getString(R.string.failure_notification_resend_unavailable))
+            withOperation(LpaOperation.ProcessingNotification(sequenceNumber)) {
+                prepareMutationSession()
+                val assistant = requireSession().assistant
+                val pending = mutableState.value.notifications.firstOrNull { notification ->
+                    notification.sequenceNumber == sequenceNumber &&
+                        (entry.iccid.isNullOrBlank() || notification.iccid == entry.iccid)
+                }
+                val operation = notificationHistoryOperation(entry.notificationOperation)
+                val rawAddress = entry.endpointHost
+                    ?: entry.notificationAddress?.removePrefix("https://")?.removePrefix("http://")
+                    ?: pending?.address
+                val serverAddress = rawAddress
+                    ?.let { candidate -> runCatching { normalizeRspServerAddress(candidate) }.getOrNull() }
+                val notification = pending?.withCapturedPayload(assistant)
+                    ?: LpaNotification(
+                        sequenceNumber = sequenceNumber,
+                        operation = operation,
+                        address = serverAddress.orEmpty(),
+                        iccid = entry.iccid.orEmpty(),
+                        pendingNotificationPayload = entry.pendingNotificationPayload,
+                    )
+                val payload = entry.pendingNotificationPayload
+                val sent = try {
+                    when {
+                        payload != null -> {
+                            check(serverAddress != null) {
+                                appContext.getString(R.string.failure_notification_resend_no_address)
+                            }
+                            assistant.replayNotification(serverAddress, payload)
+                        }
+                        pending != null -> assistant.handleNotification(sequenceNumber)
+                        else -> throw IllegalStateException(
+                            appContext.getString(R.string.failure_notification_resend_unavailable),
+                        )
+                    }
+                } catch (error: Throwable) {
+                    if (error is CancellationException) throw error
+                    recordNotificationOutcomeSafely(
+                        action = NotificationHistoryAction.SEND,
+                        status = NotificationHistoryStatus.FAILED,
+                        trigger = NotificationHistoryTrigger.MANUAL,
+                        operation = operation,
+                        endpointAddress = serverAddress ?: notification.address,
+                        notification = notification,
+                        failureCode = "exception",
+                    )
+                    throw error
+                }
+                recordNotificationOutcomeSafely(
+                    action = NotificationHistoryAction.SEND,
+                    status = if (sent) NotificationHistoryStatus.SUCCEEDED else NotificationHistoryStatus.FAILED,
+                    trigger = NotificationHistoryTrigger.MANUAL,
+                    operation = operation,
+                    endpointAddress = serverAddress ?: notification.address,
+                    notification = notification,
+                    failureCode = if (sent) null else "rejected",
+                )
+                check(sent) { appContext.getString(R.string.failure_notification_send) }
+            }
+        }
 
     suspend fun resetEuiccMemory() = operationMutex.withLock {
         withOperation(LpaOperation.Resetting(appContext.getString(R.string.operation_resetting_memory))) {
@@ -1578,7 +1657,7 @@ class LpaRepository(
             "The eUICC returned duplicate notification sequence numbers"
         }
         notifications.forEach { notification ->
-            val mapped = mapNotification(notification)
+            val mapped = mapNotification(notification).withCapturedPayload(assistant)
             val sent = try {
                 assistant.handleNotification(notification.seqNumber)
             } catch (error: Throwable) {
@@ -1589,6 +1668,7 @@ class LpaRepository(
                     trigger = NotificationHistoryTrigger.AUTOMATIC,
                     operation = mapped.operation,
                     endpointAddress = mapped.address,
+                    notification = mapped,
                     failureCode = "exception",
                 )
                 log(
@@ -1605,6 +1685,7 @@ class LpaRepository(
                 trigger = NotificationHistoryTrigger.AUTOMATIC,
                 operation = mapped.operation,
                 endpointAddress = mapped.address,
+                notification = mapped,
                 failureCode = if (sent) null else "rejected",
             )
             if (!sent) {
@@ -1626,6 +1707,7 @@ class LpaRepository(
                         trigger = NotificationHistoryTrigger.AUTOMATIC,
                         operation = mapped.operation,
                         endpointAddress = mapped.address,
+                        notification = mapped,
                         failureCode = "exception",
                     )
                     log(
@@ -1642,6 +1724,7 @@ class LpaRepository(
                     trigger = NotificationHistoryTrigger.AUTOMATIC,
                     operation = mapped.operation,
                     endpointAddress = mapped.address,
+                    notification = mapped,
                     failureCode = if (removed) null else "rejected",
                 )
                 if (removed) {
@@ -1724,9 +1807,13 @@ class LpaRepository(
         trigger: NotificationHistoryTrigger,
         operation: NotificationOperation,
         endpointAddress: String?,
+        notification: LpaNotification?,
         failureCode: String?,
     ) = withContext(NonCancellable) {
         try {
+            val profile = notification?.iccid?.let { iccid ->
+                mutableState.value.profiles.firstOrNull { it.iccid == iccid }
+            }
             notificationHistoryStore.record(
                 action = action,
                 status = status,
@@ -1734,6 +1821,13 @@ class LpaRepository(
                 notificationOperation = operation,
                 endpointAddress = endpointAddress,
                 failureCode = failureCode,
+                profileName = profile?.nickname?.trim()?.takeIf(String::isNotEmpty)
+                    ?: profile?.name?.trim()?.takeIf(String::isNotEmpty),
+                providerName = profile?.providerName?.trim()?.takeIf(String::isNotEmpty),
+                eid = mutableState.value.euiccInfo?.eid,
+                iccid = notification?.iccid,
+                sequenceNumber = notification?.sequenceNumber,
+                pendingNotificationPayload = notification?.pendingNotificationPayload,
             )
         } catch (_: Throwable) {
             // History is diagnostic only. A storage problem must never change the
@@ -1964,6 +2058,17 @@ private fun mapProfile(profile: LocalProfileInfo): ProfileInfo {
         profilePolicyRules = profile.profilePolicyRules,
     )
 }
+
+private fun LpaNotification.withCapturedPayload(
+    assistant: LocalProfileAssistant,
+): LpaNotification = copy(
+    pendingNotificationPayload = pendingNotificationPayload
+        ?: runCatching { assistant.retrieveNotificationPayload(sequenceNumber) }.getOrNull(),
+)
+
+private fun notificationHistoryOperation(rawValue: String): NotificationOperation =
+    runCatching { NotificationOperation.valueOf(rawValue) }
+        .getOrDefault(NotificationOperation.UNKNOWN)
 
 private fun mapNotification(notification: LocalProfileNotification): LpaNotification = LpaNotification(
     sequenceNumber = notification.seqNumber,

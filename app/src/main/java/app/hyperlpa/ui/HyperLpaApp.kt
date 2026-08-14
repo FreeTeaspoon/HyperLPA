@@ -380,6 +380,8 @@ fun HyperLpaApp(
                 NotificationHistoryScreen(
                     state = currentState.value,
                     onBack = viewModel::navigateBack,
+                    onDeleteHistoryEntry = viewModel::deleteNotificationHistoryEntry,
+                    onResendNotification = viewModel::resendNotification,
                 )
             }
             entry<AppRoute.AppearanceSettings>(swipeDismiss = swipeBackDirection) {

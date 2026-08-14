@@ -55,6 +55,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
@@ -88,6 +89,7 @@ import app.hyperlpa.ui.components.SectionHeading
 import app.hyperlpa.ui.components.DetailLazyScaffold
 import app.hyperlpa.ui.components.FormattedProfileDisplayName
 import app.hyperlpa.ui.components.formatProfileDisplayName
+import app.hyperlpa.ui.components.TipCard
 import app.hyperlpa.ui.components.rememberProfileArtworkBitmap
 import app.hyperlpa.ui.components.redactIdentifier
 import app.hyperlpa.ui.components.effect.AccentGradientBackdrop
@@ -819,46 +821,40 @@ fun DownloadProfileScreen(
         },
     ) { _ ->
         item {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
-                Spacer(Modifier.height(14.dp))
-                Text(
-                    text = stringResource(R.string.activation_entry_summary),
-                    style = MiuixTheme.textStyles.body1,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    modifier = Modifier.padding(horizontal = 4.dp),
-                )
-                Spacer(Modifier.height(18.dp))
-                TextField(
-                    value = localValue,
-                    onValueChange = {
-                        val bounded = it.take(MaxActivationInputCharacters)
-                        if (bounded != localValue) confirmationCode = ""
-                        localValue = bounded
-                        onValueChange(bounded)
-                    },
-                    label = stringResource(R.string.activation_entry_label),
-                    useLabelAsPlaceholder = true,
-                    minLines = 2,
-                    maxLines = 6,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(10.dp))
-                if (parsedRequest.getOrNull()?.confirmationCodeRequired == true) {
+            Column(Modifier.fillMaxWidth()) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+                    Spacer(Modifier.height(14.dp))
                     TextField(
-                        value = confirmationCode,
-                        onValueChange = { confirmationCode = it.trim().take(128) },
-                        label = stringResource(app.hyperlpa.R.string.activation_confirmation_code),
+                        value = localValue,
+                        onValueChange = {
+                            val bounded = it.take(MaxActivationInputCharacters)
+                            if (bounded != localValue) confirmationCode = ""
+                            localValue = bounded
+                            onValueChange(bounded)
+                        },
+                        label = stringResource(R.string.activation_entry_label),
                         useLabelAsPlaceholder = true,
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                        visualTransformation = PasswordVisualTransformation(),
+                        minLines = 2,
+                        maxLines = 6,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    Text(
+                    Spacer(Modifier.height(10.dp))
+                    if (parsedRequest.getOrNull()?.confirmationCodeRequired == true) {
+                        TextField(
+                            value = confirmationCode,
+                            onValueChange = { confirmationCode = it.trim().take(128) },
+                            label = stringResource(app.hyperlpa.R.string.activation_confirmation_code),
+                            useLabelAsPlaceholder = true,
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            visualTransformation = PasswordVisualTransformation(),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+                if (parsedRequest.getOrNull()?.confirmationCodeRequired == true) {
+                    TipCard(
                         text = stringResource(app.hyperlpa.R.string.activation_confirmation_help),
-                        style = MiuixTheme.textStyles.footnote1,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
                     )
                 }
             }
@@ -1436,23 +1432,21 @@ fun BatchDownloadScreen(
 
     DetailLazyScaffold(title = stringResource(R.string.batch_download_title), onBack = onBack) { _ ->
         item {
-            Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                Text(
-                    text = stringResource(R.string.batch_download_instructions),
-                    style = MiuixTheme.textStyles.body1,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
-                )
-                TextField(
-                    value = values,
-                    onValueChange = { values = it.take(MaxBatchInputCharacters) },
-                    label = stringResource(R.string.batch_download_codes_label),
-                    useLabelAsPlaceholder = true,
-                    minLines = 8,
-                    maxLines = 16,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
+            TipCard(text = stringResource(R.string.batch_download_instructions))
+        }
+        item {
+            TextField(
+                value = values,
+                onValueChange = { values = it.take(MaxBatchInputCharacters) },
+                label = stringResource(R.string.batch_download_codes_label),
+                useLabelAsPlaceholder = true,
+                minLines = 8,
+                maxLines = 16,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp)
+                    .padding(bottom = 12.dp),
+            )
         }
         item {
             GroupedCard {
@@ -2396,25 +2390,24 @@ fun LogsScreen(
     DetailLazyScaffold(title = stringResource(R.string.logs_title), onBack = onBack) { _ ->
         item { SectionHeading(stringResource(R.string.logs_support_report)) }
         item {
-            GroupedCard {
-                Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                    Text(
-                        text = stringResource(R.string.logs_support_included),
-                        style = MiuixTheme.textStyles.body2,
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = stringResource(R.string.logs_support_excluded),
-                        style = MiuixTheme.textStyles.body2,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    TextButton(
-                        text = stringResource(R.string.logs_export_report),
-                        onClick = { exportSupportReport.launch("hyperlpa-support-report.txt") },
-                        colors = ButtonDefaults.textButtonColorsPrimary(),
-                    )
-                }
+            TipCard {
+                Text(
+                    text = stringResource(R.string.logs_support_included),
+                    fontSize = 13.sp,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = stringResource(R.string.logs_support_excluded),
+                    fontSize = 13.sp,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+                Spacer(Modifier.height(12.dp))
+                TextButton(
+                    text = stringResource(R.string.logs_export_report),
+                    onClick = { exportSupportReport.launch("hyperlpa-support-report.txt") },
+                    colors = ButtonDefaults.textButtonColorsPrimary(),
+                )
             }
         }
         item { SectionHeading(stringResource(R.string.logs_filter)) }
