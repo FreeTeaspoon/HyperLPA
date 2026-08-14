@@ -103,7 +103,7 @@ import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
-import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
+import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.FloatingNavigationBar
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
@@ -311,6 +311,8 @@ fun HyperLpaApp(
                 ProfileDownloadResultScreen(
                     result = result,
                     profile = profile,
+                    cloudIcon = currentState.value.downloadPreviewIcon
+                        ?: currentState.value.operatorIcons[result.profile.iccid],
                     busy = currentState.value.lpa.operation !is LpaOperation.Idle,
                     onBack = viewModel::navigateBack,
                     onEnable = { viewModel.setProfileEnabled(profile.iccid, true) },
@@ -992,7 +994,7 @@ private fun OperationProgressDialog(operation: LpaOperation) {
             modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
             contentAlignment = Alignment.Center,
         ) {
-            CircularProgressIndicator(size = 30.dp)
+            InfiniteProgressIndicator()
         }
     }
 }
@@ -1051,7 +1053,7 @@ private fun ProfileInstallProgressDialog(operation: LpaOperation) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center,
             ) {
-                CircularProgressIndicator(size = 26.dp)
+                InfiniteProgressIndicator()
                 Spacer(Modifier.size(12.dp))
                 Text(
                     text = stringResource(app.hyperlpa.R.string.install_progress_preparing),
