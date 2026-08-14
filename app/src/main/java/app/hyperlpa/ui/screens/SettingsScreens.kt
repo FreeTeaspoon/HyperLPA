@@ -91,6 +91,7 @@ import app.hyperlpa.ui.components.GroupedCard
 import app.hyperlpa.ui.components.SectionHeading
 import app.hyperlpa.ui.components.DetailLazyScaffold
 import app.hyperlpa.ui.components.BlurredBar
+import app.hyperlpa.ui.components.TipCard
 import app.hyperlpa.ui.components.rememberAppBackdrop
 import app.hyperlpa.ui.components.redactIdentifier
 import app.hyperlpa.ui.navigation.AppRoute
@@ -1560,14 +1561,11 @@ fun AidManagerScreen(
     DetailLazyScaffold(title = stringResource(R.string.aid_manager_title), onBack = onBack) { _ ->
         item { SectionHeading(stringResource(R.string.aid_manager_selection_order)) }
         item {
+            TipCard(text = stringResource(R.string.aid_manager_summary))
+        }
+        item {
             GroupedCard {
                 Column(Modifier.padding(16.dp)) {
-                    Text(
-                        text = stringResource(R.string.aid_manager_summary),
-                        style = MiuixTheme.textStyles.body2,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    )
-                    Spacer(Modifier.height(14.dp))
                     TextField(
                         value = text,
                         onValueChange = { value ->

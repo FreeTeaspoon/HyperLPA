@@ -353,6 +353,25 @@ class LocalProfileAssistantImpl(
         } == 0
     }
 
+    override fun retrieveNotificationPayload(seqNumber: Long): String? = lock.withLock {
+        checkOpen()
+        LpacJni.dumpNotificationPayload(contextHandle, seqNumber)
+    }
+
+    override fun replayNotification(
+        notificationAddress: String,
+        pendingNotification: String,
+    ): Boolean = lock.withLock {
+        checkOpen()
+        LpacJni.replayNotification(
+            contextHandle,
+            notificationAddress,
+            pendingNotification,
+        ).also {
+            Log.d(TAG, "replayNotification = $it")
+        } == 0
+    }
+
     override fun setNickname(iccid: String, nickname: String) = lock.withLock {
         checkOpen()
         val encoded = try {
