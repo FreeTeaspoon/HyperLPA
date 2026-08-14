@@ -429,14 +429,16 @@ private fun ProfileActionsOverlay(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
-            Spacer(Modifier.height(18.dp))
-            Row(Modifier.fillMaxWidth()) {
+            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 TextButton(
                     text = stringResource(R.string.common_cancel),
                     onClick = { renameProfile = null },
                     modifier = Modifier.weight(1f),
                 )
-                Spacer(Modifier.width(16.dp))
                 TextButton(
                     text = stringResource(R.string.profile_rename_action),
                     onClick = {
