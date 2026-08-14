@@ -47,6 +47,14 @@ internal object LpacJni {
     /** The exact CERT.DPauth value selected by the native ES9+ parser. */
     external fun downloadServerCertificate(handle: Long): String?
     external fun handleNotification(handle: Long, seqNumber: Long): Int
+    /** Returns the base64 signed notification payload while it is pending on the eUICC. */
+    external fun dumpNotificationPayload(handle: Long, seqNumber: Long): String?
+    /** Sends a previously captured signed notification payload without requiring it to be pending. */
+    external fun replayNotification(
+        handle: Long,
+        notificationAddress: String,
+        pendingNotification: String,
+    ): Int
 
     // Cancel any ongoing es9p and/or es10b sessions
     external fun cancelSessions(handle: Long)
