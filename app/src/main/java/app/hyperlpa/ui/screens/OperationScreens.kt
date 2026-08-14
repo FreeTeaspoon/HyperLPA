@@ -805,7 +805,7 @@ fun DownloadProfileScreen(
             if (request.confirmationCodeRequired) request.withConfirmationCode(confirmationCode) else request
         }
     }
-
+    val confirmationCodeRequired = parsedRequest.getOrNull()?.confirmationCodeRequired == true
     DetailLazyScaffold(
         title = stringResource(R.string.action_download_profile),
         onBack = onBack,
@@ -823,7 +823,7 @@ fun DownloadProfileScreen(
         item {
             Column(Modifier.fillMaxWidth()) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
-                    Spacer(Modifier.height(14.dp))
+                    Spacer(Modifier.height(12.dp))
                     TextField(
                         value = localValue,
                         onValueChange = {
@@ -838,8 +838,8 @@ fun DownloadProfileScreen(
                         maxLines = 6,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    Spacer(Modifier.height(10.dp))
-                    if (parsedRequest.getOrNull()?.confirmationCodeRequired == true) {
+                    if (confirmationCodeRequired) {
+                        Spacer(Modifier.height(10.dp))
                         TextField(
                             value = confirmationCode,
                             onValueChange = { confirmationCode = it.trim().take(128) },
@@ -852,7 +852,7 @@ fun DownloadProfileScreen(
                         )
                     }
                 }
-                if (parsedRequest.getOrNull()?.confirmationCodeRequired == true) {
+                if (confirmationCodeRequired) {
                     TipCard(
                         text = stringResource(app.hyperlpa.R.string.activation_confirmation_help),
                     )
@@ -860,7 +860,9 @@ fun DownloadProfileScreen(
             }
         }
         item {
-            GroupedCard {
+            GroupedCard(
+                modifier = Modifier.padding(top = if (confirmationCodeRequired) 0.dp else 10.dp),
+            ) {
                 ArrowPreference(
                     title = stringResource(app.hyperlpa.R.string.activation_paste),
                     summary = stringResource(app.hyperlpa.R.string.activation_paste_summary),
@@ -963,7 +965,12 @@ fun DownloadProfileScreen(
                 colors = primaryColors,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 12.dp, top = 10.dp, end = 12.dp, bottom = 18.dp)
+                    .padding(
+                        start = 12.dp,
+                        top = 6.dp,
+                        end = 12.dp,
+                        bottom = 18.dp,
+                    )
                     .defaultMinSize(minHeight = 52.dp),
             ) {
                 if (busy) {
@@ -1224,7 +1231,7 @@ fun ProfileDownloadConfirmationScreen(
                 colors = ButtonDefaults.buttonColorsPrimary(),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 12.dp, top = 10.dp, end = 12.dp, bottom = 18.dp)
+                    .padding(start = 12.dp, top = 6.dp, end = 12.dp, bottom = 18.dp)
                     .defaultMinSize(minHeight = 52.dp),
             ) {
                 Icon(MiuixIcons.Download, contentDescription = null, modifier = Modifier.size(20.dp))
@@ -1338,7 +1345,7 @@ fun ProfileDownloadResultScreen(
                     colors = ButtonDefaults.buttonColorsPrimary(),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 5.dp)
+                        .padding(start = 12.dp, top = 6.dp, end = 12.dp, bottom = 8.dp)
                         .defaultMinSize(minHeight = 52.dp),
                 ) {
                     Text(stringResource(R.string.download_enable_profile))
@@ -1352,7 +1359,16 @@ fun ProfileDownloadResultScreen(
                     enabled = !busy,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 5.dp)
+                        .padding(
+                            start = 12.dp,
+                            top = if (profile.state != ProfileState.ENABLED && profile.iccid.isNotBlank()) {
+                                0.dp
+                            } else {
+                                6.dp
+                            },
+                            end = 12.dp,
+                            bottom = 8.dp,
+                        )
                         .defaultMinSize(minHeight = 52.dp),
                 ) {
                     Icon(MiuixIcons.Edit, contentDescription = null, modifier = Modifier.size(19.dp))
@@ -1367,7 +1383,12 @@ fun ProfileDownloadResultScreen(
                 enabled = !busy,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 12.dp, top = 5.dp, end = 12.dp, bottom = 18.dp)
+                    .padding(
+                        start = 12.dp,
+                        top = if (profile.iccid.isNotBlank()) 0.dp else 6.dp,
+                        end = 12.dp,
+                        bottom = 18.dp,
+                    )
                     .defaultMinSize(minHeight = 52.dp),
             ) {
                 Text(stringResource(R.string.common_done))
@@ -1445,7 +1466,7 @@ fun BatchDownloadScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp)
-                    .padding(bottom = 12.dp),
+                    .padding(top = 4.dp, bottom = 10.dp),
             )
         }
         item {
@@ -1545,7 +1566,14 @@ fun BatchDownloadScreen(
                     validCount == lines.size &&
                     duplicateCount == 0,
                 colors = ButtonDefaults.buttonColorsPrimary(),
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 18.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        start = 12.dp,
+                        top = 6.dp,
+                        end = 12.dp,
+                        bottom = 18.dp,
+                    ),
             ) {
                 Text(
                     if (state.running) {
