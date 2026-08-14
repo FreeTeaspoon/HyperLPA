@@ -8,6 +8,7 @@ import android.util.Base64
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -17,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
@@ -169,26 +171,19 @@ internal fun ResolvedProfileArtwork(
                 )
             }
         } else {
-            Surface(
+            Box(
                 modifier = Modifier.fillMaxSize(),
-                shape = shape,
-                color = if (isEnabled) {
-                    MiuixTheme.colorScheme.primaryContainer
-                } else {
-                    MiuixTheme.colorScheme.secondaryContainer
-                },
-                contentColor = if (isEnabled) {
-                    MiuixTheme.colorScheme.onPrimaryContainer
-                } else {
-                    MiuixTheme.colorScheme.onSecondaryContainer
-                },
+                contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = MiuixIcons.BankCards,
                     contentDescription = null,
-                    modifier = Modifier
-                        .padding(size * 0.24f)
-                        .size(size * 0.52f),
+                    modifier = Modifier.size(size * 0.52f),
+                    tint = if (isEnabled) {
+                        MiuixTheme.colorScheme.primary
+                    } else {
+                        MiuixTheme.colorScheme.onSurfaceVariantActions
+                    },
                 )
             }
         }

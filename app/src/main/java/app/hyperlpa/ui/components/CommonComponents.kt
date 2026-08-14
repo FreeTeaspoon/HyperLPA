@@ -29,7 +29,6 @@ import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.SmallTitle
-import top.yukonga.miuix.kmp.basic.Surface
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.icon.MiuixIcons
@@ -194,17 +193,12 @@ private fun MessageState(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Surface(
-            shape = androidx.compose.foundation.shape.CircleShape,
-            color = MiuixTheme.colorScheme.primaryContainer,
-            contentColor = MiuixTheme.colorScheme.onPrimaryContainer,
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                modifier = Modifier.padding(18.dp).size(30.dp),
-            )
-        }
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(30.dp),
+            tint = MiuixTheme.colorScheme.primary,
+        )
         Spacer(Modifier.height(18.dp))
         Text(
             text = title,
