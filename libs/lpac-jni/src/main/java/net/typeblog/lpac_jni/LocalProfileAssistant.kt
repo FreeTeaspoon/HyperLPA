@@ -51,6 +51,12 @@ interface LocalProfileAssistant {
     fun deleteNotification(seqNumber: Long): Boolean
     fun handleNotification(seqNumber: Long): Boolean
 
+    /** Captures the signed notification payload before the eUICC removes it from its list. */
+    fun retrieveNotificationPayload(seqNumber: Long): String?
+
+    /** Re-sends a captured signed notification payload even if it is no longer pending. */
+    fun replayNotification(notificationAddress: String, pendingNotification: String): Boolean
+
     /** Returns false when the eUICC rejects or cannot complete the reset. */
     fun euiccMemoryReset(): Boolean
 

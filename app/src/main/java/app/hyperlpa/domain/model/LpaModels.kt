@@ -76,6 +76,8 @@ data class LpaNotification(
     val operation: NotificationOperation,
     val address: String,
     val iccid: String,
+    /** Captured signed payload used to resend a notification after it leaves the card list. */
+    val pendingNotificationPayload: String? = null,
     val receivedAt: Instant = Instant.now(),
 )
 

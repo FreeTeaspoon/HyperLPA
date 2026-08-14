@@ -620,6 +620,12 @@ class HyperLpaViewModel(
     }
     fun processNotification(sequenceNumber: Long) = launch { repository.processNotification(sequenceNumber) }
     fun deleteNotification(sequenceNumber: Long) = launch { repository.deleteNotification(sequenceNumber) }
+    fun resendNotification(entry: NotificationHistoryEntry) = launch {
+        repository.resendNotification(entry)
+    }
+    fun deleteNotificationHistoryEntry(entry: NotificationHistoryEntry) = launch {
+        notificationHistoryStore.delete(entry)
+    }
     fun resetEuiccMemory() = launch(repository::resetEuiccMemory)
     fun setDefaultSmdpAddress(address: String) = launch {
         repository.setDefaultSmdpAddress(address)

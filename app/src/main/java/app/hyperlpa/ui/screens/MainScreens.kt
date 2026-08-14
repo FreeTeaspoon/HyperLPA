@@ -1,10 +1,12 @@
 package app.hyperlpa.ui.screens
 
-import android.os.Build
 import android.graphics.Bitmap
+import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.PaddingValues
@@ -20,6 +22,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -40,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
@@ -48,6 +52,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import app.hyperlpa.data.settings.ProfileLayout
 import app.hyperlpa.data.history.NotificationHistoryEntry
@@ -85,6 +90,7 @@ import kotlinx.coroutines.delay
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.PullToRefresh
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Switch
@@ -93,9 +99,12 @@ import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Add
+import top.yukonga.miuix.kmp.icon.extended.Alarm
 import top.yukonga.miuix.kmp.icon.extended.BankCards
+import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.icon.extended.Delete
 import top.yukonga.miuix.kmp.icon.extended.Download
+import top.yukonga.miuix.kmp.icon.extended.File
 import top.yukonga.miuix.kmp.icon.extended.Info
 import top.yukonga.miuix.kmp.icon.extended.Messages
 import top.yukonga.miuix.kmp.icon.extended.Refresh
@@ -105,10 +114,12 @@ import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
+import top.yukonga.miuix.kmp.theme.LocalDismissState
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.PressFeedbackType
 import top.yukonga.miuix.kmp.utils.overScrollVertical
 import top.yukonga.miuix.kmp.utils.scrollEndHaptic
+import top.yukonga.miuix.kmp.window.WindowBottomSheet
 
 @Composable
 fun ProfilesScreen(
@@ -566,20 +577,52 @@ private fun ProfileCard(
         formatProfileDisplayName(profile, state.settings.phoneFormatStrategy, fallbackName)
     }
     val unknownOperator = stringResource(R.string.profile_unknown_operator)
-    val operatorAndTags = buildList {
-        if (state.settings.showProfileProviderOnHome) {
-            add(profile.providerName.ifBlank { unknownOperator })
-        }
-        if (state.settings.showProfileTagsOnHome) {
-            addAll(profile.tags.filter(String::isNotBlank))
-        }
-    }.joinToString(" · ")
+    val profileTags = if (state.settings.showProfileTagsOnHome) {
+        profile.tags.filter(String::isNotBlank).sortedBy(String::lowercase)
+    } else {
+        emptyList()
+    }
     val profileBytes = if (state.settings.showProfileSizeOnHome) {
         profile.estimatedBytes?.takeIf { it > 0 }
     } else {
         null
     }
-    val cardDescription = stringResource(R.string.profile_open_named, displayName.fullText)
+    val profileSizeText = profileBytes?.let { bytes ->
+        formatProfileBytes(bytes).let { formatted ->
+            if (profile.sizeIsEstimated) {
+                stringResource(R.string.profile_size_estimated, formatted)
+            } else {
+                formatted
+            }
+        }
+    }
+    val reminderAt = profile.reminderAt
+        ?.takeIf { state.settings.showProfileRemindersOnHome }
+    val cardDescription = buildList {
+        add(stringResource(R.string.profile_open_named, displayName.fullText))
+        if (profileTags.isNotEmpty()) {
+            add(stringResource(R.string.profile_card_tags_description, profileTags.joinToString()))
+        }
+        reminderAt?.let {
+            add(
+                stringResource(
+                    R.string.profile_card_reminder_description,
+                    it.formatReminderDateTime(),
+                ),
+            )
+        }
+        profileSizeText?.let { sizeText ->
+            add(stringResource(R.string.profile_card_size_description, sizeText))
+        }
+        if (state.settings.showProfileIccidOnHome) {
+            add(
+                stringResource(
+                    R.string.profile_card_iccid_description,
+                    redactIdentifier(profile.iccid, state.settings.iccidRedaction),
+                ),
+            )
+        }
+    }.joinToString(". ")
     val switchDescription = stringResource(
         if (isEnabled) R.string.profile_disable_named else R.string.profile_enable_named,
         displayName.fullText,
@@ -629,67 +672,38 @@ private fun ProfileCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                if (operatorAndTags.isNotEmpty()) {
+                if (state.settings.showProfileProviderOnHome) {
                     Text(
-                        text = operatorAndTags,
+                        text = profile.providerName.ifBlank { unknownOperator },
                         style = MiuixTheme.textStyles.body2,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                if (state.settings.showProfileRemindersOnHome) {
-                    profile.reminderAt?.let { reminderAt ->
-                        Text(
-                            text = stringResource(
-                                R.string.profile_reminder_summary,
-                                reminderAt.formatReminderDateTime(),
-                            ),
-                            style = MiuixTheme.textStyles.footnote1,
-                            color = MiuixTheme.colorScheme.primary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
+                if (profileTags.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    ProfileTagsRow(tags = profileTags)
                 }
-                if (state.settings.showProfileIccidOnHome || profileBytes != null) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        if (state.settings.showProfileIccidOnHome) {
-                            Text(
-                                text = redactIdentifier(
-                                    profile.iccid,
-                                    state.settings.iccidRedaction,
-                                ),
-                                style = MiuixTheme.textStyles.footnote1,
-                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-                        profileBytes?.let { bytes ->
-                            Text(
-                                text = formatProfileBytes(bytes).let { formatted ->
-                                    if (profile.sizeIsEstimated) {
-                                        stringResource(R.string.profile_size_estimated, formatted)
-                                    } else {
-                                        formatted
-                                    }
-                                },
-                                style = MiuixTheme.textStyles.footnote1,
-                                color = if (profile.sizeIsEstimated) {
-                                    MiuixTheme.colorScheme.onSurfaceVariantSummary
-                                } else {
-                                    MiuixTheme.colorScheme.primary
-                                },
-                                maxLines = 1,
-                            )
-                        }
-                    }
+                if (state.settings.showProfileIccidOnHome) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = redactIdentifier(
+                            profile.iccid,
+                            state.settings.iccidRedaction,
+                        ),
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (reminderAt != null || profileSizeText != null) {
+                    Spacer(Modifier.height(8.dp))
+                    ProfileCardMetadataFooter(
+                        reminderAt = reminderAt,
+                        profileSizeText = profileSizeText,
+                    )
                 }
             }
             if (state.settings.showProfileSwitchOnHome) {
@@ -702,6 +716,148 @@ private fun ProfileCard(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun ProfileTagsRow(tags: List<String>) {
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        // Keep the card height stable in both the list and waterfall layouts. Very narrow cards
+        // show one tag; wider cards show two, followed by a compact overflow chip when necessary.
+        val visibleTagCount = if (maxWidth < 210.dp) 1 else 2
+        val visibleTags = tags.take(visibleTagCount)
+        val hiddenTagCount = (tags.size - visibleTags.size).coerceAtLeast(0)
+        val maxTagWidth = when {
+            maxWidth < 180.dp -> 88.dp
+            maxWidth < 260.dp -> 88.dp
+            maxWidth < 320.dp -> 112.dp
+            else -> 128.dp
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            visibleTags.forEach { tag ->
+                ProfileTagChip(
+                    text = tag,
+                    modifier = Modifier.widthIn(max = maxTagWidth),
+                )
+            }
+            if (hiddenTagCount > 0) {
+                ProfileTagChip(text = stringResource(R.string.profile_tags_overflow, hiddenTagCount))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileTagChip(
+    text: String,
+    modifier: Modifier = Modifier,
+) {
+    Text(
+        text = text,
+        style = MiuixTheme.textStyles.footnote1,
+        color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = modifier
+            .background(
+                color = MiuixTheme.colorScheme.secondaryContainerVariant,
+                shape = RoundedCornerShape(percent = 50),
+            )
+            .padding(horizontal = 9.dp, vertical = 4.dp),
+    )
+}
+
+@Composable
+private fun ProfileCardMetadataFooter(
+    reminderAt: Instant?,
+    profileSizeText: String?,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (reminderAt != null) {
+            ProfileReminderChip(
+                dateText = reminderAt.formatReminderDate(),
+                fullDateText = reminderAt.formatReminderDateTime(),
+                modifier = if (profileSizeText != null) Modifier.weight(1f) else Modifier,
+            )
+        } else if (profileSizeText != null) {
+            Spacer(Modifier.weight(1f))
+        }
+        if (reminderAt != null && profileSizeText != null) {
+            Spacer(Modifier.width(8.dp))
+        }
+        profileSizeText?.let { sizeText ->
+            ProfileSizeMeta(text = sizeText)
+        }
+    }
+}
+
+@Composable
+private fun ProfileReminderChip(
+    dateText: String,
+    fullDateText: String,
+    modifier: Modifier = Modifier,
+) {
+    val reminderDescription = stringResource(
+        R.string.profile_card_reminder_description,
+        fullDateText,
+    )
+    Row(
+        modifier = modifier
+            .semantics {
+                contentDescription = reminderDescription
+            }
+            .background(
+                color = MiuixTheme.colorScheme.primaryContainer,
+                shape = RoundedCornerShape(percent = 50),
+            )
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = MiuixIcons.Alarm,
+            contentDescription = null,
+            tint = MiuixTheme.colorScheme.onPrimaryContainer,
+            modifier = Modifier.size(14.dp),
+        )
+        Text(
+            text = dateText,
+            style = MiuixTheme.textStyles.footnote1,
+            color = MiuixTheme.colorScheme.onPrimaryContainer,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun ProfileSizeMeta(text: String) {
+    Row(
+        modifier = Modifier.widthIn(max = 112.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = MiuixIcons.File,
+            contentDescription = null,
+            tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            modifier = Modifier.size(14.dp),
+        )
+        Text(
+            text = text,
+            style = MiuixTheme.textStyles.footnote1,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -739,6 +895,13 @@ fun NotificationsScreen(
     onDelete: (Long) -> Unit,
     onRefresh: () -> Unit,
 ) {
+    val profileFallbackName = stringResource(R.string.profile_default_name)
+    val profilesByIccid = remember(state.profiles) {
+        state.profiles.associateBy(ProfileInfo::iccid)
+    }
+    var selectedNotification by remember { mutableStateOf<LpaNotification?>(null) }
+    var showNotificationDetails by remember { mutableStateOf(false) }
+
     PullToRefresh(
         isRefreshing = state.lpa.operation is LpaOperation.Refreshing,
         onRefresh = onRefresh,
@@ -780,11 +943,49 @@ fun NotificationsScreen(
                     }
                 } else {
                     items(state.lpa.notifications, key = LpaNotification::sequenceNumber) { notification ->
-                        NotificationCard(notification = notification, onProcess = onProcess, onDelete = onDelete)
+                        val profile = profilesByIccid[notification.iccid]
+                        NotificationCard(
+                            notification = notification,
+                            profileName = profile?.let {
+                                formatProfileDisplayName(
+                                    it,
+                                    state.settings.phoneFormatStrategy,
+                                    profileFallbackName,
+                                ).fullText
+                            },
+                            providerName = profile?.providerName?.takeIf(String::isNotBlank),
+                            iccid = notification.iccid
+                                .takeIf(String::isNotBlank),
+                            onDetails = {
+                                selectedNotification = notification
+                                showNotificationDetails = true
+                            },
+                            onProcess = onProcess,
+                            onDelete = onDelete,
+                        )
                     }
                 }
             }
         }
+    }
+
+    selectedNotification?.let { notification ->
+        val profile = profilesByIccid[notification.iccid]
+        NotificationDetailsSheet(
+            notification = notification,
+            profile = profile,
+            profileName = profile?.let {
+                formatProfileDisplayName(
+                    it,
+                    state.settings.phoneFormatStrategy,
+                    profileFallbackName,
+                ).fullText
+            },
+            iccid = notification.iccid,
+            show = showNotificationDetails,
+            onDismissRequest = { showNotificationDetails = false },
+            onDismissFinished = { selectedNotification = null },
+        )
     }
 }
 
@@ -792,7 +993,16 @@ fun NotificationsScreen(
 fun NotificationHistoryScreen(
     state: HyperLpaUiState,
     onBack: () -> Unit,
+    onDeleteHistoryEntry: (NotificationHistoryEntry) -> Unit,
+    onResendNotification: (NotificationHistoryEntry) -> Unit,
 ) {
+    var selectedHistoryEntry by remember { mutableStateOf<NotificationHistoryEntry?>(null) }
+    var showHistoryDetails by remember { mutableStateOf(false) }
+    var showHistoryActions by remember { mutableStateOf(false) }
+    var openDetailsAfterActions by remember { mutableStateOf(false) }
+    var deleteHistoryEntry by remember { mutableStateOf<NotificationHistoryEntry?>(null) }
+    var showDeleteConfirmation by remember { mutableStateOf(false) }
+
     DetailLazyScaffold(
         title = stringResource(R.string.notification_history_title),
         onBack = onBack,
@@ -821,14 +1031,100 @@ fun NotificationHistoryScreen(
                 }
             }
             items(state.notificationHistory.asReversed()) { entry ->
-                NotificationHistoryCard(entry = entry)
+                NotificationHistoryCard(
+                    entry = entry,
+                    onClick = {
+                        selectedHistoryEntry = entry
+                        showHistoryDetails = true
+                    },
+                    onLongPress = {
+                        selectedHistoryEntry = entry
+                        showHistoryActions = true
+                    },
+                )
             }
+        }
+    }
+
+    selectedHistoryEntry?.let { entry ->
+        NotificationHistoryDetailsSheet(
+            entry = entry,
+            show = showHistoryDetails,
+            onDismissRequest = { showHistoryDetails = false },
+            onDismissFinished = { selectedHistoryEntry = null },
+        )
+        NotificationHistoryActionsSheet(
+            entry = entry,
+            show = showHistoryActions,
+            onViewDetails = {
+                openDetailsAfterActions = true
+                showHistoryActions = false
+            },
+            onResend = {
+                showHistoryActions = false
+                onResendNotification(entry)
+            },
+            onDelete = {
+                deleteHistoryEntry = entry
+                showHistoryActions = false
+            },
+            onDismissRequest = { showHistoryActions = false },
+            onDismissFinished = {
+                if (deleteHistoryEntry != null) {
+                    showDeleteConfirmation = true
+                }
+                if (openDetailsAfterActions) {
+                    openDetailsAfterActions = false
+                    showHistoryDetails = true
+                }
+            },
+        )
+    }
+
+    OverlayDialog(
+        show = showDeleteConfirmation,
+        title = stringResource(R.string.notification_history_delete_title),
+        summary = stringResource(R.string.notification_history_delete_summary),
+        onDismissRequest = {
+            showDeleteConfirmation = false
+            deleteHistoryEntry = null
+        },
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            TextButton(
+                text = stringResource(R.string.common_cancel),
+                onClick = {
+                    showDeleteConfirmation = false
+                    deleteHistoryEntry = null
+                },
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(
+                text = stringResource(R.string.notification_history_delete_action),
+                onClick = {
+                    deleteHistoryEntry?.let(onDeleteHistoryEntry)
+                    showDeleteConfirmation = false
+                    deleteHistoryEntry = null
+                    selectedHistoryEntry = null
+                },
+                colors = ButtonDefaults.textButtonColors(
+                    textColor = MiuixTheme.colorScheme.error,
+                ),
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }
 
 @Composable
-private fun NotificationHistoryCard(entry: NotificationHistoryEntry) {
+private fun NotificationHistoryCard(
+    entry: NotificationHistoryEntry,
+    onClick: () -> Unit,
+    onLongPress: () -> Unit,
+) {
     val actionLabel = entry.action.localizedLabel()
     val statusLabel = entry.status.localizedLabel()
     val triggerLabel = entry.trigger.localizedLabel()
@@ -841,7 +1137,7 @@ private fun NotificationHistoryCard(entry: NotificationHistoryEntry) {
     val timestampSummary = failureLabel?.let { failure ->
         stringResource(R.string.notification_history_time_failure, timestamp, failure)
     } ?: timestamp
-    GroupedCard {
+    GroupedCard(onClick = onClick, onLongPress = onLongPress) {
         Column(Modifier.fillMaxWidth().padding(16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -886,10 +1182,14 @@ private fun NotificationHistoryCard(entry: NotificationHistoryEntry) {
 @Composable
 private fun NotificationCard(
     notification: LpaNotification,
+    profileName: String?,
+    providerName: String?,
+    iccid: String?,
+    onDetails: () -> Unit,
     onProcess: (Long) -> Unit,
     onDelete: (Long) -> Unit,
 ) {
-    GroupedCard {
+    GroupedCard(onClick = onDetails) {
         Column(Modifier.padding(16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -908,6 +1208,33 @@ private fun NotificationCard(
                         style = MiuixTheme.textStyles.title3,
                         fontWeight = FontWeight.SemiBold,
                     )
+                    profileName?.let { name ->
+                        Text(
+                            text = name,
+                            style = MiuixTheme.textStyles.body1,
+                            color = MiuixTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    providerName?.let { provider ->
+                        Text(
+                            text = provider,
+                            style = MiuixTheme.textStyles.body2,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    iccid?.let { value ->
+                        Text(
+                            text = stringResource(R.string.notification_iccid_summary, value),
+                            style = MiuixTheme.textStyles.footnote1,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     Text(
                         text = notification.address.ifBlank {
                             stringResource(R.string.notification_no_address)
@@ -943,6 +1270,285 @@ private fun NotificationCard(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun NotificationDetailsSheet(
+    notification: LpaNotification,
+    profile: ProfileInfo?,
+    profileName: String?,
+    iccid: String,
+    show: Boolean,
+    onDismissRequest: () -> Unit,
+    onDismissFinished: () -> Unit,
+) {
+    WindowBottomSheet(
+        show = show,
+        title = profileName ?: stringResource(R.string.notification_details_title),
+        startAction = {
+            val dismissState = LocalDismissState.current
+            IconButton(onClick = { dismissState?.invoke() ?: onDismissRequest() }) {
+                Icon(
+                    imageVector = MiuixIcons.Close,
+                    contentDescription = stringResource(R.string.common_close),
+                )
+            }
+        },
+        backgroundColor = MiuixTheme.colorScheme.surfaceContainerHigh,
+        insideMargin = DpSize(24.dp, 0.dp),
+        onDismissRequest = onDismissRequest,
+        onDismissFinished = onDismissFinished,
+    ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item {
+                NotificationDetailLine(
+                    title = stringResource(R.string.notification_details_operation),
+                    value = notification.operation.localizedLabel(),
+                )
+            }
+            item {
+                NotificationDetailLine(
+                    title = stringResource(R.string.notification_details_profile),
+                    value = profileName ?: stringResource(R.string.profile_unavailable_title),
+                )
+            }
+            profile?.let { selectedProfile ->
+                item {
+                    NotificationDetailLine(
+                        title = stringResource(R.string.profile_provider),
+                        value = selectedProfile.providerName.ifBlank {
+                            stringResource(R.string.profile_unknown_operator)
+                        },
+                    )
+                }
+                item {
+                    NotificationDetailLine(
+                        title = stringResource(R.string.notification_details_profile_state),
+                        value = if (selectedProfile.state == ProfileState.ENABLED) {
+                            stringResource(R.string.profile_enabled)
+                        } else {
+                            stringResource(R.string.profile_disabled)
+                        },
+                    )
+                }
+            }
+            item {
+                NotificationDetailLine(
+                    title = stringResource(R.string.notification_details_iccid),
+                    value = iccid.ifBlank { stringResource(R.string.common_unavailable) },
+                )
+            }
+            item {
+                NotificationDetailLine(
+                    title = stringResource(R.string.profile_notification_address),
+                    value = notification.address.ifBlank {
+                        stringResource(R.string.notification_no_address)
+                    },
+                )
+            }
+            item {
+                NotificationDetailLine(
+                    title = stringResource(R.string.notification_details_sequence),
+                    value = notification.sequenceNumber.toString(),
+                )
+            }
+            item {
+                Spacer(
+                    modifier = Modifier.height(
+                        24.dp +
+                            WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() +
+                            WindowInsets.captionBar.asPaddingValues().calculateBottomPadding(),
+                    ),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NotificationHistoryDetailsSheet(
+    entry: NotificationHistoryEntry,
+    show: Boolean,
+    onDismissRequest: () -> Unit,
+    onDismissFinished: () -> Unit,
+) {
+    val operationLabel = localizedNotificationOperation(entry.notificationOperation)
+    WindowBottomSheet(
+        show = show,
+        title = entry.profileName ?: operationLabel,
+        startAction = {
+            val dismissState = LocalDismissState.current
+            IconButton(onClick = { dismissState?.invoke() ?: onDismissRequest() }) {
+                Icon(
+                    imageVector = MiuixIcons.Close,
+                    contentDescription = stringResource(R.string.common_close),
+                )
+            }
+        },
+        backgroundColor = MiuixTheme.colorScheme.surfaceContainerHigh,
+        insideMargin = DpSize(24.dp, 0.dp),
+        onDismissRequest = onDismissRequest,
+        onDismissFinished = onDismissFinished,
+    ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item {
+                NotificationDetailLine(
+                    title = stringResource(R.string.notification_details_action),
+                    value = entry.action.localizedLabel(),
+                )
+            }
+            item {
+                NotificationDetailLine(
+                    title = stringResource(R.string.notification_details_status),
+                    value = entry.status.localizedLabel(),
+                )
+            }
+            item {
+                NotificationDetailLine(
+                    title = stringResource(R.string.notification_details_trigger),
+                    value = entry.trigger.localizedLabel(),
+                )
+            }
+            item {
+                NotificationDetailLine(
+                    title = stringResource(R.string.notification_details_operation),
+                    value = operationLabel,
+                )
+            }
+            item {
+                NotificationDetailLine(
+                    title = stringResource(R.string.notification_details_profile),
+                    value = entry.profileName ?: stringResource(R.string.common_unavailable),
+                )
+            }
+            item {
+                NotificationDetailLine(
+                    title = stringResource(R.string.profile_provider),
+                    value = entry.providerName ?: stringResource(R.string.common_unavailable),
+                )
+            }
+            item {
+                NotificationDetailLine(
+                    title = stringResource(R.string.notification_details_eid),
+                    value = entry.eid ?: stringResource(R.string.common_unavailable),
+                )
+            }
+            item {
+                NotificationDetailLine(
+                    title = stringResource(R.string.notification_details_iccid),
+                    value = entry.iccid
+                        ?: entry.redactedIccid
+                        ?: stringResource(R.string.common_unavailable),
+                )
+            }
+            item {
+                NotificationDetailLine(
+                    title = stringResource(R.string.profile_notification_address),
+                    value = entry.notificationAddress
+                        ?: entry.endpointHost
+                        ?: stringResource(R.string.common_unavailable),
+                )
+            }
+            item {
+                NotificationDetailLine(
+                    title = stringResource(R.string.notification_details_sequence),
+                    value = entry.sequenceNumber?.toString()
+                        ?: stringResource(R.string.common_unavailable),
+                )
+            }
+            item {
+                NotificationDetailLine(
+                    title = stringResource(R.string.notification_details_time),
+                    value = entry.timestamp.formatReminderDateTime(),
+                )
+            }
+            entry.failureCode?.let { failureCode ->
+                item {
+                    NotificationDetailLine(
+                        title = stringResource(R.string.notification_details_failure),
+                        value = failureCode.localizedFailureLabel(),
+                    )
+                }
+            }
+            item {
+                Spacer(
+                    modifier = Modifier.height(
+                        24.dp +
+                            WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() +
+                            WindowInsets.captionBar.asPaddingValues().calculateBottomPadding(),
+                    ),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NotificationHistoryActionsSheet(
+    entry: NotificationHistoryEntry,
+    show: Boolean,
+    onViewDetails: () -> Unit,
+    onResend: () -> Unit,
+    onDelete: () -> Unit,
+    onDismissRequest: () -> Unit,
+    onDismissFinished: () -> Unit,
+) {
+    OverlayBottomSheet(
+        show = show,
+        title = stringResource(R.string.notification_history_options_title),
+        onDismissRequest = onDismissRequest,
+        onDismissFinished = onDismissFinished,
+    ) {
+        Column {
+            ArrowPreference(
+                title = stringResource(R.string.notification_history_option_details),
+                summary = stringResource(R.string.notification_history_option_details_summary),
+                onClick = onViewDetails,
+            )
+            if (entry.sequenceNumber != null) {
+                ArrowPreference(
+                    title = stringResource(R.string.notification_history_option_resend),
+                    summary = stringResource(R.string.notification_history_option_resend_summary),
+                    onClick = onResend,
+                )
+            }
+            ArrowPreference(
+                title = stringResource(R.string.notification_history_option_delete),
+                summary = stringResource(R.string.notification_history_option_delete_summary),
+                onClick = onDelete,
+            )
+            ProfileActionSheetFooterSpacer()
+        }
+    }
+}
+
+@Composable
+private fun NotificationDetailLine(
+    title: String,
+    value: String,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(
+            text = title,
+            style = MiuixTheme.textStyles.subtitle,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            fontWeight = FontWeight.Medium,
+        )
+        Text(
+            text = value,
+            style = MiuixTheme.textStyles.main,
+            color = MiuixTheme.colorScheme.onSurface,
+        )
     }
 }
 
@@ -1086,6 +1692,11 @@ fun ToolsScreen(
 
 private fun Instant.formatReminderDateTime(): String = DateTimeFormatter
     .ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)
+    .withZone(ZoneId.systemDefault())
+    .format(this)
+
+private fun Instant.formatReminderDate(): String = DateTimeFormatter
+    .ofLocalizedDate(FormatStyle.MEDIUM)
     .withZone(ZoneId.systemDefault())
     .format(this)
 
