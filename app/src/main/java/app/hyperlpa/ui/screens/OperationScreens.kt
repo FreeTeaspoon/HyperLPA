@@ -129,7 +129,6 @@ import top.yukonga.miuix.kmp.icon.extended.ExpandLess
 import top.yukonga.miuix.kmp.icon.extended.ExpandMore
 import top.yukonga.miuix.kmp.icon.extended.Info
 import top.yukonga.miuix.kmp.icon.extended.Messages
-import top.yukonga.miuix.kmp.icon.extended.Ok
 import top.yukonga.miuix.kmp.icon.extended.Refresh
 import top.yukonga.miuix.kmp.icon.extended.Scan
 import top.yukonga.miuix.kmp.icon.extended.Search
@@ -977,7 +976,7 @@ fun DownloadProfileScreen(
                         horizontalArrangement = Arrangement.Center,
                     ) {
                         InfiniteProgressIndicator(
-                            color = primaryColors.disabledContentColor,
+                            color = MiuixTheme.colorScheme.onPrimary,
                             size = 20.dp,
                         )
                         Spacer(Modifier.width(10.dp))
@@ -1259,6 +1258,7 @@ fun ProfileDownloadConfirmationScreen(
 fun ProfileDownloadResultScreen(
     result: ProfileDownloadResult,
     profile: ProfileInfo,
+    cloudIcon: ByteArray?,
     busy: Boolean,
     onBack: () -> Unit,
     onEnable: () -> Unit,
@@ -1269,18 +1269,35 @@ fun ProfileDownloadResultScreen(
     var nickname by remember(profile.nickname, profile.name) {
         mutableStateOf(profile.nickname.ifBlank { profile.name })
     }
+    val displayName = profile.name.ifBlank { profile.providerName }
+        .ifBlank { stringResource(R.string.profile_default_name) }
+    val artworkProfile = if (cloudIcon != null) profile.copy(iconBase64 = null) else profile
+    val artworkBitmap = rememberProfileArtworkBitmap(artworkProfile, cloudIcon)
 
-    DetailLazyScaffold(title = stringResource(R.string.action_download_profile), onBack = onBack) { _ ->
+    DetailLazyScaffold(
+        title = "",
+        onBack = onBack,
+        collapsedTitle = displayName,
+        collapsedBarRevealStart = 132.dp,
+        background = {
+            if (artworkBitmap != null) {
+                ProfileGradientBackdrop(bitmap = artworkBitmap)
+            } else {
+                AccentGradientBackdrop()
+            }
+        },
+    ) { _ ->
         item {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 28.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Icon(
-                    imageVector = MiuixIcons.Ok,
-                    contentDescription = null,
-                    modifier = Modifier.size(42.dp),
-                    tint = MiuixTheme.colorScheme.primary,
+                ResolvedProfileArtwork(
+                    profile = artworkProfile,
+                    bitmap = artworkBitmap,
+                    isEnabled = true,
+                    size = 72.dp,
+                    cornerRadius = 18.dp,
                 )
                 Spacer(Modifier.height(20.dp))
                 Text(

@@ -394,7 +394,17 @@ class HyperLpaViewModel(
                     suppressedDownloadPreviewSource = null
                     val preview = input.preview
                     if (preview == null) {
-                        downloadPreviewCloudData.value = DownloadPreviewCloudData()
+                        if (repository.state.value.completedProfileDownload == null) {
+                            downloadPreviewCloudData.value = DownloadPreviewCloudData()
+                        } else {
+                            // Keep the icon shown on the confirmation page available while the
+                            // completed-download result is displayed. It is cleared when the
+                            // result route is finished or when a new preview starts.
+                            downloadPreviewCloudData.value = downloadPreviewCloudData.value.copy(
+                                estimatedBytes = null,
+                                loading = false,
+                            )
+                        }
                         return@collectLatest
                     }
                     val loadIcon = input.settings.loadOperatorIcons
@@ -606,6 +616,7 @@ class HyperLpaViewModel(
         backStack.clear()
         backStack.add(AppRoute.Shell)
         repository.clearProfileDownloadResult()
+        downloadPreviewCloudData.value = DownloadPreviewCloudData()
     }
     fun processNotification(sequenceNumber: Long) = launch { repository.processNotification(sequenceNumber) }
     fun deleteNotification(sequenceNumber: Long) = launch { repository.deleteNotification(sequenceNumber) }
