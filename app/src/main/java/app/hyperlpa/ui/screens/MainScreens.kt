@@ -321,7 +321,10 @@ fun ProfilesScreen(
                                 text = stringResource(R.string.action_download_profile),
                                 onClick = onDownload,
                                 colors = ButtonDefaults.textButtonColorsPrimary(),
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp)
+                                    .padding(top = 12.dp),
                             )
                         }
                     }
