@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -25,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.hyperlpa.ui.theme.LocalDarkTheme
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
@@ -139,7 +142,11 @@ fun PageStateHost(
     ) { target ->
         when (target) {
             PageStateKind.LOADING -> LoadingState(message = resolvedLoadingMessage)
-            PageStateKind.EMPTY -> EmptyState(title = resolvedEmptyTitle, message = resolvedEmptyMessage)
+            PageStateKind.EMPTY -> EmptyState(
+                title = resolvedEmptyTitle,
+                message = resolvedEmptyMessage,
+                modifier = Modifier.fillMaxSize(),
+            )
             PageStateKind.ERROR -> ErrorState(
                 title = resolvedErrorTitle,
                 message = resolvedErrorMessage,
@@ -183,6 +190,8 @@ fun EmptyState(
         message = message,
         modifier = modifier,
         icon = icon,
+        iconTint = if (LocalDarkTheme.current) Color.White else Color.Black,
+        showMessage = false,
         actionLabel = actionLabel,
         onAction = onAction,
     )
@@ -200,6 +209,8 @@ fun ErrorState(
         message = message,
         modifier = modifier,
         icon = MiuixIcons.Refresh,
+        iconTint = MiuixTheme.colorScheme.primary,
+        showMessage = true,
         actionLabel = if (onRetry == null) null else stringResource(app.hyperlpa.R.string.common_try_again),
         onAction = onRetry,
     )
@@ -210,6 +221,8 @@ private fun MessageState(
     title: String,
     message: String,
     icon: ImageVector,
+    iconTint: Color,
+    showMessage: Boolean,
     modifier: Modifier,
     actionLabel: String?,
     onAction: (() -> Unit)?,
@@ -231,7 +244,7 @@ private fun MessageState(
             imageVector = icon,
             contentDescription = null,
             modifier = Modifier.size(30.dp),
-            tint = MiuixTheme.colorScheme.primary,
+            tint = iconTint,
         )
         Spacer(Modifier.height(18.dp))
         Text(
@@ -240,13 +253,15 @@ private fun MessageState(
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
         )
-        Spacer(Modifier.height(6.dp))
-        Text(
-            text = message,
-            style = MiuixTheme.textStyles.body1,
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-            textAlign = TextAlign.Center,
-        )
+        if (showMessage) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = message,
+                style = MiuixTheme.textStyles.body1,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                textAlign = TextAlign.Center,
+            )
+        }
         if (actionLabel != null && onAction != null) {
             Spacer(Modifier.height(18.dp))
             TextButton(

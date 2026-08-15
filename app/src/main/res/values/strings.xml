@@ -66,6 +66,7 @@
     <string name="common_send">Send</string>
     <string name="common_none">None</string>
     <string name="common_cancel">Cancel</string>
+    <string name="common_ok">OK</string>
     <string name="common_confirm">Confirm</string>
     <string name="common_save">Save</string>
     <string name="common_restore_defaults">Restore defaults</string>
@@ -124,6 +125,7 @@
     <string name="notifications_no_reader_message">Connect a reader on the Profiles page to load notifications.</string>
     <string name="notifications_none_pending">No pending notifications</string>
     <string name="notifications_none_pending_message">Profile management notifications are already up to date.</string>
+    <string name="notifications_pending_status">Pending</string>
     <string name="notification_history_title">Notification history</string>
     <string name="notification_history_empty">No notification history</string>
     <string name="notification_history_empty_message">Send and removal outcomes will be saved here with profile details, EIDs, ICCIDs, and safe notification origins.</string>
@@ -131,9 +133,6 @@
         <item quantity="one">%1$d saved outcome</item>
         <item quantity="other">%1$d saved outcomes</item>
     </plurals>
-    <string name="notification_history_action_status">%1$s · %2$s</string>
-    <string name="notification_history_operation_host">%1$s · %2$s</string>
-    <string name="notification_history_time_failure">%1$s · %2$s</string>
     <string name="notification_history_action_send">Send</string>
     <string name="notification_history_action_delete">Remove</string>
     <string name="notification_history_status_succeeded">Succeeded</string>
@@ -624,14 +623,13 @@
     <string name="profile_tags_title">Profile tags</string>
     <string name="profile_reminder_title_sheet">Profile reminder</string>
     <string name="profile_reminder_permission_required">Notification permission is required for reminders</string>
-    <string name="reminder_tomorrow">Tomorrow</string>
-    <string name="reminder_tomorrow_summary">In 24 hours</string>
+    <string name="reminder_choose_date">Choose date</string>
     <string name="reminder_week">In one week</string>
     <string name="reminder_week_summary">Seven days from now</string>
     <string name="reminder_month">In one month</string>
     <string name="reminder_month_summary">Thirty days from now</string>
     <string name="reminder_custom">Custom</string>
-    <string name="reminder_custom_summary">Choose a date and time</string>
+    <string name="reminder_custom_summary">Choose a date</string>
     <string name="reminder_clear">Clear reminder</string>
     <string name="profile_icon_choose_profile">Choose photo for this profile</string>
     <string name="profile_icon_choose_profile_summary">Only this profile uses the selected image</string>
@@ -938,8 +936,6 @@
     <string name="tags_add">Add tag</string>
     <string name="tags_existing">Existing tags</string>
     <string name="tags_add_to_profile">Add to this profile</string>
-    <string name="reminders_choose_future">Choose a future date and time</string>
-
     <!-- Reader descriptions -->
     <string name="reader_nbridge_detail">NBridge secure-element provider</string>
     <string name="reader_omapi_card_detected">Android OMAPI · card detected</string>
