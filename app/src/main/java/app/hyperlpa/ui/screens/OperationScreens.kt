@@ -14,6 +14,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -31,6 +32,8 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -46,6 +49,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -128,6 +132,7 @@ import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.BankCards
+import top.yukonga.miuix.kmp.icon.extended.Alarm
 import top.yukonga.miuix.kmp.icon.extended.Delete
 import top.yukonga.miuix.kmp.icon.extended.Download
 import top.yukonga.miuix.kmp.icon.extended.Edit
@@ -263,6 +268,14 @@ fun ProfileDetailsScreen(
         is LpaOperation.Refreshing -> operation.message
         else -> stringResource(R.string.reader_loading)
     }
+    val openTagsEditor: () -> Unit = {
+        editableTags = profile?.tags.orEmpty()
+        newTag = ""
+        showTags = true
+    }
+    val openReminderEditor: () -> Unit = {
+        showReminder = true
+    }
 
     DetailLazyScaffold(
         title = "",
@@ -293,6 +306,8 @@ fun ProfileDetailsScreen(
                     settings = settings,
                     artworkBitmap = artworkBitmap,
                     displayName = requireNotNull(displayName),
+                    onOpenTags = openTagsEditor,
+                    onOpenReminder = openReminderEditor,
                 )
             }
             item { SectionHeading(stringResource(R.string.profile_section)) }
@@ -341,17 +356,13 @@ fun ProfileDetailsScreen(
                         title = stringResource(R.string.profile_tags),
                         summary = profile.tags.takeIf { it.isNotEmpty() }?.joinToString()
                             ?: stringResource(R.string.profile_no_tags),
-                        onClick = {
-                            editableTags = profile.tags
-                            newTag = ""
-                            showTags = true
-                        },
+                        onClick = openTagsEditor,
                     )
                     ArrowPreference(
                         title = stringResource(R.string.profile_reminder),
                         summary = profile.reminderAt?.formatReminderDate()
                             ?: stringResource(R.string.profile_no_reminder),
-                        onClick = { showReminder = true },
+                        onClick = openReminderEditor,
                     )
                 }
             }
@@ -2544,12 +2555,18 @@ private fun ProfileHero(
     settings: AppSettings,
     artworkBitmap: Bitmap?,
     displayName: FormattedProfileDisplayName,
+    onOpenTags: () -> Unit,
+    onOpenReminder: () -> Unit,
 ) {
     val context = LocalContext.current
     val copyPhoneLabel = stringResource(R.string.profile_copy_phone)
     val phoneClipboardLabel = stringResource(R.string.profile_phone_clipboard_label)
     val phoneCopiedMessage = stringResource(R.string.profile_phone_copied)
     val phoneNumberInteractionSource = remember { MutableInteractionSource() }
+    val profileTags = profile.tags
+        .filter(String::isNotBlank)
+        .sortedBy(String::lowercase)
+    val reminderText = profile.reminderAt?.formatReminderDate()
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -2614,7 +2631,122 @@ private fun ProfileHero(
             style = MiuixTheme.textStyles.footnote1,
             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
         )
+        if (profileTags.isNotEmpty() || reminderText != null) {
+            Spacer(Modifier.height(10.dp))
+            ProfileHeroMetadataRow(
+                tags = profileTags,
+                reminderText = reminderText,
+                onOpenTags = onOpenTags,
+                onOpenReminder = onOpenReminder,
+            )
+        }
     }
+}
+
+@Composable
+private fun ProfileHeroMetadataRow(
+    tags: List<String>,
+    reminderText: String?,
+    onOpenTags: () -> Unit,
+    onOpenReminder: () -> Unit,
+) {
+    val visibleTagCount = if (reminderText != null) 1 else 2
+    val visibleTags = tags.take(visibleTagCount)
+    val hiddenTagCount = (tags.size - visibleTags.size).coerceAtLeast(0)
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (visibleTags.isNotEmpty()) {
+            ProfileHeroMetadataAction(
+                onClickLabel = stringResource(R.string.profile_tags),
+                onClick = onOpenTags,
+            ) {
+                visibleTags.forEach { tag ->
+                    ProfileHeroTagChip(text = tag)
+                }
+                if (hiddenTagCount > 0) {
+                    ProfileHeroTagChip(
+                        text = stringResource(R.string.profile_tags_overflow, hiddenTagCount),
+                    )
+                }
+            }
+        }
+        if (visibleTags.isNotEmpty() && reminderText != null) {
+            Spacer(Modifier.width(2.dp))
+        }
+        reminderText?.let { dateText ->
+            ProfileHeroMetadataAction(
+                onClickLabel = stringResource(R.string.profile_reminder),
+                onClick = onOpenReminder,
+            ) {
+                Row(
+                    modifier = Modifier
+                        .background(
+                            color = MiuixTheme.colorScheme.primaryContainer,
+                            shape = RoundedCornerShape(percent = 50),
+                        )
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = MiuixIcons.Alarm,
+                        contentDescription = null,
+                        tint = MiuixTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(12.dp),
+                    )
+                    Text(
+                        text = dateText,
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = MiuixTheme.colorScheme.onPrimaryContainer,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = 128.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileHeroMetadataAction(
+    onClickLabel: String,
+    onClick: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .defaultMinSize(minHeight = 48.dp)
+            .clickable(onClickLabel = onClickLabel, onClick = onClick)
+            .semantics(mergeDescendants = true) {}
+            .padding(horizontal = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        content()
+    }
+}
+
+@Composable
+private fun ProfileHeroTagChip(text: String) {
+    Text(
+        text = text,
+        style = MiuixTheme.textStyles.footnote2,
+        color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .widthIn(max = 104.dp)
+            .background(
+                color = MiuixTheme.colorScheme.secondaryContainerVariant,
+                shape = RoundedCornerShape(percent = 50),
+            )
+            .padding(horizontal = 7.dp, vertical = 3.dp),
+    )
 }
 
 @Composable
