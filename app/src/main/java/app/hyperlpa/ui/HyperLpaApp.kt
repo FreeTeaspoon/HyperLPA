@@ -197,6 +197,7 @@ fun HyperLpaApp(
                 val profile = currentState.value.profiles.firstOrNull { it.iccid == route.iccid }
                 ProfileDetailsScreen(
                     profile = profile,
+                    lpa = currentState.value.lpa,
                     settings = currentState.value.settings,
                     suggestedTags = currentState.value.profiles.flatMap { it.tags }.toSet(),
                     operatorIcon = currentState.value.operatorIcons[route.iccid],

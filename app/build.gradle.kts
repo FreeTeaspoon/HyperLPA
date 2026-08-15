@@ -228,8 +228,8 @@ android {
             versionNameSuffix = "-debug"
         }
         release {
-            isMinifyEnabled = false
-            isShrinkResources = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             signingConfig = signingConfigs.findByName("nineEsimRelease")
             ndk.debugSymbolLevel = "SYMBOL_TABLE"
             proguardFiles(
