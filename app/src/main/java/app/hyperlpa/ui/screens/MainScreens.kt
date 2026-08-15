@@ -146,6 +146,7 @@ fun ProfilesScreen(
     // must not invalidate the home list while the bottom-sheet entrance animation is running.
     val profileActionsState = remember { mutableStateOf<ProfileInfo?>(null) }
     val profiles = state.profiles
+    val profileSwitchLocked = state.lpa.operation is LpaOperation.Switching
     val artworkLoadState = rememberProfileArtworkBitmaps(
         profiles = profiles,
         cloudIcons = state.operatorIcons,
@@ -252,6 +253,7 @@ fun ProfilesScreen(
                             profile = profile,
                             artworkBitmap = artworkLoadState.bitmaps[profile.iccid],
                             state = state,
+                            switchEnabled = !profileSwitchLocked,
                             onOpen = { onOpenProfile(profile) },
                             onEnableChange = { enabled -> onEnableChange(profile.iccid, enabled) },
                             onLongPress = { profileActionsState.value = profile },
@@ -289,6 +291,7 @@ fun ProfilesScreen(
                                 profile = profile,
                                 artworkBitmap = artworkLoadState.bitmaps[profile.iccid],
                                 state = state,
+                                switchEnabled = !profileSwitchLocked,
                                 onOpen = { onOpenProfile(profile) },
                                 onEnableChange = { enabled -> onEnableChange(profile.iccid, enabled) },
                                 onLongPress = { profileActionsState.value = profile },
@@ -335,6 +338,7 @@ fun ProfilesScreen(
 
     ProfileActionsOverlay(
         profileState = profileActionsState,
+        profileSwitchLocked = profileSwitchLocked,
         onEnableChange = onEnableChange,
         onSetPinned = onSetPinned,
         onRename = onRename,
@@ -344,6 +348,7 @@ fun ProfilesScreen(
 @Composable
 private fun ProfileActionsOverlay(
     profileState: MutableState<ProfileInfo?>,
+    profileSwitchLocked: Boolean,
     onEnableChange: (String, Boolean) -> Unit,
     onSetPinned: (String, Boolean) -> Unit,
     onRename: (String, String) -> Unit,
@@ -418,6 +423,7 @@ private fun ProfileActionsOverlay(
                             R.string.profile_action_enable_summary
                         },
                     ),
+                    enabled = !profileSwitchLocked,
                     onClick = {
                         onEnableChange(selectedProfile.iccid, !isEnabled)
                         isClosing = true
@@ -570,6 +576,7 @@ private fun ProfileCard(
     profile: ProfileInfo,
     artworkBitmap: Bitmap?,
     state: HyperLpaUiState,
+    switchEnabled: Boolean,
     onOpen: () -> Unit,
     onEnableChange: (Boolean) -> Unit,
     onLongPress: () -> Unit,
@@ -626,10 +633,21 @@ private fun ProfileCard(
             )
         }
     }.joinToString(". ")
-    val switchDescription = stringResource(
-        if (isEnabled) R.string.profile_disable_named else R.string.profile_enable_named,
-        displayName.fullText,
-    )
+    val switching = state.lpa.operation as? LpaOperation.Switching
+    val switchDescription = if (switching != null && switching.iccid == profile.iccid) {
+        stringResource(
+            if (switching.enable) {
+                R.string.operation_enabling_profile
+            } else {
+                R.string.operation_disabling_profile
+            },
+        )
+    } else {
+        stringResource(
+            if (isEnabled) R.string.profile_disable_named else R.string.profile_enable_named,
+            displayName.fullText,
+        )
+    }
     val profileActionsDescription = stringResource(R.string.profile_actions_title)
 
     Card(
@@ -713,6 +731,7 @@ private fun ProfileCard(
                 Switch(
                     checked = isEnabled,
                     onCheckedChange = onEnableChange,
+                    enabled = switchEnabled,
                     modifier = Modifier.semantics {
                         contentDescription = switchDescription
                     },

@@ -209,6 +209,7 @@ fun HyperLpaApp(
                     ),
                     onBack = viewModel::navigateBack,
                     onEnableChange = { enabled -> viewModel.setProfileEnabled(route.iccid, enabled) },
+                    profileSwitchEnabled = currentState.value.lpa.operation !is LpaOperation.Switching,
                     onSetPinned = { pinned -> viewModel.setProfilePinned(route.iccid, pinned) },
                     onRename = { nickname -> viewModel.renameProfile(route.iccid, nickname) },
                     onDelete = { viewModel.deleteProfile(route.iccid) },
@@ -966,13 +967,6 @@ private fun NonDismissibleProgressDialog(
 @Composable
 private fun OperationProgressDialog(operation: LpaOperation) {
     val title = when (operation) {
-        is LpaOperation.Switching -> stringResource(
-            if (operation.enable) {
-                app.hyperlpa.R.string.operation_enabling_profile
-            } else {
-                app.hyperlpa.R.string.operation_disabling_profile
-            },
-        )
         is LpaOperation.Deleting -> stringResource(app.hyperlpa.R.string.operation_deleting_profile)
         is LpaOperation.Renaming -> stringResource(app.hyperlpa.R.string.operation_renaming_profile)
         is LpaOperation.Downloading -> null
@@ -984,6 +978,7 @@ private fun OperationProgressDialog(operation: LpaOperation) {
         is LpaOperation.Connecting,
         is LpaOperation.DiscoveringReaders,
         is LpaOperation.Refreshing,
+        is LpaOperation.Switching,
         -> null
     }
 

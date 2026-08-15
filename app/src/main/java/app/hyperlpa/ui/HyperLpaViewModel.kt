@@ -560,6 +560,7 @@ class HyperLpaViewModel(
     fun disconnectReader() = launch { repository.disconnectSession() }
     fun refreshProfiles() = launch(repository::refresh)
     fun setProfileEnabled(iccid: String, enabled: Boolean) {
+        if (repository.state.value.operation is LpaOperation.Switching) return
         val profiles = repository.state.value.profiles
         if (requiresLastEnabledProfileConfirmation(profiles, iccid, enabled)) {
             pendingProfileDisableConfirmation.value = iccid
