@@ -1,42 +1,46 @@
 name: Release
 
 on:
-  workflow_dispatch:
-    inputs:
-      version_name:
-        description: Version name, for example 1.2.0
-        required: true
-        type: string
-      version_code:
-        description: Positive, monotonically increasing Android version code
-        required: true
-        type: number
+  push:
+    tags:
+      - 'v*'
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   build:
-    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: release
-    env:
-      HYPERLPA_VERSION_NAME: ${{ inputs.version_name }}
-      HYPERLPA_VERSION_CODE: ${{ inputs.version_code }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - name: Check out pinned 9eSIM community key
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: 9esim/9eSIMCommunityKey
           ref: ddc15a8b8c873d42faa6dcda5db03f5dbc4124c4
           path: .ci/9esim-community-key
-      - name: Validate release inputs
+      - name: Validate release tag and version metadata
         shell: bash
         run: |
-          [[ "$HYPERLPA_VERSION_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]
-          [[ "$HYPERLPA_VERSION_CODE" =~ ^[1-9][0-9]*$ ]]
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          tag_version="${tag#v}"
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]
+          version_name="$(sed -n 's/^hyperLpaVersionName=//p' gradle.properties | head -n 1)"
+          version_code="$(sed -n 's/^hyperLpaVersionCode=//p' gradle.properties | head -n 1)"
+          test -n "$version_name"
+          test -n "$version_code"
+          test "$tag_version" = "$version_name"
+          [[ "$version_code" =~ ^[1-9][0-9]*$ ]]
+          printf 'Validated release %s with Android version code %s\n' "$version_name" "$version_code"
       - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
         with:
           distribution: temurin
@@ -161,6 +165,19 @@ jobs:
               test "$actual" = "$expected"
             done
           done
+      - name: Prepare GitHub release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          find app/build/outputs/apk/release -type f -name '*.apk' -exec cp -- {} release-assets/ \;
+          find app/build/outputs/apk/privilegedRelease -type f -name '*.apk' -exec cp -- {} release-assets/ \;
+          find app/build/outputs/bundle/release -type f -name '*.aab' -exec cp -- {} release-assets/ \;
+          find app/build/outputs/bundle/privilegedRelease -type f -name '*.aab' -exec cp -- {} release-assets/ \;
+          (
+            cd release-assets
+            sha256sum ./*.apk ./*.aab > SHA256SUMS
+          )
       - name: Remove private signing material
         if: always()
         run: |
@@ -170,7 +187,7 @@ jobs:
       - name: Upload signed release artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: hyperlpa-${{ inputs.version_name }}
+          name: hyperlpa-${{ github.ref_name }}
           path: |
             app/build/outputs/apk/release/*.apk
             app/build/outputs/bundle/release/*.aab
@@ -178,4 +195,16 @@ jobs:
             app/build/outputs/apk/privilegedRelease/*.apk
             app/build/outputs/bundle/privilegedRelease/*.aab
             app/build/outputs/native-debug-symbols/privilegedRelease/**
+            release-assets/**
           if-no-files-found: error
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "HyperLPA $GITHUB_REF_NAME" \
+            --generate-notes \
+            release-assets/*
