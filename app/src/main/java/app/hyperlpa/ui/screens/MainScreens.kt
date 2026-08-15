@@ -83,6 +83,7 @@ import app.hyperlpa.ui.components.formatProfileDisplayName
 import app.hyperlpa.ui.components.redactIdentifier
 import app.hyperlpa.ui.components.rememberProfileArtworkBitmaps
 import app.hyperlpa.ui.navigation.AppRoute
+import app.hyperlpa.reminders.formatReminderDate
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -100,7 +101,6 @@ import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Add
-import top.yukonga.miuix.kmp.icon.extended.Alarm
 import top.yukonga.miuix.kmp.icon.extended.BankCards
 import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.icon.extended.Delete
@@ -305,6 +305,7 @@ fun ProfilesScreen(
                         item(key = "state") {
                             PageStateHost(
                                 state = pageState,
+                                modifier = Modifier.fillParentMaxSize(),
                                 loadingMessage = loadingMessage,
                                 emptyTitle = when {
                                     state.lpa.selectedReader == null -> stringResource(R.string.profiles_choose_reader)
@@ -625,8 +626,26 @@ private fun ProfileCard(
             }
         }
     }
+    val profileIccidText = if (state.settings.showProfileIccidOnHome) {
+        redactIdentifier(profile.iccid, state.settings.iccidRedaction)
+    } else {
+        null
+    }
     val reminderAt = profile.reminderAt
         ?.takeIf { state.settings.showProfileRemindersOnHome }
+    val showProfileName = state.settings.showProfileNameOnHome
+    val showProfileProvider = state.settings.showProfileProviderOnHome
+    val hasProfileInfoRow = showProfileName ||
+        profileIccidText != null ||
+        showProfileProvider
+    val inlineProfileSizeText = profileSizeText?.takeIf {
+        profileTags.isEmpty() && reminderAt == null && hasProfileInfoRow
+    }
+    val footerProfileSizeText = if (inlineProfileSizeText == null) {
+        profileSizeText
+    } else {
+        null
+    }
     val cardDescription = buildList {
         add(stringResource(R.string.profile_open_named, displayName.fullText))
         if (profileTags.isNotEmpty()) {
@@ -636,18 +655,18 @@ private fun ProfileCard(
             add(
                 stringResource(
                     R.string.profile_card_reminder_description,
-                    it.formatReminderDateTime(),
+                    it.formatReminderDate(),
                 ),
             )
         }
         profileSizeText?.let { sizeText ->
             add(stringResource(R.string.profile_card_size_description, sizeText))
         }
-        if (state.settings.showProfileIccidOnHome) {
+        profileIccidText?.let { iccidText ->
             add(
                 stringResource(
                     R.string.profile_card_iccid_description,
-                    redactIdentifier(profile.iccid, state.settings.iccidRedaction),
+                    iccidText,
                 ),
             )
         }
@@ -703,46 +722,81 @@ private fun ProfileCard(
                 )
             }
             Column(Modifier.weight(1f)) {
-                if (state.settings.showProfileNameOnHome) {
-                    Text(
-                        text = displayName.fullText,
-                        style = MiuixTheme.textStyles.body1,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                if (showProfileName) {
+                    val isLastInfoRow = profileIccidText == null && !showProfileProvider
+                    if (isLastInfoRow && inlineProfileSizeText != null) {
+                        ProfileCardInfoRow(text = inlineProfileSizeText) {
+                            Text(
+                                text = displayName.fullText,
+                                style = MiuixTheme.textStyles.body1,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    } else {
+                        Text(
+                            text = displayName.fullText,
+                            style = MiuixTheme.textStyles.body1,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
-                if (state.settings.showProfileProviderOnHome) {
-                    Text(
-                        text = profile.providerName.ifBlank { unknownOperator },
-                        style = MiuixTheme.textStyles.body2,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                if (profileIccidText != null) {
+                    val isLastInfoRow = !showProfileProvider
+                    if (isLastInfoRow && inlineProfileSizeText != null) {
+                        ProfileCardInfoRow(text = inlineProfileSizeText) {
+                            Text(
+                                text = profileIccidText,
+                                style = MiuixTheme.textStyles.footnote1,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    } else {
+                        Text(
+                            text = profileIccidText,
+                            style = MiuixTheme.textStyles.footnote1,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
-                if (profileTags.isNotEmpty()) {
-                    Spacer(Modifier.height(6.dp))
-                    ProfileTagsRow(tags = profileTags)
+                if (showProfileProvider) {
+                    if (inlineProfileSizeText != null) {
+                        ProfileCardInfoRow(text = inlineProfileSizeText) {
+                            Text(
+                                text = profile.providerName.ifBlank { unknownOperator },
+                                style = MiuixTheme.textStyles.body2,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    } else {
+                        Text(
+                            text = profile.providerName.ifBlank { unknownOperator },
+                            style = MiuixTheme.textStyles.body2,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
-                if (state.settings.showProfileIccidOnHome) {
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = redactIdentifier(
-                            profile.iccid,
-                            state.settings.iccidRedaction,
+                if (profileTags.isNotEmpty() || reminderAt != null || footerProfileSizeText != null) {
+                    Spacer(
+                        Modifier.height(
+                            if (profileTags.isNotEmpty()) 6.dp else 8.dp,
                         ),
-                        style = MiuixTheme.textStyles.footnote1,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
                     )
-                }
-                if (reminderAt != null || profileSizeText != null) {
-                    Spacer(Modifier.height(8.dp))
                     ProfileCardMetadataFooter(
+                        tags = profileTags,
                         reminderAt = reminderAt,
-                        profileSizeText = profileSizeText,
+                        profileSizeText = footerProfileSizeText,
                     )
                 }
             }
@@ -751,9 +805,11 @@ private fun ProfileCard(
                     checked = isEnabled,
                     onCheckedChange = onEnableChange,
                     enabled = switchEnabled,
-                    modifier = Modifier.semantics {
-                        contentDescription = switchDescription
-                    },
+                    modifier = Modifier
+                        .align(Alignment.CenterVertically)
+                        .semantics {
+                            contentDescription = switchDescription
+                        },
                 )
             }
         }
@@ -761,10 +817,30 @@ private fun ProfileCard(
 }
 
 @Composable
-private fun ProfileTagsRow(tags: List<String>) {
-    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        // Keep the card height stable in both the list and waterfall layouts. Very narrow cards
-        // show one tag; wider cards show two, followed by a compact overflow chip when necessary.
+private fun ProfileCardInfoRow(
+    text: String,
+    content: @Composable () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.weight(1f)) {
+            content()
+        }
+        ProfileSizeMeta(text = text)
+    }
+}
+
+@Composable
+private fun ProfileTagsRow(
+    tags: List<String>,
+    modifier: Modifier = Modifier,
+) {
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+        // Keep tags to one compact row. Very narrow cards show one tag; wider cards show two,
+        // followed by a compact overflow chip when necessary.
         val visibleTagCount = if (maxWidth < 210.dp) 1 else 2
         val visibleTags = tags.take(visibleTagCount)
         val hiddenTagCount = (tags.size - visibleTags.size).coerceAtLeast(0)
@@ -800,7 +876,7 @@ private fun ProfileTagChip(
 ) {
     Text(
         text = text,
-        style = MiuixTheme.textStyles.footnote1,
+        style = MiuixTheme.textStyles.footnote2,
         color = MiuixTheme.colorScheme.onSurfaceContainerVariant,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
@@ -809,12 +885,13 @@ private fun ProfileTagChip(
                 color = MiuixTheme.colorScheme.secondaryContainerVariant,
                 shape = RoundedCornerShape(percent = 50),
             )
-            .padding(horizontal = 9.dp, vertical = 4.dp),
+            .padding(horizontal = 7.dp, vertical = 1.dp),
     )
 }
 
 @Composable
 private fun ProfileCardMetadataFooter(
+    tags: List<String>,
     reminderAt: Instant?,
     profileSizeText: String?,
 ) {
@@ -822,20 +899,21 @@ private fun ProfileCardMetadataFooter(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (tags.isNotEmpty()) {
+            ProfileTagsRow(
+                tags = tags,
+                modifier = Modifier.weight(1f),
+            )
+        }
         if (reminderAt != null) {
             ProfileReminderChip(
                 dateText = reminderAt.formatReminderDate(),
-                fullDateText = reminderAt.formatReminderDateTime(),
-                modifier = if (profileSizeText != null) Modifier.weight(1f) else Modifier,
+                fullDateText = reminderAt.formatReminderDate(),
             )
-        } else if (profileSizeText != null) {
+        }
+        if (profileSizeText != null) {
             Spacer(Modifier.weight(1f))
-        }
-        if (reminderAt != null && profileSizeText != null) {
-            Spacer(Modifier.width(8.dp))
-        }
-        profileSizeText?.let { sizeText ->
-            ProfileSizeMeta(text = sizeText)
+            ProfileSizeMeta(text = profileSizeText)
         }
     }
 }
@@ -859,19 +937,13 @@ private fun ProfileReminderChip(
                 color = MiuixTheme.colorScheme.primaryContainer,
                 shape = RoundedCornerShape(percent = 50),
             )
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
+            .padding(horizontal = 6.dp, vertical = 1.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            imageVector = MiuixIcons.Alarm,
-            contentDescription = null,
-            tint = MiuixTheme.colorScheme.onPrimaryContainer,
-            modifier = Modifier.size(14.dp),
-        )
         Text(
             text = dateText,
-            style = MiuixTheme.textStyles.footnote1,
+            style = MiuixTheme.textStyles.footnote2,
             color = MiuixTheme.colorScheme.onPrimaryContainer,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -882,19 +954,19 @@ private fun ProfileReminderChip(
 @Composable
 private fun ProfileSizeMeta(text: String) {
     Row(
-        modifier = Modifier.widthIn(max = 112.dp),
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        modifier = Modifier.widthIn(max = 104.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             imageVector = MiuixIcons.File,
             contentDescription = null,
             tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-            modifier = Modifier.size(14.dp),
+            modifier = Modifier.size(12.dp),
         )
         Text(
             text = text,
-            style = MiuixTheme.textStyles.footnote1,
+            style = MiuixTheme.textStyles.footnote2,
             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -971,6 +1043,7 @@ fun NotificationsScreen(
                         EmptyState(
                             title = stringResource(R.string.notifications_no_reader),
                             message = stringResource(R.string.notifications_no_reader_message),
+                            modifier = Modifier.fillParentMaxSize(),
                             icon = MiuixIcons.Messages,
                         )
                     }
@@ -979,6 +1052,7 @@ fun NotificationsScreen(
                         EmptyState(
                             title = stringResource(R.string.notifications_none_pending),
                             message = stringResource(R.string.notifications_none_pending_message),
+                            modifier = Modifier.fillParentMaxSize(),
                             icon = MiuixIcons.Messages,
                         )
                     }
@@ -995,8 +1069,6 @@ fun NotificationsScreen(
                                 ).fullText
                             },
                             providerName = profile?.providerName?.takeIf(String::isNotBlank),
-                            iccid = notification.iccid
-                                .takeIf(String::isNotBlank),
                             onDetails = {
                                 selectedNotification = notification
                                 showNotificationDetails = true
@@ -1053,6 +1125,7 @@ fun NotificationHistoryScreen(
                 EmptyState(
                     title = stringResource(R.string.notification_history_empty),
                     message = stringResource(R.string.notification_history_empty_message),
+                    modifier = Modifier.fillParentMaxSize(),
                     icon = MiuixIcons.Messages,
                 )
             }
@@ -1168,53 +1241,81 @@ private fun NotificationHistoryCard(
 ) {
     val actionLabel = entry.action.localizedLabel()
     val statusLabel = entry.status.localizedLabel()
-    val triggerLabel = entry.trigger.localizedLabel()
     val operationLabel = localizedNotificationOperation(entry.notificationOperation)
-    val operationSummary = entry.endpointHost?.let { host ->
-        stringResource(R.string.notification_history_operation_host, operationLabel, host)
-    } ?: operationLabel
-    val failureLabel = entry.failureCode?.localizedFailureLabel()
+    val profileLabel = entry.profileName?.takeIf(String::isNotBlank)
+        ?: stringResource(R.string.common_unavailable)
     val timestamp = entry.timestamp.formatReminderDateTime()
-    val timestampSummary = failureLabel?.let { failure ->
-        stringResource(R.string.notification_history_time_failure, timestamp, failure)
-    } ?: timestamp
-    GroupedCard(onClick = onClick, onLongPress = onLongPress) {
-        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+    val statusColor = if (entry.status == NotificationHistoryStatus.FAILED) {
+        MiuixTheme.colorScheme.error
+    } else {
+        MiuixTheme.colorScheme.primary
+    }
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp)
+            .padding(bottom = 8.dp),
+        insideMargin = PaddingValues(16.dp),
+        pressFeedbackType = PressFeedbackType.Sink,
+        onClick = onClick,
+        onLongPress = onLongPress,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.weight(1f),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = stringResource(
-                        R.string.notification_history_action_status,
-                        actionLabel,
-                        statusLabel,
-                    ),
-                    style = MiuixTheme.textStyles.title3,
-                    fontWeight = FontWeight.SemiBold,
-                    color = if (entry.status == NotificationHistoryStatus.FAILED) {
-                        MiuixTheme.colorScheme.error
-                    } else {
-                        MiuixTheme.colorScheme.primary
-                    },
+                    text = actionLabel,
+                    fontSize = MiuixTheme.textStyles.headline1.fontSize,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
+                Spacer(Modifier.width(8.dp))
                 Text(
-                    text = triggerLabel,
-                    style = MiuixTheme.textStyles.footnote1,
+                    text = operationLabel,
+                    style = MiuixTheme.textStyles.subtitle,
                     color = MiuixTheme.colorScheme.onSurfaceVariantActions,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
                 )
             }
-            Spacer(Modifier.height(6.dp))
             Text(
-                text = operationSummary,
-                style = MiuixTheme.textStyles.body2,
+                text = statusLabel,
+                style = MiuixTheme.textStyles.subtitle,
+                color = statusColor,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(start = 12.dp),
+            )
+        }
+
+        Spacer(Modifier.height(4.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = profileLabel,
+                style = MiuixTheme.textStyles.body1,
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
             )
             Text(
-                text = timestampSummary,
-                style = MiuixTheme.textStyles.footnote1,
+                text = timestamp,
+                style = MiuixTheme.textStyles.body1,
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                modifier = Modifier.padding(start = 12.dp),
             )
         }
     }
@@ -1225,90 +1326,95 @@ private fun NotificationCard(
     notification: LpaNotification,
     profileName: String?,
     providerName: String?,
-    iccid: String?,
     onDetails: () -> Unit,
     onProcess: (Long) -> Unit,
     onDelete: (Long) -> Unit,
 ) {
+    val operationLabel = notification.operation.localizedLabel()
+    val address = notification.address.ifBlank {
+        stringResource(R.string.notification_no_address)
+    }
     GroupedCard(onClick = onDetails) {
-        Column(Modifier.padding(16.dp)) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    imageVector = MiuixIcons.Messages,
-                    contentDescription = null,
-                    tint = MiuixTheme.colorScheme.primary,
-                    modifier = Modifier.size(26.dp),
-                )
                 Column(Modifier.weight(1f)) {
                     Text(
-                        text = notification.operation.localizedLabel(),
+                        text = profileName ?: operationLabel,
                         style = MiuixTheme.textStyles.title3,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    profileName?.let { name ->
-                        Text(
-                            text = name,
-                            style = MiuixTheme.textStyles.body1,
-                            color = MiuixTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    providerName?.let { provider ->
-                        Text(
-                            text = provider,
-                            style = MiuixTheme.textStyles.body2,
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    iccid?.let { value ->
-                        Text(
-                            text = stringResource(R.string.notification_iccid_summary, value),
-                            style = MiuixTheme.textStyles.footnote1,
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    Text(
-                        text = notification.address.ifBlank {
-                            stringResource(R.string.notification_no_address)
-                        },
-                        style = MiuixTheme.textStyles.body2,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        maxLines = 2,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Text(
-                        text = stringResource(
-                            R.string.notification_sequence,
-                            notification.sequenceNumber,
-                        ),
-                        style = MiuixTheme.textStyles.footnote1,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    )
+                    if (profileName != null) {
+                        Text(
+                            text = operationLabel,
+                            style = MiuixTheme.textStyles.footnote1,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantActions,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
+                Text(
+                    text = stringResource(R.string.notifications_pending_status),
+                    style = MiuixTheme.textStyles.subtitle,
+                    color = MiuixTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(start = 12.dp),
+                )
             }
-            Spacer(Modifier.height(12.dp))
+            providerName?.let { provider ->
+                Text(
+                    text = provider,
+                    style = MiuixTheme.textStyles.body2,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(
-                    text = stringResource(R.string.common_remove),
+                Text(
+                    text = stringResource(
+                        R.string.notification_sequence,
+                        notification.sequenceNumber,
+                    ),
+                    style = MiuixTheme.textStyles.footnote1,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = address,
+                    style = MiuixTheme.textStyles.body2,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(
                     onClick = { onDelete(notification.sequenceNumber) },
-                )
-                TextButton(
-                    text = stringResource(R.string.common_send),
+                ) {
+                    Icon(
+                        imageVector = MiuixIcons.Delete,
+                        contentDescription = stringResource(R.string.common_remove),
+                        tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
+                    )
+                }
+                IconButton(
                     onClick = { onProcess(notification.sequenceNumber) },
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                )
+                ) {
+                    Icon(
+                        imageVector = MiuixIcons.Send,
+                        contentDescription = stringResource(R.string.common_send),
+                        tint = MiuixTheme.colorScheme.primary,
+                    )
+                }
             }
         }
     }
@@ -1733,11 +1839,6 @@ fun ToolsScreen(
 
 private fun Instant.formatReminderDateTime(): String = DateTimeFormatter
     .ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)
-    .withZone(ZoneId.systemDefault())
-    .format(this)
-
-private fun Instant.formatReminderDate(): String = DateTimeFormatter
-    .ofLocalizedDate(FormatStyle.MEDIUM)
     .withZone(ZoneId.systemDefault())
     .format(this)
 
