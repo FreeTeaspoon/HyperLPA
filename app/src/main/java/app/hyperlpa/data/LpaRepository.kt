@@ -45,11 +45,13 @@ import app.hyperlpa.lpa.platform.TelephonyReaderProvider
 import app.hyperlpa.lpa.platform.UsbCcidReaderProvider
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -58,6 +60,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.typeblog.lpac_jni.LocalProfileAssistant
 import net.typeblog.lpac_jni.LocalProfileInfo
@@ -71,11 +75,18 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 private const val MaxReaderProfiles = 128
 private const val MaxReaderNotifications = 128
+private const val InitialNotificationDelayMillis = 750L
 
 internal fun shouldAttemptInitialNotificationDelivery(
     notificationAutoSend: Boolean,
     hasValidatedInternet: Boolean,
 ): Boolean = notificationAutoSend && hasValidatedInternet
+
+internal fun shouldScheduleInitialNotificationDelivery(
+    notificationInitialLoad: Boolean,
+    notificationAutoSend: Boolean,
+    pendingNotificationCount: Int,
+): Boolean = notificationInitialLoad && notificationAutoSend && pendingNotificationCount > 0
 
 private enum class SessionRefreshScope {
     FULL,
@@ -150,6 +161,8 @@ class LpaRepository(
     // different card. Explicit disconnect or a new manual selection changes this target.
     private var selectedReaderTargetId: String? = null
     private val closed = AtomicBoolean(false)
+    private val backgroundScope = CoroutineScope(SupervisorJob() + ioDispatcher)
+    private val initialNotificationJob = java.util.concurrent.atomic.AtomicReference<Job?>(null)
     private val mutableState = MutableStateFlow(LpaRepositoryState())
 
     val state: StateFlow<LpaRepositoryState> = mutableState.asStateFlow()
@@ -215,9 +228,12 @@ class LpaRepository(
     suspend fun discoverReaders(
         autoConnect: Boolean = true,
         includeRemoteReaders: Boolean = settings.autoLoadRemoteReaders,
-    ) = operationMutex.withLock {
-        withOperation(LpaOperation.DiscoveringReaders(appContext.getString(R.string.reader_loading))) {
-            discoverReadersInternal(autoConnect, includeRemoteReaders)
+    ) {
+        cancelInitialNotificationDelivery()
+        operationMutex.withLock {
+            withOperation(LpaOperation.DiscoveringReaders(appContext.getString(R.string.reader_loading))) {
+                discoverReadersInternal(autoConnect, includeRemoteReaders)
+            }
         }
     }
 
@@ -404,22 +420,28 @@ class LpaRepository(
             }
     }
 
-    suspend fun connect(readerId: String) = operationMutex.withLock {
-        val endpoint = endpointById[readerId]
-            ?: throw IllegalArgumentException(appContext.getString(R.string.failure_reader_unavailable))
-        selectedReaderTargetId = readerId
-        withOperation(LpaOperation.Connecting(endpoint.info.name)) {
-            connectInternal(endpoint)
+    suspend fun connect(readerId: String): OperationOutcome {
+        cancelInitialNotificationDelivery()
+        return operationMutex.withLock {
+            val endpoint = endpointById[readerId]
+                ?: throw IllegalArgumentException(appContext.getString(R.string.failure_reader_unavailable))
+            selectedReaderTargetId = readerId
+            withOperation(LpaOperation.Connecting(endpoint.info.name)) {
+                connectInternal(endpoint)
+            }
         }
     }
 
-    suspend fun refresh() = operationMutex.withLock {
-        withOperation(LpaOperation.Refreshing(appContext.getString(R.string.operation_reading_profiles))) {
-            try {
-                refreshInternal()
-            } catch (error: Throwable) {
-                if (error is CancellationException) throw error
-                reconnectSelectedWithRetry()
+    suspend fun refresh(): OperationOutcome {
+        cancelInitialNotificationDelivery()
+        return operationMutex.withLock {
+            withOperation(LpaOperation.Refreshing(appContext.getString(R.string.operation_reading_profiles))) {
+                try {
+                    refreshInternal()
+                } catch (error: Throwable) {
+                    if (error is CancellationException) throw error
+                    reconnectSelectedWithRetry()
+                }
             }
         }
     }
@@ -1250,12 +1272,20 @@ class LpaRepository(
                 SessionRefreshScope.FULL -> refreshInternal()
                 SessionRefreshScope.PROFILE_SWITCH_STATE -> refreshProfileSwitchStateInternal()
             }
-            if (refreshScope == SessionRefreshScope.FULL && settings.notificationInitialLoad) {
-                val notificationsChanged = processInitialNotificationsIfOnline()
-                if (notificationsChanged) refreshInternal()
-            }
             selectedReaderTargetId = endpoint.info.id
             mutableState.value = mutableState.value.copy(selectedReaderId = endpoint.info.id)
+            if (refreshScope == SessionRefreshScope.FULL && shouldScheduleInitialNotificationDelivery(
+                    notificationInitialLoad = settings.notificationInitialLoad,
+                    notificationAutoSend = settings.notificationAutoSend,
+                    pendingNotificationCount = mutableState.value.notifications.size,
+                )) {
+                scheduleInitialNotificationDelivery(
+                    ReaderAffinity(
+                        readerId = endpoint.info.id,
+                        eid = mutableState.value.euiccInfo?.eid.orEmpty(),
+                    ),
+                )
+            }
             log(LogLevel.INFO, "Reader", "Connected to ${endpoint.info.name}")
         } catch (error: Throwable) {
             if (session === opened) session = null
@@ -1270,6 +1300,45 @@ class LpaRepository(
             }
             throw error
         }
+    }
+
+    /**
+     * Notification delivery is deliberately deferred until the reader connection has published
+     * its local profile snapshot. It may require HTTPS and can take up to the notification HTTP
+     * deadline; neither that network path nor its history writes should hold the connection card
+     * in a loading state.
+     */
+    private fun scheduleInitialNotificationDelivery(expectedAffinity: ReaderAffinity) {
+        val job = backgroundScope.launch {
+            delay(InitialNotificationDelayMillis)
+            if (
+                !shouldAttemptInitialNotificationDelivery(
+                    notificationAutoSend = settings.notificationAutoSend,
+                    hasValidatedInternet = hasValidatedInternet(),
+                )
+            ) {
+                return@launch
+            }
+            if (!operationMutex.tryLock()) return@launch
+            try {
+                if (currentReaderAffinity() != expectedAffinity) return@launch
+                if (mutableState.value.notifications.isEmpty()) return@launch
+                val notificationsChanged = processNotificationsSafely("reader connection")
+                if (notificationsChanged && currentReaderAffinity() == expectedAffinity) {
+                    refreshInternal()
+                }
+            } finally {
+                operationMutex.unlock()
+            }
+        }
+        initialNotificationJob.getAndSet(job)?.cancel()
+        job.invokeOnCompletion {
+            initialNotificationJob.compareAndSet(job, null)
+        }
+    }
+
+    private fun cancelInitialNotificationDelivery() {
+        initialNotificationJob.getAndSet(null)?.cancel()
     }
 
     private suspend fun reconnectSelected() {
@@ -1754,30 +1823,6 @@ class LpaRepository(
             false
         }
 
-    /**
-     * Initial profile loading must not wait for a mobile data route that is present but unusable.
-     * Pending notifications remain on the eUICC and can be sent manually or on a later
-     * connection with validated internet access.
-     */
-    private suspend fun processInitialNotificationsIfOnline(): Boolean {
-        if (!shouldAttemptInitialNotificationDelivery(settings.notificationAutoSend, hasValidatedInternet())) {
-            if (settings.notificationAutoSend && hasPendingNotifications()) {
-                log(
-                    LogLevel.INFO,
-                    "Notifications",
-                    "Skipped automatic delivery after reader connection because validated internet " +
-                        "access is unavailable",
-                )
-            }
-            return false
-        }
-        return processNotificationsSafely("reader connection")
-    }
-
-    private fun hasPendingNotifications(): Boolean = runCatching {
-        requireSession().assistant.notifications.isNotEmpty()
-    }.getOrDefault(false)
-
     private fun hasValidatedInternet(): Boolean {
         val manager = connectivityManager ?: return false
         val network = runCatching { manager.activeNetwork }.getOrNull() ?: return false
@@ -1945,6 +1990,8 @@ class LpaRepository(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         cancelProfileDownload()
+        cancelInitialNotificationDelivery()
+        backgroundScope.cancel()
         closeSession()
         providers.forEach { (_, provider) -> provider.close() }
     }
