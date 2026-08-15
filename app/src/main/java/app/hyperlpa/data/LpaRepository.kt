@@ -76,6 +76,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 private const val MaxReaderProfiles = 128
 private const val MaxReaderNotifications = 128
 private const val InitialNotificationDelayMillis = 750L
+private const val PostSwitchFollowUpDelayMillis = 150L
 
 internal fun shouldAttemptInitialNotificationDelivery(
     notificationAutoSend: Boolean,
@@ -87,6 +88,12 @@ internal fun shouldScheduleInitialNotificationDelivery(
     notificationAutoSend: Boolean,
     pendingNotificationCount: Int,
 ): Boolean = notificationInitialLoad && notificationAutoSend && pendingNotificationCount > 0
+
+internal fun shouldAttemptPostSwitchNotificationDelivery(
+    notificationAfterSwitch: Boolean,
+    notificationAutoSend: Boolean,
+    hasValidatedInternet: Boolean,
+): Boolean = notificationAfterSwitch && notificationAutoSend && hasValidatedInternet
 
 private enum class SessionRefreshScope {
     FULL,
@@ -163,6 +170,7 @@ class LpaRepository(
     private val closed = AtomicBoolean(false)
     private val backgroundScope = CoroutineScope(SupervisorJob() + ioDispatcher)
     private val initialNotificationJob = java.util.concurrent.atomic.AtomicReference<Job?>(null)
+    private val postSwitchFollowUpJob = java.util.concurrent.atomic.AtomicReference<Job?>(null)
     private val mutableState = MutableStateFlow(LpaRepositoryState())
 
     val state: StateFlow<LpaRepositoryState> = mutableState.asStateFlow()
@@ -229,7 +237,7 @@ class LpaRepository(
         autoConnect: Boolean = true,
         includeRemoteReaders: Boolean = settings.autoLoadRemoteReaders,
     ) {
-        cancelInitialNotificationDelivery()
+        cancelDeferredCardFollowUp()
         operationMutex.withLock {
             withOperation(LpaOperation.DiscoveringReaders(appContext.getString(R.string.reader_loading))) {
                 discoverReadersInternal(autoConnect, includeRemoteReaders)
@@ -421,7 +429,7 @@ class LpaRepository(
     }
 
     suspend fun connect(readerId: String): OperationOutcome {
-        cancelInitialNotificationDelivery()
+        cancelDeferredCardFollowUp()
         return operationMutex.withLock {
             val endpoint = endpointById[readerId]
                 ?: throw IllegalArgumentException(appContext.getString(R.string.failure_reader_unavailable))
@@ -433,7 +441,7 @@ class LpaRepository(
     }
 
     suspend fun refresh(): OperationOutcome {
-        cancelInitialNotificationDelivery()
+        cancelDeferredCardFollowUp()
         return operationMutex.withLock {
             withOperation(LpaOperation.Refreshing(appContext.getString(R.string.operation_reading_profiles))) {
                 try {
@@ -446,9 +454,11 @@ class LpaRepository(
         }
     }
 
-    suspend fun setProfileEnabled(iccid: String, enabled: Boolean) = operationMutex.withLock {
-        withOperation(LpaOperation.Switching(iccid, enabled)) {
-            if (mutationOutcomeRequiresRefresh.get()) {
+    suspend fun setProfileEnabled(iccid: String, enabled: Boolean): OperationOutcome {
+        cancelDeferredCardFollowUp()
+        return operationMutex.withLock {
+            withOperation(LpaOperation.Switching(iccid, enabled)) {
+                if (mutationOutcomeRequiresRefresh.get()) {
                 throw OutcomeUnverifiedException(
                     titleRes = R.string.failure_lpa_title,
                     message = appContext.getString(R.string.failure_mutation_refresh_required),
@@ -517,10 +527,8 @@ class LpaRepository(
                 )
             }
             updateProfileState(iccid, enabled)
-            refreshAfterMutation("Profile switch", reconnectFirst = modemRefreshRequested)
-            if (settings.notificationAfterSwitch) {
-                processNotificationsSafely("profile switch")
-                refreshNotificationsSafely("profile switch")
+            refreshAfterProfileSwitch(reconnectFirst = modemRefreshRequested)
+            schedulePostSwitchFollowUp(switchAffinity)
             }
         }
     }
@@ -1186,6 +1194,7 @@ class LpaRepository(
 
     suspend fun disconnectSession(): OperationOutcome {
         cancelProfileDownload()
+        cancelDeferredCardFollowUp()
         return operationMutex.withLock {
             withOperation(
                 LpaOperation.Refreshing(appContext.getString(R.string.operation_disconnecting_reader)),
@@ -1207,6 +1216,7 @@ class LpaRepository(
 
     private fun disconnectReadersForStateReplacementLocked() {
         cancelProfileDownload()
+        cancelDeferredCardFollowUp()
         selectedReaderTargetId = null
         closeSession()
         endpointById.clear()
@@ -1337,8 +1347,53 @@ class LpaRepository(
         }
     }
 
+    /**
+     * Publishes the switched profile list first, then enriches eUICC metadata and optionally
+     * delivers notifications without holding the switch operation or its UI state.
+     */
+    private fun schedulePostSwitchFollowUp(expectedAffinity: ReaderAffinity) {
+        val job = backgroundScope.launch {
+            delay(PostSwitchFollowUpDelayMillis)
+            if (!operationMutex.tryLock()) return@launch
+            try {
+                if (currentReaderAffinity() != expectedAffinity) return@launch
+                refreshEuiccMetadataSafely("profile switch")
+                if (
+                    shouldAttemptPostSwitchNotificationDelivery(
+                        notificationAfterSwitch = settings.notificationAfterSwitch,
+                        notificationAutoSend = settings.notificationAutoSend,
+                        hasValidatedInternet = hasValidatedInternet(),
+                    )
+                ) {
+                    processNotificationsSafely("profile switch")
+                }
+                if (
+                    settings.notificationAfterSwitch &&
+                    currentReaderAffinity() == expectedAffinity
+                ) {
+                    refreshNotificationsSafely("profile switch")
+                }
+            } finally {
+                operationMutex.unlock()
+            }
+        }
+        postSwitchFollowUpJob.getAndSet(job)?.cancel()
+        job.invokeOnCompletion {
+            postSwitchFollowUpJob.compareAndSet(job, null)
+        }
+    }
+
     private fun cancelInitialNotificationDelivery() {
         initialNotificationJob.getAndSet(null)?.cancel()
+    }
+
+    private fun cancelPostSwitchFollowUp() {
+        postSwitchFollowUpJob.getAndSet(null)?.cancel()
+    }
+
+    private fun cancelDeferredCardFollowUp() {
+        cancelInitialNotificationDelivery()
+        cancelPostSwitchFollowUp()
     }
 
     private suspend fun reconnectSelected() {
@@ -1627,6 +1682,58 @@ class LpaRepository(
         )
     }
 
+    /**
+     * Re-reads only identity and profile state after a successful switch. UICC REFRESH still
+     * reconnects first on transports that requested it, but the reconnect uses the lightweight
+     * profile-state scope instead of a full eUICC inventory.
+     */
+    private suspend fun refreshAfterProfileSwitch(reconnectFirst: Boolean) {
+        lateinit var refreshFailure: Throwable
+        try {
+            if (reconnectFirst) {
+                reconnectSelectedWithRetry(
+                    attempts = 8,
+                    refreshScope = SessionRefreshScope.PROFILE_SWITCH_STATE,
+                )
+            } else {
+                refreshProfileSwitchStateInternal()
+            }
+            mutationOutcomeRequiresRefresh.set(false)
+            return
+        } catch (error: Throwable) {
+            if (error is CancellationException) {
+                mutationOutcomeRequiresRefresh.set(true)
+                throw error
+            }
+            refreshFailure = error
+        }
+
+        if (!reconnectFirst) {
+            try {
+                reconnectSelectedWithRetry(
+                    attempts = 3,
+                    refreshScope = SessionRefreshScope.PROFILE_SWITCH_STATE,
+                )
+                mutationOutcomeRequiresRefresh.set(false)
+                return
+            } catch (error: Throwable) {
+                if (error is CancellationException) {
+                    mutationOutcomeRequiresRefresh.set(true)
+                    throw error
+                }
+                refreshFailure = error
+            }
+        }
+
+        mutationOutcomeRequiresRefresh.set(true)
+        log(
+            LogLevel.WARNING,
+            "Reader",
+            "Profile switch succeeded, but the card state could not be refreshed: " +
+                (refreshFailure.message ?: refreshFailure.javaClass.simpleName),
+        )
+    }
+
     /** Reads only the identity and profile state needed to reconcile an uncertain switch. */
     private suspend fun refreshProfileSwitchStateInternal() = withContext(ioDispatcher) {
         val assistant = requireSession().assistant
@@ -1646,7 +1753,6 @@ class LpaRepository(
         val active = requireSession()
         val assistant = active.assistant
         val eid = assistant.eID
-        val info = assistant.euiccInfo2
         val profiles = readValidatedProfiles(assistant)
         val localNotifications = assistant.notifications
         require(localNotifications.size <= MaxReaderNotifications) {
@@ -1656,38 +1762,69 @@ class LpaRepository(
             localNotifications.map(LocalProfileNotification::seqNumber).toSet().size ==
                 localNotifications.size,
         ) { "The eUICC returned duplicate notification sequence numbers" }
-        val addresses = assistant.euiccConfiguredAddresses
         mutableState.value = mutableState.value.copy(
             profiles = profiles,
             notifications = localNotifications.map(::mapNotification),
-            euiccInfo = EuiccInfo(
-                eid = eid,
-                sgp22Version = info?.sgp22Version?.toString().orEmpty(),
-                profileVersion = info?.profileVersion?.toString().orEmpty(),
-                firmwareVersion = info?.euiccFirmwareVersion?.toString().orEmpty(),
-                globalPlatformVersion = info?.globalPlatformVersion?.toString().orEmpty(),
-                sasAccreditationNumber = info?.sasAccreditationNumber.orEmpty(),
-                protectionProfileVersion = info?.ppVersion?.toString().orEmpty(),
-                freeNonVolatileMemory = info?.freeNvram,
-                freeVolatileMemory = info?.freeRam,
-                signingKeyIds = info?.euiccCiPKIdListForSigning.orEmpty(),
-                verificationKeyIds = info?.euiccCiPKIdListForVerification.orEmpty(),
-                installedApplicationCount = info?.installedApplicationCount,
-                uiccCapabilities = info?.uiccCapabilities.orEmpty(),
-                ts102241Version = info?.ts102241Version.orEmpty(),
-                rspCapabilities = info?.rspCapabilities.orEmpty(),
-                euiccCategory = info?.euiccCategory.orEmpty(),
-                forbiddenProfilePolicyRules = info?.forbiddenProfilePolicyRules.orEmpty(),
-                platformLabel = info?.platformLabel.orEmpty(),
-                discoveryBaseUrl = info?.discoveryBaseUrl.orEmpty(),
-                defaultSmdpAddress = addresses?.defaultDpAddress.orEmpty(),
-                rootSmdsAddress = addresses?.rootDsAddress.orEmpty(),
-                refreshedAt = Instant.now(),
-            ),
+            euiccInfo = readEuiccInfo(assistant, eid),
             failure = null,
         )
         downloadOutcomeRequiresRefresh.set(false)
         mutationOutcomeRequiresRefresh.set(false)
+    }
+
+    private fun readEuiccInfo(assistant: LocalProfileAssistant, eid: String): EuiccInfo {
+        val info = assistant.euiccInfo2
+        val addresses = assistant.euiccConfiguredAddresses
+        return EuiccInfo(
+            eid = eid,
+            sgp22Version = info?.sgp22Version?.toString().orEmpty(),
+            profileVersion = info?.profileVersion?.toString().orEmpty(),
+            firmwareVersion = info?.euiccFirmwareVersion?.toString().orEmpty(),
+            globalPlatformVersion = info?.globalPlatformVersion?.toString().orEmpty(),
+            sasAccreditationNumber = info?.sasAccreditationNumber.orEmpty(),
+            protectionProfileVersion = info?.ppVersion?.toString().orEmpty(),
+            freeNonVolatileMemory = info?.freeNvram,
+            freeVolatileMemory = info?.freeRam,
+            signingKeyIds = info?.euiccCiPKIdListForSigning.orEmpty(),
+            verificationKeyIds = info?.euiccCiPKIdListForVerification.orEmpty(),
+            installedApplicationCount = info?.installedApplicationCount,
+            uiccCapabilities = info?.uiccCapabilities.orEmpty(),
+            ts102241Version = info?.ts102241Version.orEmpty(),
+            rspCapabilities = info?.rspCapabilities.orEmpty(),
+            euiccCategory = info?.euiccCategory.orEmpty(),
+            forbiddenProfilePolicyRules = info?.forbiddenProfilePolicyRules.orEmpty(),
+            platformLabel = info?.platformLabel.orEmpty(),
+            discoveryBaseUrl = info?.discoveryBaseUrl.orEmpty(),
+            defaultSmdpAddress = addresses?.defaultDpAddress.orEmpty(),
+            rootSmdsAddress = addresses?.rootDsAddress.orEmpty(),
+            refreshedAt = Instant.now(),
+        )
+    }
+
+    /** Updates firmware/address metadata without re-reading the profile list. */
+    private suspend fun refreshEuiccMetadataInternal() = withContext(ioDispatcher) {
+        val assistant = requireSession().assistant
+        val eid = assistant.eID
+        val previousInfo = mutableState.value.euiccInfo
+        if (previousInfo != null && previousInfo.eid != eid) return@withContext
+        mutableState.value = mutableState.value.copy(
+            euiccInfo = readEuiccInfo(assistant, eid),
+            failure = null,
+        )
+    }
+
+    private suspend fun refreshEuiccMetadataSafely(operationName: String) {
+        try {
+            refreshEuiccMetadataInternal()
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error
+            log(
+                LogLevel.WARNING,
+                "Reader",
+                "Could not refresh eUICC metadata after $operationName: " +
+                    (error.message ?: error.javaClass.simpleName),
+            )
+        }
     }
 
     private fun readValidatedProfiles(assistant: LocalProfileAssistant): List<ProfileInfo> {
@@ -1990,7 +2127,7 @@ class LpaRepository(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         cancelProfileDownload()
-        cancelInitialNotificationDelivery()
+        cancelDeferredCardFollowUp()
         backgroundScope.cancel()
         closeSession()
         providers.forEach { (_, provider) -> provider.close() }
