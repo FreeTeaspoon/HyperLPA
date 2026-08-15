@@ -15,6 +15,38 @@ class LpaRepositoryReconciliationTest {
     }
 
     @Test
+    fun initialNotificationWorkIsDeferredOnlyWhenConnectionHasPendingNotifications() {
+        assertFalse(
+            shouldScheduleInitialNotificationDelivery(
+                notificationInitialLoad = false,
+                notificationAutoSend = true,
+                pendingNotificationCount = 1,
+            ),
+        )
+        assertFalse(
+            shouldScheduleInitialNotificationDelivery(
+                notificationInitialLoad = true,
+                notificationAutoSend = false,
+                pendingNotificationCount = 1,
+            ),
+        )
+        assertFalse(
+            shouldScheduleInitialNotificationDelivery(
+                notificationInitialLoad = true,
+                notificationAutoSend = true,
+                pendingNotificationCount = 0,
+            ),
+        )
+        assertTrue(
+            shouldScheduleInitialNotificationDelivery(
+                notificationInitialLoad = true,
+                notificationAutoSend = true,
+                pendingNotificationCount = 1,
+            ),
+        )
+    }
+
+    @Test
     fun selectedReaderNeverFallsThroughToAnotherAvailableReader() {
         assertEquals(
             listOf("selected"),
