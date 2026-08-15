@@ -62,6 +62,7 @@ import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import app.hyperlpa.R
+import app.hyperlpa.data.LpaRepositoryState
 import app.hyperlpa.data.metadata.normalizeProfileTags
 import app.hyperlpa.data.metadata.providerIconKey
 import app.hyperlpa.data.settings.AppSettings
@@ -73,6 +74,7 @@ import app.hyperlpa.domain.model.DownloadRequestException
 import app.hyperlpa.domain.model.EuiccInfo
 import app.hyperlpa.domain.model.LogLevel
 import app.hyperlpa.domain.model.LpaNotification
+import app.hyperlpa.domain.model.LpaOperation
 import app.hyperlpa.domain.model.ProfileClass
 import app.hyperlpa.domain.model.ProfileDownloadPreview
 import app.hyperlpa.domain.model.ProfileDownloadResult
@@ -84,6 +86,7 @@ import app.hyperlpa.domain.model.analyzeIccid
 import app.hyperlpa.domain.model.takeUnicodeCodePoints
 import app.hyperlpa.ui.components.EmptyState
 import app.hyperlpa.ui.components.GroupedCard
+import app.hyperlpa.ui.components.LoadingState
 import app.hyperlpa.ui.components.ResolvedProfileArtwork
 import app.hyperlpa.ui.components.SectionHeading
 import app.hyperlpa.ui.components.DetailLazyScaffold
@@ -144,6 +147,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 @Composable
 fun ProfileDetailsScreen(
     profile: ProfileInfo?,
+    lpa: LpaRepositoryState,
     settings: AppSettings,
     suggestedTags: Set<String>,
     operatorIcon: ByteArray?,
@@ -214,6 +218,15 @@ fun ProfileDetailsScreen(
         ?.takeIf(String::isNotBlank)
         ?: profile?.providerName?.takeIf(String::isNotBlank)
         ?: stringResource(R.string.profile_collapsed_title)
+    val profileLoadingMessage = when (val operation = lpa.operation) {
+        is LpaOperation.DiscoveringReaders -> operation.message
+        is LpaOperation.Connecting -> stringResource(
+            R.string.profiles_connecting_reader,
+            operation.readerName,
+        )
+        is LpaOperation.Refreshing -> operation.message
+        else -> stringResource(R.string.reader_loading)
+    }
 
     DetailLazyScaffold(
         title = "",
@@ -226,11 +239,15 @@ fun ProfileDetailsScreen(
     ) { _ ->
         if (profile == null) {
             item {
-                EmptyState(
-                    title = stringResource(R.string.profile_unavailable_title),
-                    message = stringResource(R.string.profile_unavailable_message),
-                    icon = MiuixIcons.BankCards,
-                )
+                if (isProfileDetailsLoading(profile, lpa)) {
+                    LoadingState(message = profileLoadingMessage)
+                } else {
+                    EmptyState(
+                        title = stringResource(R.string.profile_unavailable_title),
+                        message = stringResource(R.string.profile_unavailable_message),
+                        icon = MiuixIcons.BankCards,
+                    )
+                }
             }
         } else {
             item {
@@ -2474,6 +2491,18 @@ fun LogsScreen(
             }
         }
     }
+}
+
+internal fun isProfileDetailsLoading(
+    profile: ProfileInfo?,
+    lpa: LpaRepositoryState,
+): Boolean = when {
+    profile != null -> false
+    !lpa.initialized -> true
+    lpa.operation is LpaOperation.DiscoveringReaders -> true
+    lpa.operation is LpaOperation.Connecting -> true
+    lpa.operation is LpaOperation.Refreshing -> true
+    else -> false
 }
 
 @Composable
