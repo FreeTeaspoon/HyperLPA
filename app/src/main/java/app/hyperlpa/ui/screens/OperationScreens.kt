@@ -152,6 +152,7 @@ fun ProfileDetailsScreen(
     isProviderIconHidden: Boolean,
     onBack: () -> Unit,
     onEnableChange: (Boolean) -> Unit,
+    profileSwitchEnabled: Boolean = true,
     onSetPinned: (Boolean) -> Unit,
     onRename: (String) -> Unit,
     onDelete: () -> Unit,
@@ -246,6 +247,7 @@ fun ProfileDetailsScreen(
                     SwitchPreference(
                         checked = profile.state == ProfileState.ENABLED,
                         onCheckedChange = onEnableChange,
+                        enabled = profileSwitchEnabled,
                         title = stringResource(R.string.profile_enabled),
                         summary = if (profile.state == ProfileState.ENABLED) {
                             stringResource(R.string.profile_enabled_summary)
