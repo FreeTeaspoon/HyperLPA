@@ -54,6 +54,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import app.hyperlpa.data.LpaRepositoryState
 import app.hyperlpa.data.settings.ProfileLayout
 import app.hyperlpa.data.history.NotificationHistoryEntry
 import app.hyperlpa.data.history.NotificationHistoryAction
@@ -153,9 +154,19 @@ fun ProfilesScreen(
         sourceKey = state.lpa.euiccInfo?.eid,
         enabled = state.settings.showProfileIconOnHome,
     )
-    // Remote operator artwork and size predictions are optional enhancements. They must not
-    // hold the locally-read eUICC profiles behind a network timeout.
-    val artworkReady = artworkLoadState.ready
+    val initialArtworkReady = artworkLoadState.ready && state.profileEnrichmentReady
+    var hasPresentedProfiles by remember(
+        state.lpa.selectedReaderId,
+        state.lpa.euiccInfo?.eid,
+    ) { mutableStateOf(false) }
+    LaunchedEffect(initialArtworkReady, state.lpa.profiles.isNotEmpty()) {
+        if (initialArtworkReady && state.lpa.profiles.isNotEmpty()) {
+            hasPresentedProfiles = true
+        }
+    }
+    val awaitInitialArtwork = state.lpa.profiles.isNotEmpty() &&
+        !hasPresentedProfiles &&
+        !initialArtworkReady
     val hasNoSearchResults = state.searchQuery.isNotBlank() &&
         state.lpa.profiles.isNotEmpty() &&
         profiles.isEmpty()
@@ -195,16 +206,9 @@ fun ProfilesScreen(
         )
         else -> stringResource(app.hyperlpa.R.string.reader_none_message)
     }
-    val pageState = when {
-        state.lpa.operation is LpaOperation.Connecting -> PageStateKind.LOADING
-        !state.lpa.initialized ||
-            (state.lpa.operation is LpaOperation.DiscoveringReaders && state.lpa.profiles.isEmpty()) -> PageStateKind.LOADING
-        state.lpa.profiles.isNotEmpty() && !artworkReady -> PageStateKind.LOADING
-        state.lpa.readers.isEmpty() -> PageStateKind.ERROR
-        state.lpa.selectedReader == null -> PageStateKind.EMPTY
-        profiles.isEmpty() -> PageStateKind.EMPTY
-        else -> PageStateKind.CONTENT
-    }
+    // Keep the first presentation synchronized with artwork, then apply later artwork updates
+    // in place without replacing the already-visible profile list with a loading state.
+    val pageState = profilesPageState(state.lpa, profiles, awaitInitialArtwork)
 
     PullToRefresh(
         isRefreshing = state.lpa.operation is LpaOperation.Refreshing,
@@ -343,6 +347,21 @@ fun ProfilesScreen(
         onSetPinned = onSetPinned,
         onRename = onRename,
     )
+}
+
+internal fun profilesPageState(
+    lpa: LpaRepositoryState,
+    profiles: List<ProfileInfo>,
+    awaitInitialArtwork: Boolean = false,
+): PageStateKind = when {
+    lpa.operation is LpaOperation.Connecting -> PageStateKind.LOADING
+    !lpa.initialized ||
+        (lpa.operation is LpaOperation.DiscoveringReaders && lpa.profiles.isEmpty()) -> PageStateKind.LOADING
+    awaitInitialArtwork && lpa.profiles.isNotEmpty() -> PageStateKind.LOADING
+    lpa.readers.isEmpty() -> PageStateKind.ERROR
+    lpa.selectedReader == null -> PageStateKind.EMPTY
+    profiles.isEmpty() -> PageStateKind.EMPTY
+    else -> PageStateKind.CONTENT
 }
 
 @Composable
