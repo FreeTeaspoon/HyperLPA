@@ -502,7 +502,7 @@ private fun ProfilesHeader(
                     } else {
                         val selectedIndex = state.lpa.readers.indexOfFirst {
                             it.id == state.lpa.selectedReaderId
-                        }.coerceAtLeast(0)
+                        }
                         OverlayDropdownPreference(
                             title = stringResource(R.string.profiles_active_reader),
                             summary = state.lpa.selectedReader?.detail
