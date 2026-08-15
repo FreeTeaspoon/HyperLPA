@@ -193,9 +193,11 @@ jobs:
             app/build/outputs/apk/release/*.apk
             app/build/outputs/bundle/release/*.aab
             app/build/outputs/native-debug-symbols/release/**
+            app/build/outputs/mapping/release/**
             app/build/outputs/apk/privilegedRelease/*.apk
             app/build/outputs/bundle/privilegedRelease/*.aab
             app/build/outputs/native-debug-symbols/privilegedRelease/**
+            app/build/outputs/mapping/privilegedRelease/**
             release-assets/**
           if-no-files-found: error
       - name: Publish GitHub release
