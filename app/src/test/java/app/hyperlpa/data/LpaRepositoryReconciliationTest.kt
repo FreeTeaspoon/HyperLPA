@@ -47,6 +47,38 @@ class LpaRepositoryReconciliationTest {
     }
 
     @Test
+    fun postSwitchNotificationDeliveryRequiresSwitchPolicyAutoSendAndValidatedInternet() {
+        assertFalse(
+            shouldAttemptPostSwitchNotificationDelivery(
+                notificationAfterSwitch = false,
+                notificationAutoSend = true,
+                hasValidatedInternet = true,
+            ),
+        )
+        assertFalse(
+            shouldAttemptPostSwitchNotificationDelivery(
+                notificationAfterSwitch = true,
+                notificationAutoSend = false,
+                hasValidatedInternet = true,
+            ),
+        )
+        assertFalse(
+            shouldAttemptPostSwitchNotificationDelivery(
+                notificationAfterSwitch = true,
+                notificationAutoSend = true,
+                hasValidatedInternet = false,
+            ),
+        )
+        assertTrue(
+            shouldAttemptPostSwitchNotificationDelivery(
+                notificationAfterSwitch = true,
+                notificationAutoSend = true,
+                hasValidatedInternet = true,
+            ),
+        )
+    }
+
+    @Test
     fun selectedReaderNeverFallsThroughToAnotherAvailableReader() {
         assertEquals(
             listOf("selected"),
