@@ -9,6 +9,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -178,12 +179,14 @@ private fun showProfileReminderNotification(
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
     val publicNotification = NotificationCompat.Builder(context, ProfileReminderWorker.ChannelId)
-        .setSmallIcon(R.drawable.ic_notification)
+        .setSmallIcon(R.drawable.ic_notification_white)
+        .setColor(Color.WHITE)
         .setContentTitle(context.getString(R.string.profile_reminder_title))
         .setContentText(context.getString(R.string.profile_reminder_private_text))
         .build()
     val notification = NotificationCompat.Builder(context, ProfileReminderWorker.ChannelId)
-        .setSmallIcon(R.drawable.ic_notification)
+        .setSmallIcon(R.drawable.ic_notification_white)
+        .setColor(Color.WHITE)
         .setContentTitle(context.getString(R.string.profile_reminder_title))
         .setContentText(label)
         .setContentIntent(contentIntent)
@@ -208,10 +211,11 @@ fun scheduleProfileReminder(
 ): Operation {
     val workName = "profile-reminder-$iccid"
     val manager = WorkManager.getInstance(context)
-    if (reminderAt == null) {
+    val dateOnlyReminderAt = reminderAt?.normalizeReminderInstant()
+    if (dateOnlyReminderAt == null) {
         return manager.cancelUniqueWork(workName)
     }
-    val delay = Duration.between(Instant.now(), reminderAt).toMillis().coerceAtLeast(0L)
+    val delay = Duration.between(Instant.now(), dateOnlyReminderAt).toMillis().coerceAtLeast(0L)
     val request = OneTimeWorkRequestBuilder<ProfileReminderWorker>()
         .addTag(ProfileReminderWorker.WorkTag)
         .addTag(reminderWorkIdentityTag(iccid))
@@ -220,7 +224,7 @@ fun scheduleProfileReminder(
             workDataOf(
                 ProfileReminderWorker.KeyIccid to iccid,
                 ProfileReminderWorker.KeyLabel to label,
-                ProfileReminderWorker.KeyReminderEpochMillis to reminderAt.toEpochMilli(),
+                ProfileReminderWorker.KeyReminderEpochMillis to dateOnlyReminderAt.toEpochMilli(),
             ),
         )
         .build()

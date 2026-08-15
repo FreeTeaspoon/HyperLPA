@@ -1,5 +1,7 @@
 package app.hyperlpa.data.metadata
 
+import app.hyperlpa.reminders.normalizeReminderInstant
+import java.time.Instant
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -53,6 +55,18 @@ class ProfileMetadataStoreTest {
         assertEquals(listOf("connected", "disconnected-secret-iccid"), schedules.map { it.iccid })
         assertEquals(listOf("Connected plan", "Saved profile"), schedules.map { it.label })
         assertTrue(schedules.none { it.label.contains("disconnected-secret-iccid") })
+    }
+
+    @Test
+    fun repairSchedulesNormalizePersistedReminderTimesToDates() {
+        val source = Instant.parse("2026-08-15T16:45:00Z")
+
+        val schedule = buildPersistedReminderSchedules(
+            metadata = mapOf("profile" to StoredProfileMetadata(reminderEpochMillis = source.toEpochMilli())),
+            fallbackLabel = "Saved profile",
+        ).single()
+
+        assertEquals(source.normalizeReminderInstant(), schedule.reminderAt)
     }
 
     @Test
