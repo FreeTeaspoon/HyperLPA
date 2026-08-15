@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Color
 import android.os.Build
 import android.os.IBinder
 import androidx.annotation.RequiresApi
@@ -114,7 +115,8 @@ class ProvisioningForegroundService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         return NotificationCompat.Builder(this, ChannelId)
-            .setSmallIcon(R.drawable.ic_notification)
+            .setSmallIcon(R.drawable.ic_notification_white)
+            .setColor(Color.WHITE)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(content)
             .setContentIntent(openIntent)
@@ -123,7 +125,7 @@ class ProvisioningForegroundService : Service() {
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setProgress(total ?: 0, completed ?: 0, total == null || total <= 0)
-            .addAction(R.drawable.ic_notification, getString(R.string.provisioning_cancel), cancelIntent)
+            .addAction(R.drawable.ic_notification_white, getString(R.string.provisioning_cancel), cancelIntent)
             .build()
     }
 
@@ -194,7 +196,8 @@ class ProvisioningForegroundService : Service() {
                 manager.notify(
                     NotificationId,
                     NotificationCompat.Builder(serviceContext, ChannelId)
-                        .setSmallIcon(R.drawable.ic_notification)
+                        .setSmallIcon(R.drawable.ic_notification_white)
+                        .setColor(Color.WHITE)
                         .setContentTitle(serviceContext.getString(R.string.app_name))
                         .setContentText(serviceContext.getString(R.string.provisioning_batch_progress))
                         .setContentIntent(openIntent)
@@ -204,7 +207,7 @@ class ProvisioningForegroundService : Service() {
                         .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
                         .setProgress(total, completed, total <= 0)
                         .addAction(
-                            R.drawable.ic_notification,
+                            R.drawable.ic_notification_white,
                             serviceContext.getString(R.string.provisioning_cancel),
                             cancelIntent,
                         )

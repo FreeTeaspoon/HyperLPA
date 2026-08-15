@@ -23,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -179,6 +180,7 @@ internal fun ResolvedProfileArtwork(
                         profile.providerName.ifBlank { stringResource(R.string.profile_default_name) },
                     ),
                     contentScale = ContentScale.Crop,
+                    filterQuality = FilterQuality.High,
                     modifier = Modifier.fillMaxSize().clip(shape),
                 )
             }
@@ -203,6 +205,7 @@ internal fun ResolvedProfileArtwork(
 }
 
 private const val MaxEmbeddedIconBase64Characters = 1_500_000
+private const val MaxRenderedProfileArtworkDimension = 512
 private const val ProfileArtworkCrossfadeMillis = 140
 
 private data class ProfileArtworkInput(
@@ -252,8 +255,8 @@ private fun loadProfileArtworkBitmap(
                 ) { decoder, info, _ ->
                     decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
                     val longestEdge = maxOf(info.size.width, info.size.height)
-                    if (longestEdge > 192) {
-                        val scale = 192f / longestEdge
+                    if (longestEdge > MaxRenderedProfileArtworkDimension) {
+                        val scale = MaxRenderedProfileArtworkDimension.toFloat() / longestEdge
                         decoder.setTargetSize(
                             (info.size.width * scale).toInt().coerceAtLeast(1),
                             (info.size.height * scale).toInt().coerceAtLeast(1),
@@ -280,7 +283,10 @@ private fun decodeProfileBitmap(bytes: ByteArray): Bitmap? {
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
     if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
     var sampleSize = 1
-    while (bounds.outWidth / sampleSize > 384 || bounds.outHeight / sampleSize > 384) {
+    while (
+        bounds.outWidth / sampleSize > MaxRenderedProfileArtworkDimension ||
+            bounds.outHeight / sampleSize > MaxRenderedProfileArtworkDimension
+    ) {
         sampleSize *= 2
     }
     return BitmapFactory.decodeByteArray(

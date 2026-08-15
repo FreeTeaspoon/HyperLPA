@@ -1,14 +1,11 @@
 package app.hyperlpa.ui.screens
 
-import android.app.DatePickerDialog
-import android.app.TimePickerDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
 import android.net.Uri
-import android.text.format.DateFormat
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -36,6 +33,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -87,6 +85,7 @@ import app.hyperlpa.domain.model.takeUnicodeCodePoints
 import app.hyperlpa.ui.components.EmptyState
 import app.hyperlpa.ui.components.GroupedCard
 import app.hyperlpa.ui.components.LoadingState
+import app.hyperlpa.ui.components.MiuixDatePickerDialog
 import app.hyperlpa.ui.components.ResolvedProfileArtwork
 import app.hyperlpa.ui.components.SectionHeading
 import app.hyperlpa.ui.components.DetailLazyScaffold
@@ -102,10 +101,12 @@ import app.hyperlpa.provisioning.BatchDownloadStatus
 import app.hyperlpa.provisioning.BatchDownloadUiState
 import app.hyperlpa.provisioning.MaxProvisioningQueueItems
 import app.hyperlpa.provisioning.parseBatchDownloadLine
+import app.hyperlpa.reminders.formatReminderDate
+import app.hyperlpa.reminders.toReminderDate
+import app.hyperlpa.reminders.toReminderInstant
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.nio.ByteBuffer
-import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -175,6 +176,8 @@ fun ProfileDetailsScreen(
     var editableTags by remember(profile?.tags) { mutableStateOf(profile?.tags.orEmpty()) }
     var newTag by remember { mutableStateOf("") }
     var showReminder by remember { mutableStateOf(false) }
+    var showCustomReminderDatePicker by rememberSaveable { mutableStateOf(false) }
+    var pendingCustomReminderDate by rememberSaveable { mutableStateOf<String?>(null) }
     var showIconOptions by remember { mutableStateOf(false) }
     var showRemoveProfileIconConfirmation by remember { mutableStateOf(false) }
     var showRemoveSharedProviderIconForProfileConfirmation by remember { mutableStateOf(false) }
@@ -198,6 +201,39 @@ fun ProfileDetailsScreen(
         uri?.let { onSetIcon(it.toString(), applyToProvider, reportIconResult) }
     }
     val fallbackName = stringResource(app.hyperlpa.R.string.profile_default_name)
+    val reminderLabel = profile?.nickname?.ifBlank { profile.name }.orEmpty().ifBlank { fallbackName }
+    val reminderNow = Instant.now()
+    val reminderZone = ZoneId.systemDefault()
+    val reminderToday = LocalDate.now(reminderZone)
+    val reminderFirstSelectableDate = reminderToday.plusDays(1)
+    val reminderLatestDate = reminderToday.plusYears(100)
+    val reminderInitialDate = profile?.reminderAt
+        ?.takeIf { it.isAfter(reminderNow) }
+        ?.toReminderDate(reminderZone)
+        ?.coerceIn(reminderFirstSelectableDate, reminderLatestDate)
+        ?: reminderFirstSelectableDate
+    val setReminder: (Instant) -> Unit = { reminderAt ->
+        onRequestNotificationPermission { granted ->
+            if (granted) {
+                onSetReminder(reminderLabel, reminderAt)
+                showReminder = false
+            } else {
+                Toast.makeText(
+                    context,
+                    reminderPermissionRequired,
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
+    }
+    LaunchedEffect(pendingCustomReminderDate) {
+        val selectedDate = pendingCustomReminderDate
+            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+        if (selectedDate != null) {
+            pendingCustomReminderDate = null
+            setReminder(selectedDate.toReminderInstant(reminderZone))
+        }
+    }
     val displayName = remember(profile, settings.phoneFormatStrategy, fallbackName) {
         profile?.let { formatProfileDisplayName(it, settings.phoneFormatStrategy, fallbackName) }
     }
@@ -245,6 +281,7 @@ fun ProfileDetailsScreen(
                     EmptyState(
                         title = stringResource(R.string.profile_unavailable_title),
                         message = stringResource(R.string.profile_unavailable_message),
+                        modifier = Modifier.fillParentMaxSize(),
                         icon = MiuixIcons.BankCards,
                     )
                 }
@@ -312,7 +349,7 @@ fun ProfileDetailsScreen(
                     )
                     ArrowPreference(
                         title = stringResource(R.string.profile_reminder),
-                        summary = profile.reminderAt?.formatDateTime()
+                        summary = profile.reminderAt?.formatReminderDate()
                             ?: stringResource(R.string.profile_no_reminder),
                         onClick = { showReminder = true },
                     )
@@ -560,57 +597,48 @@ fun ProfileDetailsScreen(
         onDismissRequest = { showReminder = false },
     ) {
         Column {
-            val label = profile?.nickname?.ifBlank { profile.name }.orEmpty().ifBlank { fallbackName }
-            val setReminder: (Instant) -> Unit = { reminderAt ->
-                onRequestNotificationPermission { granted ->
-                    if (granted) {
-                        onSetReminder(label, reminderAt)
-                        showReminder = false
-                    } else {
-                        Toast.makeText(
-                            context,
-                            reminderPermissionRequired,
-                            Toast.LENGTH_LONG,
-                        ).show()
-                    }
-                }
-            }
-            ReminderOption(
-                stringResource(R.string.reminder_tomorrow),
-                stringResource(R.string.reminder_tomorrow_summary),
-            ) {
-                setReminder(Instant.now().plus(Duration.ofDays(1)))
-            }
             ReminderOption(
                 stringResource(R.string.reminder_week),
                 stringResource(R.string.reminder_week_summary),
             ) {
-                setReminder(Instant.now().plus(Duration.ofDays(7)))
+                setReminder(reminderToday.plusDays(7).toReminderInstant(reminderZone))
             }
             ReminderOption(
                 stringResource(R.string.reminder_month),
                 stringResource(R.string.reminder_month_summary),
             ) {
-                setReminder(Instant.now().plus(Duration.ofDays(30)))
+                setReminder(reminderToday.plusDays(30).toReminderInstant(reminderZone))
             }
             ReminderOption(
                 stringResource(R.string.reminder_custom),
                 stringResource(R.string.reminder_custom_summary),
             ) {
-                showCustomReminderPicker(context, profile?.reminderAt) { reminderAt ->
-                    setReminder(reminderAt)
-                }
+                showCustomReminderDatePicker = true
             }
             ReminderOption(
                 stringResource(R.string.reminder_clear),
-                profile?.reminderAt?.formatDateTime() ?: stringResource(R.string.profile_no_reminder),
+                profile?.reminderAt?.formatReminderDate() ?: stringResource(R.string.profile_no_reminder),
             ) {
-                onSetReminder(label, null)
+                onSetReminder(reminderLabel, null)
                 showReminder = false
             }
             BottomSheetFooterSpacer()
         }
     }
+
+    MiuixDatePickerDialog(
+        show = showCustomReminderDatePicker,
+        initialDate = reminderInitialDate,
+        minimumDate = reminderFirstSelectableDate,
+        maximumDate = reminderLatestDate,
+        title = stringResource(R.string.reminder_choose_date),
+        cancelText = stringResource(R.string.common_cancel),
+        confirmText = stringResource(R.string.common_ok),
+        onDismissRequest = { showCustomReminderDatePicker = false },
+        onDateSelected = { selectedDate ->
+            pendingCustomReminderDate = selectedDate.toString()
+        },
+    )
 
     OverlayBottomSheet(
         show = showIconOptions,
@@ -1686,6 +1714,7 @@ fun EuiccDetailsScreen(
                 EmptyState(
                     title = stringResource(R.string.euicc_not_connected),
                     message = stringResource(R.string.euicc_not_connected_message),
+                    modifier = Modifier.fillParentMaxSize(),
                     icon = MiuixIcons.Info,
                 )
             }
@@ -2196,6 +2225,7 @@ fun TagManagerScreen(
                 EmptyState(
                     stringResource(R.string.tags_no_profiles),
                     stringResource(R.string.tags_no_profiles_message),
+                    modifier = Modifier.fillParentMaxSize(),
                     icon = MiuixIcons.BankCards,
                 )
             }
@@ -2246,6 +2276,7 @@ fun TagManagerScreen(
                     EmptyState(
                         title = stringResource(R.string.tags_none_found),
                         message = stringResource(R.string.tags_none_found_message),
+                        modifier = Modifier.fillParentMaxSize(),
                         icon = MiuixIcons.Search,
                     )
                 }
@@ -2309,6 +2340,7 @@ fun ScheduledRemindersScreen(
                 EmptyState(
                     title = stringResource(R.string.reminders_none),
                     message = stringResource(R.string.reminders_none_message),
+                    modifier = Modifier.fillParentMaxSize(),
                     icon = MiuixIcons.Messages,
                 )
             }
@@ -2347,7 +2379,7 @@ private fun ReminderManagerPreference(
         title = profile.nickname.ifBlank {
             profile.name.ifBlank { stringResource(R.string.profile_default_name) }
         },
-        summary = profile.reminderAt?.formatDateTime(),
+        summary = profile.reminderAt?.formatReminderDate(),
         endActions = {
             TextButton(text = stringResource(R.string.common_clear), onClick = { onClear(profile) })
         },
@@ -2479,6 +2511,7 @@ fun LogsScreen(
                 EmptyState(
                     stringResource(R.string.logs_empty),
                     stringResource(R.string.logs_empty_message),
+                    modifier = Modifier.fillParentMaxSize(),
                     icon = MiuixIcons.Search,
                 )
             }
@@ -2701,48 +2734,6 @@ private fun ProfileTagsEditor(
             onConfirm = { onSave(tags.withTagInput(newTag)) },
         )
         BottomSheetFooterSpacer()
-    }
-}
-
-private fun showCustomReminderPicker(
-    context: Context,
-    reminderAt: Instant?,
-    onReminderSelected: (Instant) -> Unit,
-) {
-    val now = Instant.now()
-    val zoneId = ZoneId.systemDefault()
-    val initialDateTime = (reminderAt?.takeIf { it.isAfter(now) } ?: now.plus(Duration.ofDays(1)))
-        .atZone(zoneId)
-
-    DatePickerDialog(
-        context,
-        { _, year, month, dayOfMonth ->
-            val selectedDate = LocalDate.of(year, month + 1, dayOfMonth)
-            TimePickerDialog(
-                context,
-                { _, hour, minute ->
-                    val selectedAt = selectedDate.atTime(hour, minute).atZone(zoneId).toInstant()
-                    if (selectedAt.isAfter(Instant.now())) {
-                        onReminderSelected(selectedAt)
-                    } else {
-                        Toast.makeText(
-                            context,
-                            context.getString(R.string.reminders_choose_future),
-                            Toast.LENGTH_SHORT,
-                        ).show()
-                    }
-                },
-                initialDateTime.hour,
-                initialDateTime.minute,
-                DateFormat.is24HourFormat(context),
-            ).show()
-        },
-        initialDateTime.year,
-        initialDateTime.monthValue - 1,
-        initialDateTime.dayOfMonth,
-    ).apply {
-        datePicker.minDate = System.currentTimeMillis()
-        show()
     }
 }
 

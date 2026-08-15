@@ -14,6 +14,7 @@ import app.hyperlpa.data.metadata.normalizeReminderLabel
 import app.hyperlpa.data.settings.AppSettings
 import app.hyperlpa.data.settings.AppSettingsRecoverySnapshot
 import app.hyperlpa.data.settings.AppSettingsStore
+import app.hyperlpa.reminders.normalizeReminderInstant
 import app.hyperlpa.reminders.withProfileReminderIsolation
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -109,7 +110,9 @@ class HyperLpaBackupManager(
             }
             ProfileMetadata(
                 tags = value.tags,
-                reminderAt = value.reminderEpochMillis?.let(java.time.Instant::ofEpochMilli),
+                reminderAt = value.reminderEpochMillis
+                    ?.let(java.time.Instant::ofEpochMilli)
+                    ?.normalizeReminderInstant(),
                 reminderLabel = value.reminderLabel,
                 iconUri = iconUri,
                 smdpAddress = value.smdpAddress,
@@ -209,7 +212,7 @@ class HyperLpaBackupManager(
             metadata.reminderEpochMillis?.let { epochMillis ->
                 iccid to (
                     (metadata.reminderLabel ?: reminderFallback) to
-                        java.time.Instant.ofEpochMilli(epochMillis)
+                        java.time.Instant.ofEpochMilli(epochMillis).normalizeReminderInstant()
                     )
             }
         }.toMap()

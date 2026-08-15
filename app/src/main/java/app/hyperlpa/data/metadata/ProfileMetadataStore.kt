@@ -10,6 +10,7 @@ import androidx.work.WorkManager
 import app.hyperlpa.R
 import app.hyperlpa.domain.model.takeUnicodeCodePoints
 import app.hyperlpa.reminders.ProfileReminderWorker
+import app.hyperlpa.reminders.normalizeReminderInstant
 import app.hyperlpa.reminders.reminderWorkIdentityTag
 import app.hyperlpa.reminders.scheduleProfileReminder
 import app.hyperlpa.reminders.withProfileReminderIsolation
@@ -85,9 +86,7 @@ class ProfileMetadataStore(context: Context) {
     val metadata: Flow<Map<String, ProfileMetadata>> = dataStore.data
         .catch { error -> if (error is IOException) emit(emptyPreferences()) else throw error }
         .map { preferences ->
-            preferences[MetadataJson]
-                ?.let { raw -> runCatching { json.decodeFromString<Map<String, StoredProfileMetadata>>(raw) }.getOrNull() }
-                .orEmpty()
+            readStored(preferences[MetadataJson])
                 .mapValues { (_, value) -> value.toDomain() }
         }
 
@@ -121,7 +120,9 @@ class ProfileMetadataStore(context: Context) {
     suspend fun restoreSnapshot(snapshot: ProfileMetadataSnapshot) {
         commitReminderMutation {
             dataStore.edit { preferences ->
-                preferences[MetadataJson] = json.encodeToString(snapshot.metadata)
+                preferences[MetadataJson] = json.encodeToString(
+                    snapshot.metadata.mapValues { (_, value) -> value.toDateOnlyReminder() },
+                )
                 preferences[ProviderIconsJson] = json.encodeToString(snapshot.providerIcons)
                 preferences[EuiccNamesJson] = json.encodeToString(sanitizeEuiccNames(snapshot.euiccNames))
             }
@@ -155,10 +156,11 @@ class ProfileMetadataStore(context: Context) {
         commitReminderMutation {
             val persistedLabel = normalizeReminderLabel(label)
                 ?: appContext.getString(R.string.profile_reminder_profile_fallback)
+            val persistedReminderAt = reminderAt?.normalizeReminderInstant()
             update(iccid) {
                 copy(
-                    reminderEpochMillis = reminderAt?.toEpochMilli(),
-                    reminderLabel = reminderAt?.let { persistedLabel },
+                    reminderEpochMillis = persistedReminderAt?.toEpochMilli(),
+                    reminderLabel = persistedReminderAt?.let { persistedLabel },
                     reminderDeliveryClaimToken = null,
                 )
             }
@@ -166,7 +168,7 @@ class ProfileMetadataStore(context: Context) {
                 appContext,
                 iccid,
                 persistedLabel,
-                reminderAt.takeIf { enabled },
+                persistedReminderAt.takeIf { enabled },
             ).await()
         }
     }
@@ -295,8 +297,11 @@ class ProfileMetadataStore(context: Context) {
             val fallbackLabel = appContext.getString(R.string.profile_reminder_profile_fallback)
             var stored = emptyMap<String, StoredProfileMetadata>()
             dataStore.edit { preferences ->
-                val current = readStored(preferences[MetadataJson]).toMutableMap()
-                var changed = false
+                val rawCurrent = readStoredStrict(preferences[MetadataJson])
+                val current = (rawCurrent ?: readStored(preferences[MetadataJson]))
+                    .mapValues { (_, value) -> value.toDateOnlyReminder() }
+                    .toMutableMap()
+                var changed = rawCurrent != null && current != rawCurrent
                 current.entries.forEach { (iccid, existing) ->
                     val requestedLabel = reminders[iccid]
                         ?.first
@@ -608,9 +613,10 @@ class ProfileMetadataStore(context: Context) {
         }
     }
 
-    private fun readStored(raw: String?): Map<String, StoredProfileMetadata> = raw
-        ?.let { value -> runCatching { json.decodeFromString<Map<String, StoredProfileMetadata>>(value) }.getOrNull() }
-        .orEmpty()
+    private fun readStored(raw: String?): Map<String, StoredProfileMetadata> =
+        readStoredStrict(raw)
+            .orEmpty()
+            .mapValues { (_, value) -> value.toDateOnlyReminder() }
 
     private fun readStoredStrict(raw: String?): Map<String, StoredProfileMetadata>? = when (raw) {
         null -> emptyMap()
@@ -631,7 +637,9 @@ class ProfileMetadataStore(context: Context) {
 
     private fun StoredProfileMetadata.toDomain(): ProfileMetadata = ProfileMetadata(
         tags = tags,
-        reminderAt = reminderEpochMillis?.let(Instant::ofEpochMilli),
+        reminderAt = reminderEpochMillis
+            ?.let(Instant::ofEpochMilli)
+            ?.normalizeReminderInstant(),
         reminderLabel = normalizeReminderLabel(reminderLabel),
         iconUri = iconUri,
         smdpAddress = smdpAddress,
@@ -644,7 +652,9 @@ class ProfileMetadataStore(context: Context) {
 
     private fun ProfileMetadata.toStored(): StoredProfileMetadata = StoredProfileMetadata(
         tags = normalizeProfileTags(tags),
-        reminderEpochMillis = reminderAt?.toEpochMilli(),
+        reminderEpochMillis = reminderAt
+            ?.normalizeReminderInstant()
+            ?.toEpochMilli(),
         reminderLabel = reminderAt?.let { normalizeReminderLabel(reminderLabel) },
         iconUri = iconUri,
         smdpAddress = smdpAddress,
@@ -771,8 +781,20 @@ internal fun buildPersistedReminderSchedules(
             label = normalizeReminderLabel(stored.reminderLabel)
                 ?: normalizeReminderLabel(fallbackLabel)
                 ?: "Profile",
-            reminderAt = Instant.ofEpochMilli(epochMillis),
+            reminderAt = Instant.ofEpochMilli(epochMillis).normalizeReminderInstant(),
         )
+    }
+}
+
+private fun StoredProfileMetadata.toDateOnlyReminder(): StoredProfileMetadata {
+    val normalizedEpochMillis = reminderEpochMillis
+        ?.let(Instant::ofEpochMilli)
+        ?.normalizeReminderInstant()
+        ?.toEpochMilli()
+    return if (normalizedEpochMillis == reminderEpochMillis) {
+        this
+    } else {
+        copy(reminderEpochMillis = normalizedEpochMillis)
     }
 }
 
