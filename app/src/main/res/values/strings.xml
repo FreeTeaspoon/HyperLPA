@@ -292,6 +292,8 @@
     <string name="profile_display_home_cards">Homepage cards</string>
     <string name="profile_display_name">Profile name</string>
     <string name="profile_display_name_summary">Show the profile name on the homepage</string>
+    <string name="profile_display_country_flag">Country flag</string>
+    <string name="profile_display_country_flag_summary">Show the profile country flag to the left of its name on homepage cards</string>
     <string name="profile_display_provider">Provider</string>
     <string name="profile_display_provider_summary">Show the provider on the homepage</string>
     <string name="profile_display_iccid">ICCID</string>
@@ -492,8 +494,8 @@
     <string name="backup_created">Encrypted backup created</string>
     <string name="backup_create_failed">Could not create backup</string>
     <string name="backup_restore_dialog_title">Restore this backup?</string>
-    <string name="backup_restore_dialog_summary">Enter the backup password. Current settings and saved profile metadata will be replaced. All reader backends, scheduled reminders, automatic notification actions, cloud lookups, and diagnostic logging stay disabled until you review and re-enable them.</string>
-    <string name="backup_decrypt_restore">Decrypt &amp; restore</string>
+    <string name="backup_restore_dialog_summary">Enter the backup password. Current settings and saved profile metadata will be replaced. Remote-reader credentials and the last selected reader are device-specific and are not included; you may need to enter them again after restore.</string>
+    <string name="backup_decrypt_restore">Restore</string>
     <string name="backup_restored">Backup restored</string>
     <string name="backup_restore_failed">Could not decrypt or restore backup</string>
     <string name="backup_reset_dialog_title">Reset all settings?</string>

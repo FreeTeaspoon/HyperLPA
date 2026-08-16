@@ -1091,6 +1091,8 @@ class HyperLpaViewModel(
     fun setPhoneFormatStrategy(value: PhoneFormatStrategy) =
         launch { settingsStore.setPhoneFormatStrategy(value) }
     fun setShowProfileNameOnHome(value: Boolean) = launch { settingsStore.setShowProfileNameOnHome(value) }
+    fun setShowProfileCountryFlagOnHome(value: Boolean) =
+        launch { settingsStore.setShowProfileCountryFlagOnHome(value) }
     fun setShowProfileProviderOnHome(value: Boolean) = launch { settingsStore.setShowProfileProviderOnHome(value) }
     fun setShowProfileIccidOnHome(value: Boolean) = launch { settingsStore.setShowProfileIccidOnHome(value) }
     fun setShowProfileIconOnHome(value: Boolean) = launch { settingsStore.setShowProfileIconOnHome(value) }

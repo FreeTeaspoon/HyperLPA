@@ -3,6 +3,7 @@ package app.hyperlpa.ui.components
 import app.hyperlpa.data.settings.PhoneFormatStrategy
 import app.hyperlpa.domain.model.ProfileInfo
 import com.google.i18n.phonenumbers.PhoneNumberUtil
+import java.util.Locale
 
 data class FormattedProfileDisplayName(
     val fullText: String,
@@ -27,6 +28,15 @@ fun formatProfileDisplayName(
         iccid = profile.iccid,
     )
 }
+
+fun profileCountryFlag(profile: ProfileInfo): String? =
+    profileCountryFlag(profile.mcc, profile.mnc, profile.iccid)
+
+fun profileCountryFlag(
+    mcc: String?,
+    mnc: String?,
+    iccid: String?,
+): String? = profileCountryRegion(mcc, mnc, iccid).toCountryFlagEmoji()
 
 fun formatProfileDisplayName(
     rawName: String,
@@ -151,7 +161,20 @@ private fun profileRegion(
     mnc: String?,
     iccid: String?,
     phoneNumberUtil: PhoneNumberUtil,
-): String {
+): String = profileCountryRegion(mcc, mnc, iccid, phoneNumberUtil) ?: "US"
+
+fun profileCountryRegion(
+    mcc: String?,
+    mnc: String?,
+    iccid: String?,
+): String? = profileCountryRegion(mcc, mnc, iccid, PhoneNumberUtil.getInstance())
+
+private fun profileCountryRegion(
+    mcc: String?,
+    mnc: String?,
+    iccid: String?,
+    phoneNumberUtil: PhoneNumberUtil,
+): String? {
     mccRegion(mcc, mnc, iccid)?.let { return it }
 
     val digits = iccid.orEmpty().filter(Char::isDigit)
@@ -164,7 +187,15 @@ private fun profileRegion(
         }
     }
 
-    return "US"
+    return null
+}
+
+private fun String?.toCountryFlagEmoji(): String? {
+    val region = this?.uppercase(Locale.ROOT) ?: return null
+    if (region.length != 2 || region.any { it !in 'A'..'Z' }) return null
+    return region.map { character ->
+        String(Character.toChars(0x1F1E6 + character.code - 'A'.code))
+    }.joinToString("")
 }
 
 private fun mccRegion(mcc: String?, mnc: String?, iccid: String?): String? {
