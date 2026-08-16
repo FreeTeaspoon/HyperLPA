@@ -13,6 +13,42 @@ import org.junit.Test
 
 class ProfilesPageStateTest {
     @Test
+    fun connectingWithoutATargetSnapshotUsesTheLoadingState() {
+        val reader = ReaderInfo("reader", "Reader", ReaderKind.OMAPI)
+        val lpa = LpaRepositoryState(
+            readers = listOf(reader),
+            operation = LpaOperation.Connecting(reader.name),
+            initialized = true,
+        )
+
+        assertEquals(PageStateKind.LOADING, profilesPageState(lpa, emptyList()))
+    }
+
+    @Test
+    fun connectingWithTheTargetsSnapshotKeepsCardsVisible() {
+        val reader = ReaderInfo("reader", "Reader", ReaderKind.OMAPI)
+        val profile = ProfileInfo(
+            iccid = "profile",
+            state = ProfileState.ENABLED,
+            name = "Profile",
+            nickname = "",
+            providerName = "Provider",
+            isdPAid = "",
+            profileClass = ProfileClass.OPERATIONAL,
+        )
+        val lpa = LpaRepositoryState(
+            readers = listOf(reader),
+            selectedReaderId = reader.id,
+            profiles = listOf(profile),
+            operation = LpaOperation.Connecting(reader.name),
+            initialized = true,
+            readerSnapshotPendingRefresh = true,
+        )
+
+        assertEquals(PageStateKind.CONTENT, profilesPageState(lpa, listOf(profile)))
+    }
+
+    @Test
     fun loadedProfilesStayVisibleWhileOptionalArtworkLoads() {
         val reader = ReaderInfo(
             id = "reader",

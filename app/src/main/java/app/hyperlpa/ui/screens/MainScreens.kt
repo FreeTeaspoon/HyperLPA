@@ -148,7 +148,8 @@ fun ProfilesScreen(
     // must not invalidate the home list while the bottom-sheet entrance animation is running.
     val profileActionsState = remember { mutableStateOf<ProfileInfo?>(null) }
     val profiles = state.profiles
-    val profileSwitchLocked = state.lpa.operation is LpaOperation.Switching
+    val profileSwitchLocked = state.lpa.operation is LpaOperation.Switching ||
+        state.lpa.operation is LpaOperation.Connecting
     val artworkLoadState = rememberProfileArtworkBitmaps(
         profiles = profiles,
         cloudIcons = state.operatorIcons,
@@ -324,7 +325,12 @@ fun ProfilesScreen(
                             ) {}
                         }
                     }
-                    if (pageState == PageStateKind.EMPTY && state.lpa.selectedReader != null && !hasNoSearchResults) {
+                    if (
+                        pageState == PageStateKind.EMPTY &&
+                        state.lpa.selectedReader != null &&
+                        state.lpa.operation !is LpaOperation.Connecting &&
+                        !hasNoSearchResults
+                    ) {
                         item(key = "download") {
                             TextButton(
                                 text = stringResource(R.string.action_download_profile),
@@ -356,7 +362,8 @@ internal fun profilesPageState(
     profiles: List<ProfileInfo>,
     awaitInitialArtwork: Boolean = false,
 ): PageStateKind = when {
-    lpa.operation is LpaOperation.Connecting -> PageStateKind.LOADING
+    lpa.operation is LpaOperation.Connecting && !lpa.readerSnapshotPendingRefresh ->
+        PageStateKind.LOADING
     !lpa.initialized ||
         (lpa.operation is LpaOperation.DiscoveringReaders && lpa.profiles.isEmpty()) -> PageStateKind.LOADING
     awaitInitialArtwork && lpa.profiles.isNotEmpty() -> PageStateKind.LOADING
