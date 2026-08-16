@@ -2632,7 +2632,7 @@ private fun ProfileHero(
             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
         )
         if (profileTags.isNotEmpty() || reminderText != null) {
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(6.dp))
             ProfileHeroMetadataRow(
                 tags = profileTags,
                 reminderText = reminderText,
@@ -2718,14 +2718,20 @@ private fun ProfileHeroMetadataAction(
     onClick: () -> Unit,
     content: @Composable () -> Unit,
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
     Row(
         modifier = Modifier
             .defaultMinSize(minHeight = 48.dp)
-            .clickable(onClickLabel = onClickLabel, onClick = onClick)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClickLabel = onClickLabel,
+                onClick = onClick,
+            )
             .semantics(mergeDescendants = true) {}
             .padding(horizontal = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.Top,
     ) {
         content()
     }

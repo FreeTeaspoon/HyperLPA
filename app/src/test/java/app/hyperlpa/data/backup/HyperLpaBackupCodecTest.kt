@@ -15,6 +15,7 @@ class HyperLpaBackupCodecTest {
         settings = AppSettings(
             themeMode = ThemeMode.DARK,
             phoneFormatStrategy = PhoneFormatStrategy.INTERNATIONAL_AND_ALL,
+            showProfileCountryFlagOnHome = true,
             hideProfileDeletion = true,
             imei = "490154203237518",
             remoteReaderUrls = listOf("https://reader.example"),
@@ -82,6 +83,39 @@ class HyperLpaBackupCodecTest {
 
         assertFalse(encoded.contains(secret))
         assertTrue(decodeBackup(encoded).settings.remoteReaderTokens.isEmpty())
+    }
+
+    @Test
+    fun restorePreservesPortableSettingsAndDropsDeviceOnlyState() {
+        val settings = sampleBackup.settings.copy(
+            autoLoadProfiles = true,
+            autoLoadRemoteReaders = true,
+            enableNBridge = true,
+            enableOmapi = true,
+            enableTelephony = true,
+            enableUsbCcid = true,
+            enableBle = true,
+            enableRemote = true,
+            notificationAutoSend = true,
+            notificationAutoRemove = true,
+            scheduledReminders = true,
+            loadOperatorIcons = true,
+            estimateProfileSize = true,
+            apduLogging = true,
+            developerMode = true,
+            lastReaderId = "source-device-reader",
+            remoteReaderTokens = mapOf("https://reader.example" to "runtime-token"),
+        )
+
+        val restored = settings.forRestore()
+
+        assertEquals(
+            settings.copy(
+                lastReaderId = null,
+                remoteReaderTokens = emptyMap(),
+            ),
+            restored,
+        )
     }
 
     @Test

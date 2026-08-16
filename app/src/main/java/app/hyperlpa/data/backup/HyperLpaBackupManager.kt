@@ -126,7 +126,7 @@ class HyperLpaBackupManager(
         val restoredProviderIcons = backup.providerIcons.keys.mapIndexed { index, provider ->
             provider to providerIconFiles[index].toUri().toString()
         }.toMap()
-        val restoredSettings = backup.settings.safeForRestore()
+        val restoredSettings = backup.settings.forRestore()
         val journal = RestoreRecoveryJournal(
             previousSettings = previousSettings,
             previousMetadata = previousMetadata,
@@ -605,25 +605,11 @@ private fun decodeBase64Bounded(value: String, expectedBytes: Int, field: String
     return decoded
 }
 
-private fun AppSettings.safeForRestore(): AppSettings = copy(
-    // Imported configuration must never immediately contact arbitrary endpoints or
-    // attached readers, schedule work, or enable sensitive diagnostics without a
-    // separate user action after the import has been reviewed.
-    autoLoadProfiles = false,
-    enableNBridge = false,
-    enableOmapi = false,
-    enableTelephony = false,
-    enableUsbCcid = false,
-    enableBle = false,
-    enableRemote = false,
-    autoLoadRemoteReaders = false,
-    notificationAutoSend = false,
-    notificationAutoRemove = false,
-    scheduledReminders = false,
-    loadOperatorIcons = false,
-    estimateProfileSize = false,
-    apduLogging = false,
-    developerMode = false,
+internal fun AppSettings.forRestore(): AppSettings = copy(
+    // Remote-reader credentials are runtime-only and the last reader belongs to the source
+    // device. Keep every portable setting from the backup, but require credentials and reader
+    // selection to be established again on the destination device.
+    remoteReaderTokens = emptyMap(),
     lastReaderId = null,
 )
 

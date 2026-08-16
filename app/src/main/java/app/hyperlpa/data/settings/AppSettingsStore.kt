@@ -137,6 +137,7 @@ data class AppSettings(
     val showProfileSearch: Boolean = false,
     val phoneFormatStrategy: PhoneFormatStrategy = PhoneFormatStrategy.INTERNATIONAL_AND_MOBILE,
     val showProfileNameOnHome: Boolean = true,
+    val showProfileCountryFlagOnHome: Boolean = false,
     val showProfileProviderOnHome: Boolean = true,
     val showProfileIccidOnHome: Boolean = true,
     val showProfileIconOnHome: Boolean = true,
@@ -232,6 +233,8 @@ class AppSettingsStore(context: Context) {
     suspend fun setShowProfileSearch(value: Boolean) = set(Keys.ShowProfileSearch, value)
     suspend fun setPhoneFormatStrategy(value: PhoneFormatStrategy) = set(Keys.PhoneFormatStrategy, value.name)
     suspend fun setShowProfileNameOnHome(value: Boolean) = set(Keys.ShowProfileNameOnHome, value)
+    suspend fun setShowProfileCountryFlagOnHome(value: Boolean) =
+        set(Keys.ShowProfileCountryFlagOnHome, value)
     suspend fun setShowProfileProviderOnHome(value: Boolean) = set(Keys.ShowProfileProviderOnHome, value)
     suspend fun setShowProfileIccidOnHome(value: Boolean) = set(Keys.ShowProfileIccidOnHome, value)
     suspend fun setShowProfileIconOnHome(value: Boolean) = set(Keys.ShowProfileIconOnHome, value)
@@ -382,6 +385,7 @@ class AppSettingsStore(context: Context) {
         this[Keys.ShowProfileSearch] = settings.showProfileSearch
         this[Keys.PhoneFormatStrategy] = settings.phoneFormatStrategy.name
         this[Keys.ShowProfileNameOnHome] = settings.showProfileNameOnHome
+        this[Keys.ShowProfileCountryFlagOnHome] = settings.showProfileCountryFlagOnHome
         this[Keys.ShowProfileProviderOnHome] = settings.showProfileProviderOnHome
         this[Keys.ShowProfileIccidOnHome] = settings.showProfileIccidOnHome
         this[Keys.ShowProfileIconOnHome] = settings.showProfileIconOnHome
@@ -497,6 +501,7 @@ class AppSettingsStore(context: Context) {
             PhoneFormatStrategy.INTERNATIONAL_AND_MOBILE,
         ),
         showProfileNameOnHome = preferences[Keys.ShowProfileNameOnHome] ?: true,
+        showProfileCountryFlagOnHome = preferences[Keys.ShowProfileCountryFlagOnHome] ?: false,
         showProfileProviderOnHome = preferences[Keys.ShowProfileProviderOnHome] ?: true,
         showProfileIccidOnHome = preferences[Keys.ShowProfileIccidOnHome] ?: true,
         showProfileIconOnHome = preferences[Keys.ShowProfileIconOnHome] ?: true,
@@ -600,6 +605,7 @@ class AppSettingsStore(context: Context) {
         val ShowProfileSearch = booleanPreferencesKey("show_profile_search")
         val PhoneFormatStrategy = stringPreferencesKey("phone_format_strategy")
         val ShowProfileNameOnHome = booleanPreferencesKey("show_profile_name_on_home")
+        val ShowProfileCountryFlagOnHome = booleanPreferencesKey("show_profile_country_flag_on_home")
         val ShowProfileProviderOnHome = booleanPreferencesKey("show_profile_provider_on_home")
         val ShowProfileIccidOnHome = booleanPreferencesKey("show_profile_iccid_on_home")
         val ShowProfileIconOnHome = booleanPreferencesKey("show_profile_icon_on_home")
