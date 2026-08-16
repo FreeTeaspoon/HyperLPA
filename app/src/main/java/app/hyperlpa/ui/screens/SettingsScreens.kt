@@ -1119,6 +1119,7 @@ fun PrivacySettingsScreen(
     viewModel: HyperLpaViewModel,
 ) {
     val redactionModes = RedactionMode.entries
+    var showClearCloudCachesConfirmation by remember { mutableStateOf(false) }
     DetailLazyScaffold(title = stringResource(R.string.privacy_title), onBack = onBack) { _ ->
         item { SectionHeading(stringResource(R.string.privacy_sensitive_identifiers)) }
         item {
@@ -1157,15 +1158,30 @@ fun PrivacySettingsScreen(
                 ArrowPreference(
                     title = stringResource(R.string.privacy_clear_cloud_caches),
                     summary = stringResource(R.string.privacy_clear_cloud_caches_summary),
-                    onClick = viewModel::clearCloudCaches,
-                )
-                ArrowPreference(
-                    title = stringResource(R.string.privacy_cloud_data_use),
-                    summary = stringResource(R.string.privacy_cloud_data_use_summary),
-                    enabled = false,
+                    onClick = { showClearCloudCachesConfirmation = true },
                 )
             }
         }
+        item {
+            TipCard(text = stringResource(R.string.privacy_cloud_data_use_summary))
+        }
+    }
+
+    OverlayDialog(
+        show = showClearCloudCachesConfirmation,
+        title = stringResource(R.string.privacy_clear_cloud_caches_dialog_title),
+        summary = stringResource(R.string.privacy_clear_cloud_caches_dialog_summary),
+        onDismissRequest = { showClearCloudCachesConfirmation = false },
+    ) {
+        SettingsConfirmationActions(
+            confirmText = stringResource(R.string.privacy_clear_cloud_caches),
+            destructive = true,
+            onCancel = { showClearCloudCachesConfirmation = false },
+            onConfirm = {
+                showClearCloudCachesConfirmation = false
+                viewModel.clearCloudCaches()
+            },
+        )
     }
 }
 
