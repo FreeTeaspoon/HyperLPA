@@ -205,9 +205,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          notes_header="$(cat <<'EOF'
+          ## Which file should I download?
+
+          **Most people want `app-arm64-v8a-release.apk`** — the ordinary build for modern 64-bit phones and tablets, signed with the public [9eSIM Community Key](https://github.com/9esim/9eSIMCommunityKey) so compatible 9eSIM cards authorise it over OMAPI. Choose another `…-release.apk` only if your device has a different ABI (`armeabi-v7a` for old 32-bit ARM devices, `x86_64`/`x86` for emulators).
+
+          Do **not** install a `…-privilegedRelease.apk` unless you administer a compatible system image: sideloading it does not grant Android's protected telephony permissions, and it is signed with the private HyperLPA key, so cards that allowlist only the community key will reject it.
+
+          `SHA256SUMS` lists the checksum of every APK so you can verify a download with `sha256sum --check`.
+          EOF
+          )"
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --title "HyperLPA $GITHUB_REF_NAME" \
             --generate-notes \
+            --notes "$notes_header" \
             release-assets/*
