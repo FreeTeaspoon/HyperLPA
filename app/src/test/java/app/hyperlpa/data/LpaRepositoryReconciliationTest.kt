@@ -1,13 +1,57 @@
 package app.hyperlpa.data
 
 import app.hyperlpa.domain.model.EuiccInfo
+import app.hyperlpa.domain.model.LpaOperation
+import app.hyperlpa.domain.model.ProfileClass
+import app.hyperlpa.domain.model.ProfileInfo
 import app.hyperlpa.domain.model.ProfileState
+import app.hyperlpa.domain.model.ReaderInfo
+import app.hyperlpa.domain.model.ReaderKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LpaRepositoryReconciliationTest {
+    @Test
+    fun cachedReaderSnapshotRestoresOnlyTheTargetReadersState() {
+        val firstReader = ReaderInfo("reader-one", "Reader one", ReaderKind.OMAPI)
+        val secondReader = ReaderInfo("reader-two", "Reader two", ReaderKind.OMAPI)
+        val secondProfile = ProfileInfo(
+            iccid = "profile-two",
+            state = ProfileState.ENABLED,
+            name = "Second profile",
+            nickname = "",
+            providerName = "Provider",
+            isdPAid = "",
+            profileClass = ProfileClass.OPERATIONAL,
+        )
+        val connecting = LpaRepositoryState(
+            readers = listOf(firstReader, secondReader),
+            selectedReaderId = firstReader.id,
+            euiccInfo = EuiccInfo(eid = "eid-one"),
+            operation = LpaOperation.Connecting(secondReader.name),
+            initialized = true,
+        )
+
+        val restored = connecting.withReaderSnapshot(
+            readerId = secondReader.id,
+            snapshot = ReaderSnapshot(
+                profiles = listOf(secondProfile),
+                notifications = emptyList(),
+                euiccInfo = EuiccInfo(eid = "eid-two"),
+                discoveredSmdpAddresses = listOf("smds.example"),
+            ),
+        )
+
+        assertEquals(secondReader.id, restored.selectedReaderId)
+        assertEquals("eid-two", restored.euiccInfo?.eid)
+        assertEquals(listOf(secondProfile), restored.profiles)
+        assertEquals(listOf("smds.example"), restored.discoveredSmdpAddresses)
+        assertEquals(connecting.operation, restored.operation)
+        assertTrue(restored.readerSnapshotPendingRefresh)
+    }
+
     @Test
     fun initialNotificationDeliveryRequiresAutomaticSendAndValidatedInternet() {
         assertFalse(shouldAttemptInitialNotificationDelivery(notificationAutoSend = false, hasValidatedInternet = true))
@@ -16,7 +60,7 @@ class LpaRepositoryReconciliationTest {
     }
 
     @Test
-    fun initialNotificationWorkIsDeferredOnlyWhenConnectionHasPendingNotifications() {
+    fun initialNotificationDeliveryRunsOnlyWhenConnectionHasPendingNotifications() {
         assertFalse(
             shouldScheduleInitialNotificationDelivery(
                 notificationInitialLoad = false,
