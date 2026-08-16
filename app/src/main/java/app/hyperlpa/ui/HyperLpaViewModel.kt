@@ -195,6 +195,12 @@ class HyperLpaViewModel(
     private val activationCodeDraft = MutableStateFlow("")
     private val cloudProfileData = MutableStateFlow(CloudProfileData())
     private val cloudRefreshToken = MutableStateFlow(0)
+    private val cloudProfileDataCache = object :
+        LinkedHashMap<CloudEnrichmentKey, CloudProfileData>(4, 0.75f, true) {
+        override fun removeEldestEntry(
+            eldest: MutableMap.MutableEntry<CloudEnrichmentKey, CloudProfileData>,
+        ): Boolean = size > MaxCloudProfileSnapshots
+    }
     private val downloadPreviewCloudData = MutableStateFlow(DownloadPreviewCloudData())
     private var suppressedCloudProfileSource: CloudEnrichmentKey? = null
     private var suppressedDownloadPreviewSource: DownloadPreviewCloudSourceKey? = null
@@ -315,7 +321,10 @@ class HyperLpaViewModel(
                         return@collectLatest
                     }
                     suppressedCloudProfileSource = null
-                    cloudProfileData.value = supervisorScope {
+                    cachedCloudProfileData(sourceKey)?.let { cached ->
+                        cloudProfileData.value = cached.copy(input = input)
+                    }
+                    val refreshed = supervisorScope {
                         val icons = async {
                             if (!input.loadOperatorIcons) return@async emptyMap()
                             val loaded = input.profiles.take(MaxUiOperatorIconEntries).map { profile ->
@@ -374,6 +383,8 @@ class HyperLpaViewModel(
                             profileSizePredictions = sizes.await(),
                         )
                     }
+                    cacheCloudProfileData(sourceKey, refreshed)
+                    cloudProfileData.value = refreshed
                 }
         }
         viewModelScope.launch {
@@ -904,10 +915,18 @@ class HyperLpaViewModel(
             eid = snapshot.lpa.euiccInfo?.eid,
             refreshToken = nextRefreshToken,
         ).sourceKey
+        synchronized(cloudProfileDataCache) { cloudProfileDataCache.clear() }
         cloudRefreshToken.value = nextRefreshToken
         cloudProfileData.value = CloudProfileData(input = profileInput)
         downloadPreviewCloudData.value = DownloadPreviewCloudData()
         cloudService.clearAllCaches()
+    }
+
+    private fun cachedCloudProfileData(key: CloudEnrichmentKey): CloudProfileData? =
+        synchronized(cloudProfileDataCache) { cloudProfileDataCache[key] }
+
+    private fun cacheCloudProfileData(key: CloudEnrichmentKey, data: CloudProfileData) {
+        synchronized(cloudProfileDataCache) { cloudProfileDataCache[key] = data }
     }
 
     fun exportSupportReport(uri: Uri, onComplete: (Boolean) -> Unit) {
@@ -1444,4 +1463,5 @@ private fun InputStream.readTextLimited(maxBytes: Int): String {
 private const val MaxBackupBytes = 48 * 1024 * 1024
 private const val MaxUiOperatorIconBytes = 8L * 1024 * 1024
 private const val MaxUiOperatorIconEntries = 32
+private const val MaxCloudProfileSnapshots = 4
 private const val MaxSearchQueryCharacters = 256

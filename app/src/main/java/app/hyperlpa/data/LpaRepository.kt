@@ -75,6 +75,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 private const val MaxReaderProfiles = 128
 private const val MaxReaderNotifications = 128
+private const val MaxReaderSnapshots = 8
 private const val InitialNotificationDelayMillis = 750L
 private const val InitialEuiccMetadataDelayMillis = 150L
 private const val PostSwitchFollowUpDelayMillis = 150L
@@ -115,6 +116,7 @@ data class LpaRepositoryState(
     val failure: OperationFailure? = null,
     val initialized: Boolean = false,
     val logs: List<ActivityLogEntry> = emptyList(),
+    val readerSnapshotPendingRefresh: Boolean = false,
 ) {
     val selectedReader: ReaderInfo?
         get() = readers.firstOrNull { it.id == selectedReaderId }
@@ -124,6 +126,28 @@ data class LpaRepositoryState(
 internal data class ReaderAffinity(
     val readerId: String,
     val eid: String,
+)
+
+/** A last-known authoritative card snapshot, retained only for this repository process. */
+internal data class ReaderSnapshot(
+    val profiles: List<ProfileInfo>,
+    val notifications: List<LpaNotification>,
+    val euiccInfo: EuiccInfo,
+    val discoveredSmdpAddresses: List<String>,
+)
+
+internal fun LpaRepositoryState.withReaderSnapshot(
+    readerId: String,
+    snapshot: ReaderSnapshot,
+): LpaRepositoryState = copy(
+    selectedReaderId = readerId,
+    profiles = snapshot.profiles,
+    notifications = snapshot.notifications,
+    euiccInfo = snapshot.euiccInfo,
+    pendingProfileDownload = null,
+    completedProfileDownload = null,
+    discoveredSmdpAddresses = snapshot.discoveredSmdpAddresses,
+    readerSnapshotPendingRefresh = true,
 )
 
 internal data class CachedEuiccConfiguredAddresses(
@@ -189,6 +213,11 @@ class LpaRepository(
     private val initialNotificationJob = java.util.concurrent.atomic.AtomicReference<Job?>(null)
     private val initialEuiccMetadataJob = java.util.concurrent.atomic.AtomicReference<Job?>(null)
     private val postSwitchFollowUpJob = java.util.concurrent.atomic.AtomicReference<Job?>(null)
+    private val readerSnapshots = object : LinkedHashMap<String, ReaderSnapshot>(4, 0.75f, true) {
+        override fun removeEldestEntry(
+            eldest: MutableMap.MutableEntry<String, ReaderSnapshot>,
+        ): Boolean = size > MaxReaderSnapshots
+    }
     private val mutableState = MutableStateFlow(LpaRepositoryState())
 
     val state: StateFlow<LpaRepositoryState> = mutableState.asStateFlow()
@@ -282,6 +311,7 @@ class LpaRepository(
                 null
             }
             if (selectedRemoteId != null) {
+                readerSnapshots.remove(selectedRemoteId)
                 closeSession()
                 mutableState.value = mutableState.value.copy(
                     selectedReaderId = null,
@@ -291,6 +321,7 @@ class LpaRepository(
                     pendingProfileDownload = null,
                     completedProfileDownload = null,
                     discoveredSmdpAddresses = emptyList(),
+                    readerSnapshotPendingRefresh = false,
                 )
             }
             discoverReadersInternal(
@@ -431,6 +462,7 @@ class LpaRepository(
                         notifications = emptyList(),
                         euiccInfo = null,
                         failure = failure,
+                        readerSnapshotPendingRefresh = false,
                     )
                 }
             } else if (
@@ -443,6 +475,7 @@ class LpaRepository(
                     profiles = emptyList(),
                     notifications = emptyList(),
                     euiccInfo = null,
+                    readerSnapshotPendingRefresh = false,
                 )
             }
     }
@@ -1231,6 +1264,7 @@ class LpaRepository(
                     pendingProfileDownload = null,
                     completedProfileDownload = null,
                     discoveredSmdpAddresses = emptyList(),
+                    readerSnapshotPendingRefresh = false,
                 )
             }
         }
@@ -1242,6 +1276,7 @@ class LpaRepository(
         selectedReaderTargetId = null
         closeSession()
         endpointById.clear()
+        readerSnapshots.clear()
         mutableState.value = mutableState.value.copy(
             readers = emptyList(),
             selectedReaderId = null,
@@ -1252,6 +1287,7 @@ class LpaRepository(
             completedProfileDownload = null,
             discoveredSmdpAddresses = emptyList(),
             initialized = false,
+            readerSnapshotPendingRefresh = false,
         )
     }
 
@@ -1282,62 +1318,88 @@ class LpaRepository(
         endpoint: ReaderEndpoint,
         refreshScope: SessionRefreshScope = SessionRefreshScope.FULL,
     ) = withContext(ioDispatcher) {
-        val reconnectingSelectedReader = mutableState.value.selectedReaderId == endpoint.info.id
+        val stateBeforeConnection = mutableState.value
+        val reconnectingSelectedReader = stateBeforeConnection.selectedReaderId == endpoint.info.id
+        if (
+            stateBeforeConnection.selectedReaderId != null &&
+            stateBeforeConnection.euiccInfo != null &&
+            !stateBeforeConnection.readerSnapshotPendingRefresh
+        ) {
+            cacheReaderSnapshot(stateBeforeConnection.selectedReaderId, stateBeforeConnection)
+        }
+        val cachedTargetSnapshot = readerSnapshots[endpoint.info.id]
         closeSession()
-        if (!reconnectingSelectedReader) {
-            // Do not expose a hybrid affinity (the previous reader ID with the next card's EID)
-            // while opening and refreshing a different reader. A reconnect to the currently
-            // selected reader keeps its last valid snapshot until refreshInternal atomically
-            // replaces it, avoiding transient empty states during profile switches.
+        if (cachedTargetSnapshot != null) {
+            // A target-bound snapshot can be shown safely while its new session is opened. It
+            // never combines the previous reader ID with another card's profiles or EID.
+            mutableState.value = mutableState.value.withReaderSnapshot(
+                readerId = endpoint.info.id,
+                snapshot = cachedTargetSnapshot,
+            )
+        } else if (!reconnectingSelectedReader) {
             mutableState.value = mutableState.value.copy(
                 selectedReaderId = null,
                 profiles = emptyList(),
                 notifications = emptyList(),
                 euiccInfo = null,
+                discoveredSmdpAddresses = emptyList(),
+                readerSnapshotPendingRefresh = false,
             )
         }
         log(LogLevel.INFO, "Reader", "Connecting to ${endpoint.info.name}")
-        val opened = LpaSessionFactory.open(endpoint, settings, verboseLoggingEnabled)
+        var opened: LpaSession? = null
         try {
+            opened = LpaSessionFactory.open(endpoint, settings, verboseLoggingEnabled)
             session = opened
             when (refreshScope) {
                 // Configured SM-DP+/SM-DS addresses are useful metadata, but they are not needed
                 // to publish the reader, EID, or profile list. Read them after the connection has
                 // become usable so the extra ES10a APDU is outside the reader-open critical path.
-                SessionRefreshScope.FULL -> refreshInternal(readConfiguredAddresses = false)
+                SessionRefreshScope.FULL -> refreshInternal(
+                    readConfiguredAddresses = false,
+                    readNotifications = false,
+                    refreshEuiccInfo2 = false,
+                )
                 SessionRefreshScope.PROFILE_SWITCH_STATE -> refreshProfileSwitchStateInternal()
             }
             selectedReaderTargetId = endpoint.info.id
-            mutableState.value = mutableState.value.copy(selectedReaderId = endpoint.info.id)
+            mutableState.value = mutableState.value.copy(
+                selectedReaderId = endpoint.info.id,
+                readerSnapshotPendingRefresh = false,
+            )
+            cacheReaderSnapshot(endpoint.info.id, mutableState.value)
             if (refreshScope == SessionRefreshScope.FULL) {
                 currentReaderAffinity()?.let(::scheduleInitialEuiccMetadataRefresh)
-            }
-            if (refreshScope == SessionRefreshScope.FULL && shouldScheduleInitialNotificationDelivery(
-                    notificationInitialLoad = settings.notificationInitialLoad,
-                    notificationAutoSend = settings.notificationAutoSend,
-                    pendingNotificationCount = mutableState.value.notifications.size,
-                )) {
-                scheduleInitialNotificationDelivery(
-                    ReaderAffinity(
-                        readerId = endpoint.info.id,
-                        eid = mutableState.value.euiccInfo?.eid.orEmpty(),
-                    ),
-                )
+                currentReaderAffinity()?.let(::scheduleInitialNotificationRefresh)
             }
             log(LogLevel.INFO, "Reader", "Connected to ${endpoint.info.name}")
         } catch (error: Throwable) {
             if (session === opened) session = null
-            opened.close()
+            opened?.close()
             if (!reconnectingSelectedReader) {
                 mutableState.value = mutableState.value.copy(
                     selectedReaderId = null,
                     profiles = emptyList(),
                     notifications = emptyList(),
                     euiccInfo = null,
+                    discoveredSmdpAddresses = emptyList(),
+                    readerSnapshotPendingRefresh = false,
                 )
+            } else {
+                mutableState.value = mutableState.value.copy(readerSnapshotPendingRefresh = false)
             }
             throw error
         }
+    }
+
+    private fun cacheReaderSnapshot(readerId: String, state: LpaRepositoryState) {
+        val euiccInfo = state.euiccInfo ?: return
+        readerSnapshots[readerId] = ReaderSnapshot(
+            profiles = state.profiles,
+            notifications = state.notifications,
+            euiccInfo = euiccInfo,
+            discoveredSmdpAddresses = state.discoveredSmdpAddresses,
+        )
     }
 
     /**
@@ -1362,29 +1424,33 @@ class LpaRepository(
     }
 
     /**
-     * Notification delivery is deliberately deferred until the reader connection has published
-     * its local profile snapshot. It may require HTTPS and can take up to the notification HTTP
-     * deadline; neither that network path nor its history writes should hold the connection card
-     * in a loading state.
+     * Notification inventory and delivery are deliberately deferred until the reader connection
+     * has published its profiles. Neither the extra card command nor optional HTTPS/history work
+     * belongs on the profile-page critical path.
      */
-    private fun scheduleInitialNotificationDelivery(expectedAffinity: ReaderAffinity) {
+    private fun scheduleInitialNotificationRefresh(expectedAffinity: ReaderAffinity) {
         val job = backgroundScope.launch {
             delay(InitialNotificationDelayMillis)
-            if (
-                !shouldAttemptInitialNotificationDelivery(
-                    notificationAutoSend = settings.notificationAutoSend,
-                    hasValidatedInternet = hasValidatedInternet(),
-                )
-            ) {
-                return@launch
-            }
             if (!operationMutex.tryLock()) return@launch
             try {
                 if (currentReaderAffinity() != expectedAffinity) return@launch
-                if (mutableState.value.notifications.isEmpty()) return@launch
-                val notificationsChanged = processNotificationsSafely("reader connection")
-                if (notificationsChanged && currentReaderAffinity() == expectedAffinity) {
-                    refreshInternal()
+                refreshNotificationsSafely("reader connection")
+                if (
+                    currentReaderAffinity() == expectedAffinity &&
+                    shouldScheduleInitialNotificationDelivery(
+                        notificationInitialLoad = settings.notificationInitialLoad,
+                        notificationAutoSend = settings.notificationAutoSend,
+                        pendingNotificationCount = mutableState.value.notifications.size,
+                    ) &&
+                    shouldAttemptInitialNotificationDelivery(
+                        notificationAutoSend = settings.notificationAutoSend,
+                        hasValidatedInternet = hasValidatedInternet(),
+                    )
+                ) {
+                    val notificationsChanged = processNotificationsSafely("reader connection")
+                    if (notificationsChanged && currentReaderAffinity() == expectedAffinity) {
+                        refreshNotificationsSafely("reader connection")
+                    }
                 }
             } finally {
                 operationMutex.unlock()
@@ -1432,7 +1498,7 @@ class LpaRepository(
         }
     }
 
-    private fun cancelInitialNotificationDelivery() {
+    private fun cancelInitialNotificationRefresh() {
         initialNotificationJob.getAndSet(null)?.cancel()
     }
 
@@ -1445,7 +1511,7 @@ class LpaRepository(
     }
 
     private fun cancelDeferredCardFollowUp() {
-        cancelInitialNotificationDelivery()
+        cancelInitialNotificationRefresh()
         cancelInitialEuiccMetadataRefresh()
         cancelPostSwitchFollowUp()
     }
@@ -1790,7 +1856,8 @@ class LpaRepository(
 
     /** Reads only the identity and profile state needed to reconcile an uncertain switch. */
     private suspend fun refreshProfileSwitchStateInternal() = withContext(ioDispatcher) {
-        val assistant = requireSession().assistant
+        val active = requireSession()
+        val assistant = active.assistant
         val eid = assistant.eID
         val profiles = readValidatedProfiles(assistant)
         val previousInfo = mutableState.value.euiccInfo
@@ -1801,48 +1868,54 @@ class LpaRepository(
                 ?: EuiccInfo(eid = eid),
             failure = null,
         )
+        cacheReaderSnapshot(active.reader.id, mutableState.value)
     }
 
     private suspend fun refreshInternal(
         readConfiguredAddresses: Boolean = true,
+        readNotifications: Boolean = true,
+        refreshEuiccInfo2: Boolean = true,
     ) = withContext(ioDispatcher) {
         val active = requireSession()
         val assistant = active.assistant
         val eid = assistant.eID
         val previousInfo = mutableState.value.euiccInfo
         val profiles = readValidatedProfiles(assistant)
-        val localNotifications = assistant.notifications
-        require(localNotifications.size <= MaxReaderNotifications) {
-            "The eUICC returned too many notifications"
-        }
-        require(
-            localNotifications.map(LocalProfileNotification::seqNumber).toSet().size ==
-                localNotifications.size,
-        ) { "The eUICC returned duplicate notification sequence numbers" }
+        val localNotifications = if (readNotifications) readValidatedNotifications(assistant) else null
+        val retainedNotifications = mutableState.value.notifications.takeIf {
+            previousInfo?.eid == eid
+        }.orEmpty()
         mutableState.value = mutableState.value.copy(
             profiles = profiles,
-            notifications = localNotifications.map(::mapNotification),
+            notifications = localNotifications?.map(::mapNotification) ?: retainedNotifications,
             euiccInfo = readEuiccInfo(
-                assistant = assistant,
+                active = active,
                 eid = eid,
                 readConfiguredAddresses = readConfiguredAddresses,
+                refreshEuiccInfo2 = refreshEuiccInfo2,
                 previousInfo = previousInfo,
             ),
             failure = null,
         )
         downloadOutcomeRequiresRefresh.set(false)
         mutationOutcomeRequiresRefresh.set(false)
+        cacheReaderSnapshot(active.reader.id, mutableState.value)
     }
 
     private fun readEuiccInfo(
-        assistant: LocalProfileAssistant,
+        active: LpaSession,
         eid: String,
         readConfiguredAddresses: Boolean,
+        refreshEuiccInfo2: Boolean,
         previousInfo: EuiccInfo?,
     ): EuiccInfo {
-        val info = assistant.euiccInfo2
+        val info = active.readEuiccInfo2(refresh = refreshEuiccInfo2)
         val cachedAddresses = cachedEuiccConfiguredAddresses(previousInfo, eid)
-        val addresses = if (readConfiguredAddresses) assistant.euiccConfiguredAddresses else null
+        val addresses = if (readConfiguredAddresses) {
+            active.assistant.euiccConfiguredAddresses
+        } else {
+            null
+        }
         return EuiccInfo(
             eid = eid,
             sgp22Version = info?.sgp22Version?.toString().orEmpty(),
@@ -1879,19 +1952,22 @@ class LpaRepository(
 
     /** Updates firmware/address metadata without re-reading the profile list. */
     private suspend fun refreshEuiccMetadataInternal() = withContext(ioDispatcher) {
-        val assistant = requireSession().assistant
+        val active = requireSession()
+        val assistant = active.assistant
         val eid = assistant.eID
         val previousInfo = mutableState.value.euiccInfo
         if (previousInfo != null && previousInfo.eid != eid) return@withContext
         mutableState.value = mutableState.value.copy(
             euiccInfo = readEuiccInfo(
-                assistant = assistant,
+                active = active,
                 eid = eid,
                 readConfiguredAddresses = true,
+                refreshEuiccInfo2 = false,
                 previousInfo = previousInfo,
             ),
             failure = null,
         )
+        cacheReaderSnapshot(active.reader.id, mutableState.value)
     }
 
     private suspend fun refreshEuiccMetadataSafely(operationName: String) {
@@ -1917,8 +1993,10 @@ class LpaRepository(
         return localProfiles.map(::mapProfile)
     }
 
-    private suspend fun refreshNotificationsInternal() = withContext(ioDispatcher) {
-        val localNotifications = requireSession().assistant.notifications
+    private fun readValidatedNotifications(
+        assistant: LocalProfileAssistant,
+    ): List<LocalProfileNotification> {
+        val localNotifications = assistant.notifications
         require(localNotifications.size <= MaxReaderNotifications) {
             "The eUICC returned too many notifications"
         }
@@ -1926,23 +2004,24 @@ class LpaRepository(
             localNotifications.map(LocalProfileNotification::seqNumber).toSet().size ==
                 localNotifications.size,
         ) { "The eUICC returned duplicate notification sequence numbers" }
+        return localNotifications
+    }
+
+    private suspend fun refreshNotificationsInternal() = withContext(ioDispatcher) {
+        val active = requireSession()
+        val localNotifications = readValidatedNotifications(active.assistant)
         mutableState.value = mutableState.value.copy(
             notifications = localNotifications.map(::mapNotification),
             failure = null,
         )
+        cacheReaderSnapshot(active.reader.id, mutableState.value)
     }
 
     private suspend fun processNotificationsInternal(): Boolean {
         if (!settings.notificationAutoSend) return false
         val assistant = requireSession().assistant
         var changed = false
-        val notifications = assistant.notifications
-        require(notifications.size <= MaxReaderNotifications) {
-            "The eUICC returned too many notifications"
-        }
-        require(notifications.map(LocalProfileNotification::seqNumber).toSet().size == notifications.size) {
-            "The eUICC returned duplicate notification sequence numbers"
-        }
+        val notifications = readValidatedNotifications(assistant)
         notifications.forEach { notification ->
             val mapped = mapNotification(notification).withCapturedPayload(assistant)
             val sent = try {
