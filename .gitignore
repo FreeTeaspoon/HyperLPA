@@ -15,3 +15,7 @@ nineesim-keystore.properties
 .kotlin/
 .DS_Store
 /files/
+
+# Local design/ImageGen scratch files
+/tmp/
+/ChatGPT Image *.png
