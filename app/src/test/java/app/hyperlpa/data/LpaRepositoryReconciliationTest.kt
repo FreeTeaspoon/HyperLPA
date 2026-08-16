@@ -1,5 +1,6 @@
 package app.hyperlpa.data
 
+import app.hyperlpa.domain.model.EuiccInfo
 import app.hyperlpa.domain.model.ProfileState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -107,6 +108,27 @@ class LpaRepositoryReconciliationTest {
                 preferredReaderId = "preferred",
                 availableReaderIds = listOf("other", "preferred"),
             ),
+        )
+    }
+
+    @Test
+    fun deferredReaderRefreshPreservesConfiguredAddressesOnlyForTheSameEuicc() {
+        val previousInfo = EuiccInfo(
+            eid = "eid-one",
+            defaultSmdpAddress = "smdp.example",
+            rootSmdsAddress = "smds.example",
+        )
+
+        assertEquals(
+            CachedEuiccConfiguredAddresses(
+                defaultSmdpAddress = "smdp.example",
+                rootSmdsAddress = "smds.example",
+            ),
+            cachedEuiccConfiguredAddresses(previousInfo, eid = "eid-one"),
+        )
+        assertEquals(
+            CachedEuiccConfiguredAddresses(),
+            cachedEuiccConfiguredAddresses(previousInfo, eid = "eid-two"),
         )
     }
 

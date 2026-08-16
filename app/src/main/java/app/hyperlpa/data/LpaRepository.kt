@@ -76,6 +76,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 private const val MaxReaderProfiles = 128
 private const val MaxReaderNotifications = 128
 private const val InitialNotificationDelayMillis = 750L
+private const val InitialEuiccMetadataDelayMillis = 150L
 private const val PostSwitchFollowUpDelayMillis = 150L
 
 internal fun shouldAttemptInitialNotificationDelivery(
@@ -125,6 +126,22 @@ internal data class ReaderAffinity(
     val eid: String,
 )
 
+internal data class CachedEuiccConfiguredAddresses(
+    val defaultSmdpAddress: String = "",
+    val rootSmdsAddress: String = "",
+)
+
+internal fun cachedEuiccConfiguredAddresses(
+    previousInfo: EuiccInfo?,
+    eid: String,
+): CachedEuiccConfiguredAddresses {
+    val matchingInfo = previousInfo?.takeIf { info -> info.eid == eid }
+    return CachedEuiccConfiguredAddresses(
+        defaultSmdpAddress = matchingInfo?.defaultSmdpAddress.orEmpty(),
+        rootSmdsAddress = matchingInfo?.rootSmdsAddress.orEmpty(),
+    )
+}
+
 internal sealed interface BoundProfileDownloadResult {
     data class Attempted(val outcome: OperationOutcome) : BoundProfileDownloadResult
     data object ReaderMismatch : BoundProfileDownloadResult
@@ -170,6 +187,7 @@ class LpaRepository(
     private val closed = AtomicBoolean(false)
     private val backgroundScope = CoroutineScope(SupervisorJob() + ioDispatcher)
     private val initialNotificationJob = java.util.concurrent.atomic.AtomicReference<Job?>(null)
+    private val initialEuiccMetadataJob = java.util.concurrent.atomic.AtomicReference<Job?>(null)
     private val postSwitchFollowUpJob = java.util.concurrent.atomic.AtomicReference<Job?>(null)
     private val mutableState = MutableStateFlow(LpaRepositoryState())
 
@@ -381,7 +399,8 @@ class LpaRepository(
                 var lastFailure: Throwable? = null
                 if (session != null && current != null) {
                     try {
-                        refreshInternal()
+                        refreshInternal(readConfiguredAddresses = false)
+                        currentReaderAffinity()?.let(::scheduleInitialEuiccMetadataRefresh)
                         connected = true
                     } catch (error: Throwable) {
                         if (error is CancellationException) throw error
@@ -1179,12 +1198,15 @@ class LpaRepository(
             LpaOperation.Refreshing(appContext.getString(R.string.operation_discovering_profiles)),
         ) {
             prepareOperationSession()
-            val configuredAddress = smdsAddress
+            val cachedAddress = smdsAddress
                 ?.takeIf(String::isNotBlank)
-                ?: mutableState.value.euiccInfo?.rootSmdsAddress
+                ?: mutableState.value.euiccInfo?.rootSmdsAddress?.takeIf(String::isNotBlank)
+            val assistant = requireSession().assistant
+            val configuredAddress = cachedAddress
+                ?: assistant.euiccConfiguredAddresses?.rootDsAddress?.takeIf(String::isNotBlank)
             val normalized = normalizeRspServerAddress(configuredAddress.orEmpty())
             val imei = settings.imei.trim().takeIf(String::isNotEmpty)
-            val discovered = requireSession().assistant
+            val discovered = assistant
                 .discoverSmdpAddresses(normalized, imei)
                 .map(::normalizeRspServerAddress)
                 .distinct()
@@ -1279,11 +1301,17 @@ class LpaRepository(
         try {
             session = opened
             when (refreshScope) {
-                SessionRefreshScope.FULL -> refreshInternal()
+                // Configured SM-DP+/SM-DS addresses are useful metadata, but they are not needed
+                // to publish the reader, EID, or profile list. Read them after the connection has
+                // become usable so the extra ES10a APDU is outside the reader-open critical path.
+                SessionRefreshScope.FULL -> refreshInternal(readConfiguredAddresses = false)
                 SessionRefreshScope.PROFILE_SWITCH_STATE -> refreshProfileSwitchStateInternal()
             }
             selectedReaderTargetId = endpoint.info.id
             mutableState.value = mutableState.value.copy(selectedReaderId = endpoint.info.id)
+            if (refreshScope == SessionRefreshScope.FULL) {
+                currentReaderAffinity()?.let(::scheduleInitialEuiccMetadataRefresh)
+            }
             if (refreshScope == SessionRefreshScope.FULL && shouldScheduleInitialNotificationDelivery(
                     notificationInitialLoad = settings.notificationInitialLoad,
                     notificationAutoSend = settings.notificationAutoSend,
@@ -1309,6 +1337,27 @@ class LpaRepository(
                 )
             }
             throw error
+        }
+    }
+
+    /**
+     * Loads provisioning addresses after a reader connection has published its profile snapshot.
+     * This is intentionally best-effort: opening the reader must not wait for optional metadata.
+     */
+    private fun scheduleInitialEuiccMetadataRefresh(expectedAffinity: ReaderAffinity) {
+        val job = backgroundScope.launch {
+            delay(InitialEuiccMetadataDelayMillis)
+            if (!operationMutex.tryLock()) return@launch
+            try {
+                if (currentReaderAffinity() != expectedAffinity) return@launch
+                refreshEuiccMetadataSafely("reader connection")
+            } finally {
+                operationMutex.unlock()
+            }
+        }
+        initialEuiccMetadataJob.getAndSet(job)?.cancel()
+        job.invokeOnCompletion {
+            initialEuiccMetadataJob.compareAndSet(job, null)
         }
     }
 
@@ -1387,12 +1436,17 @@ class LpaRepository(
         initialNotificationJob.getAndSet(null)?.cancel()
     }
 
+    private fun cancelInitialEuiccMetadataRefresh() {
+        initialEuiccMetadataJob.getAndSet(null)?.cancel()
+    }
+
     private fun cancelPostSwitchFollowUp() {
         postSwitchFollowUpJob.getAndSet(null)?.cancel()
     }
 
     private fun cancelDeferredCardFollowUp() {
         cancelInitialNotificationDelivery()
+        cancelInitialEuiccMetadataRefresh()
         cancelPostSwitchFollowUp()
     }
 
@@ -1749,10 +1803,13 @@ class LpaRepository(
         )
     }
 
-    private suspend fun refreshInternal() = withContext(ioDispatcher) {
+    private suspend fun refreshInternal(
+        readConfiguredAddresses: Boolean = true,
+    ) = withContext(ioDispatcher) {
         val active = requireSession()
         val assistant = active.assistant
         val eid = assistant.eID
+        val previousInfo = mutableState.value.euiccInfo
         val profiles = readValidatedProfiles(assistant)
         val localNotifications = assistant.notifications
         require(localNotifications.size <= MaxReaderNotifications) {
@@ -1765,16 +1822,27 @@ class LpaRepository(
         mutableState.value = mutableState.value.copy(
             profiles = profiles,
             notifications = localNotifications.map(::mapNotification),
-            euiccInfo = readEuiccInfo(assistant, eid),
+            euiccInfo = readEuiccInfo(
+                assistant = assistant,
+                eid = eid,
+                readConfiguredAddresses = readConfiguredAddresses,
+                previousInfo = previousInfo,
+            ),
             failure = null,
         )
         downloadOutcomeRequiresRefresh.set(false)
         mutationOutcomeRequiresRefresh.set(false)
     }
 
-    private fun readEuiccInfo(assistant: LocalProfileAssistant, eid: String): EuiccInfo {
+    private fun readEuiccInfo(
+        assistant: LocalProfileAssistant,
+        eid: String,
+        readConfiguredAddresses: Boolean,
+        previousInfo: EuiccInfo?,
+    ): EuiccInfo {
         val info = assistant.euiccInfo2
-        val addresses = assistant.euiccConfiguredAddresses
+        val cachedAddresses = cachedEuiccConfiguredAddresses(previousInfo, eid)
+        val addresses = if (readConfiguredAddresses) assistant.euiccConfiguredAddresses else null
         return EuiccInfo(
             eid = eid,
             sgp22Version = info?.sgp22Version?.toString().orEmpty(),
@@ -1795,8 +1863,16 @@ class LpaRepository(
             forbiddenProfilePolicyRules = info?.forbiddenProfilePolicyRules.orEmpty(),
             platformLabel = info?.platformLabel.orEmpty(),
             discoveryBaseUrl = info?.discoveryBaseUrl.orEmpty(),
-            defaultSmdpAddress = addresses?.defaultDpAddress.orEmpty(),
-            rootSmdsAddress = addresses?.rootDsAddress.orEmpty(),
+            defaultSmdpAddress = if (readConfiguredAddresses) {
+                addresses?.defaultDpAddress.orEmpty()
+            } else {
+                cachedAddresses.defaultSmdpAddress
+            },
+            rootSmdsAddress = if (readConfiguredAddresses) {
+                addresses?.rootDsAddress.orEmpty()
+            } else {
+                cachedAddresses.rootSmdsAddress
+            },
             refreshedAt = Instant.now(),
         )
     }
@@ -1808,7 +1884,12 @@ class LpaRepository(
         val previousInfo = mutableState.value.euiccInfo
         if (previousInfo != null && previousInfo.eid != eid) return@withContext
         mutableState.value = mutableState.value.copy(
-            euiccInfo = readEuiccInfo(assistant, eid),
+            euiccInfo = readEuiccInfo(
+                assistant = assistant,
+                eid = eid,
+                readConfiguredAddresses = true,
+                previousInfo = previousInfo,
+            ),
             failure = null,
         )
     }
