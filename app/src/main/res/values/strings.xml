@@ -443,7 +443,7 @@
     <string name="privacy_operator_icons_summary">Resolve and cache profile artwork from operator-icons.pages.dev</string>
     <string name="privacy_profile_size">Profile size predictions</string>
     <string name="privacy_profile_size_summary">Use NekokoLPA reference data when a measured size is unavailable</string>
-    <string name="privacy_clear_cloud_caches">Clear cloud caches</string>
+    <string name="privacy_clear_cloud_caches">Clear</string>
     <string name="privacy_clear_cloud_caches_summary">Remove downloaded operator artwork and profile-size reference data</string>
     <string name="privacy_clear_cloud_caches_dialog_title">Clear cloud caches?</string>
     <string name="privacy_clear_cloud_caches_dialog_summary">Downloaded operator artwork and profile-size reference data will be removed. They can be downloaded again when needed.</string>
