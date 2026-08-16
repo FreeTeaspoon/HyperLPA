@@ -445,7 +445,8 @@
     <string name="privacy_profile_size_summary">Use NekokoLPA reference data when a measured size is unavailable</string>
     <string name="privacy_clear_cloud_caches">Clear cloud caches</string>
     <string name="privacy_clear_cloud_caches_summary">Remove downloaded operator artwork and profile-size reference data</string>
-    <string name="privacy_cloud_data_use">Cloud data use</string>
+    <string name="privacy_clear_cloud_caches_dialog_title">Clear cloud caches?</string>
+    <string name="privacy_clear_cloud_caches_dialog_summary">Downloaded operator artwork and profile-size reference data will be removed. They can be downloaded again when needed.</string>
     <string name="privacy_cloud_data_use_summary">Icon requests reveal your IP address and inferred operator to operator-icons.pages.dev. Size references come from GitHub; HyperLPA does not upload installation reports.</string>
 
     <!-- Advanced, backup, and AID settings -->
