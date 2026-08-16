@@ -3,6 +3,7 @@ package app.hyperlpa.ui.components
 import app.hyperlpa.data.settings.PhoneFormatStrategy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -82,5 +83,23 @@ class ProfileDisplayNameFormatterTest {
         )
 
         assertEquals("amaysim +61 491 570 006", result.fullText)
+    }
+
+    @Test
+    fun countryFlagUsesProfileMccRegion() {
+        assertEquals("🇦🇺", profileCountryFlag(mcc = "505", mnc = "02", iccid = null))
+    }
+
+    @Test
+    fun countryFlagUsesIccidCountryWhenMccIsMissing() {
+        assertEquals(
+            "🇦🇺",
+            profileCountryFlag(mcc = null, mnc = null, iccid = "8961000000000000001"),
+        )
+    }
+
+    @Test
+    fun countryFlagIsOmittedWhenCountryCannotBeResolved() {
+        assertNull(profileCountryFlag(mcc = "999", mnc = null, iccid = null))
     }
 }
