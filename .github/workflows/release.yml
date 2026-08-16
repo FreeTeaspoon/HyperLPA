@@ -170,14 +170,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # App bundles are intentionally not published on GitHub Releases;
+          # they are only uploaded as workflow artifacts.
           mkdir -p release-assets
           find app/build/outputs/apk/release -type f -name '*.apk' -exec cp -- {} release-assets/ \;
           find app/build/outputs/apk/privilegedRelease -type f -name '*.apk' -exec cp -- {} release-assets/ \;
-          find app/build/outputs/bundle/release -type f -name '*.aab' -exec cp -- {} release-assets/ \;
-          find app/build/outputs/bundle/privilegedRelease -type f -name '*.aab' -exec cp -- {} release-assets/ \;
           (
             cd release-assets
-            sha256sum ./*.apk ./*.aab > SHA256SUMS
+            sha256sum ./*.apk > SHA256SUMS
           )
       - name: Remove private signing material
         if: always()
