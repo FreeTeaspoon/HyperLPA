@@ -457,6 +457,12 @@ fun ProfileDisplaySettingsScreen(
                     summary = stringResource(R.string.profile_display_name_summary),
                 )
                 SwitchPreference(
+                    checked = settings.showProfileCountryFlagOnHome,
+                    onCheckedChange = viewModel::setShowProfileCountryFlagOnHome,
+                    title = stringResource(R.string.profile_display_country_flag),
+                    summary = stringResource(R.string.profile_display_country_flag_summary),
+                )
+                SwitchPreference(
                     checked = settings.showProfileProviderOnHome,
                     onCheckedChange = viewModel::setShowProfileProviderOnHome,
                     title = stringResource(R.string.profile_display_provider),

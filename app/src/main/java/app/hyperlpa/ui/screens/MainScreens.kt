@@ -80,6 +80,7 @@ import app.hyperlpa.ui.components.ResolvedProfileArtwork
 import app.hyperlpa.ui.components.SectionHeading
 import app.hyperlpa.ui.components.DetailLazyScaffold
 import app.hyperlpa.ui.components.formatProfileDisplayName
+import app.hyperlpa.ui.components.profileCountryFlag
 import app.hyperlpa.ui.components.redactIdentifier
 import app.hyperlpa.ui.components.rememberProfileArtworkBitmaps
 import app.hyperlpa.ui.navigation.AppRoute
@@ -606,6 +607,11 @@ private fun ProfileCard(
     val displayName = remember(profile, state.settings.phoneFormatStrategy, fallbackName) {
         formatProfileDisplayName(profile, state.settings.phoneFormatStrategy, fallbackName)
     }
+    val countryFlag = if (state.settings.showProfileCountryFlagOnHome) {
+        profileCountryFlag(profile)
+    } else {
+        null
+    }
     val unknownOperator = stringResource(R.string.profile_unknown_operator)
     val profileTags = if (state.settings.showProfileTagsOnHome) {
         profile.tags.filter(String::isNotBlank).sortedBy(String::lowercase)
@@ -726,21 +732,15 @@ private fun ProfileCard(
                     val isLastInfoRow = profileIccidText == null && !showProfileProvider
                     if (isLastInfoRow && inlineProfileSizeText != null) {
                         ProfileCardInfoRow(text = inlineProfileSizeText) {
-                            Text(
+                            ProfileCardName(
                                 text = displayName.fullText,
-                                style = MiuixTheme.textStyles.body1,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+                                countryFlag = countryFlag,
                             )
                         }
                     } else {
-                        Text(
+                        ProfileCardName(
                             text = displayName.fullText,
-                            style = MiuixTheme.textStyles.body1,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                            countryFlag = countryFlag,
                         )
                     }
                 }
@@ -813,6 +813,34 @@ private fun ProfileCard(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun ProfileCardName(
+    text: String,
+    countryFlag: String?,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        countryFlag?.let { flag ->
+            Text(
+                text = flag,
+                style = MiuixTheme.textStyles.body1,
+                maxLines = 1,
+            )
+        }
+        Text(
+            text = text,
+            style = MiuixTheme.textStyles.body1,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
     }
 }
 
