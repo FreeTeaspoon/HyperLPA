@@ -95,15 +95,18 @@ class LocalProfileAssistantImpl(
     private var contextHandle: Long = LpacJni.createContext(isdrAid, apduInterface, httpInterface).also {
         check(it != 0L) { "Failed to allocate the native LPA context" }
     }
+    val initialEuiccInfo2: EuiccInfo2?
 
     init {
+        var initializedInfo: EuiccInfo2? = null
         try {
             if (LpacJni.euiccInit(contextHandle) < 0) {
                 throw IllegalArgumentException("Failed to initialize LPA")
             }
             euiccInitialized = true
 
-            val pkids = euiccInfo2?.euiccCiPKIdListForVerification ?: setOf()
+            initializedInfo = euiccInfo2
+            val pkids = initializedInfo?.euiccCiPKIdListForVerification.orEmpty()
             httpInterface.usePublicKeyIds(pkids.toTypedArray())
         } catch (error: Throwable) {
             if (euiccInitialized) runCatching { LpacJni.euiccFini(contextHandle) }
@@ -112,6 +115,7 @@ class LocalProfileAssistantImpl(
             finalized = true
             throw error
         }
+        initialEuiccInfo2 = initializedInfo
     }
 
     override fun setEs10xMss(mss: Byte) = lock.withLock {

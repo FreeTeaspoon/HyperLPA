@@ -6,6 +6,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import net.typeblog.lpac_jni.ApduInterface
+import net.typeblog.lpac_jni.EuiccInfo2
 import net.typeblog.lpac_jni.LocalProfileAssistant
 import net.typeblog.lpac_jni.impl.HttpInterfaceImpl
 import net.typeblog.lpac_jni.impl.LocalProfileAssistantImpl
@@ -26,8 +27,21 @@ internal class LpaSession(
     val aid: String,
     val assistant: LocalProfileAssistant,
     val requiresProfileSwitchRefresh: Boolean,
+    initialEuiccInfo2: EuiccInfo2?,
     private val apduInterface: ApduInterface,
 ) : AutoCloseable {
+    private var cachedEuiccInfo2 = initialEuiccInfo2
+
+    /** Reuses the ES10c eUICC-info response required while initializing this session. */
+    fun readEuiccInfo2(refresh: Boolean = false): EuiccInfo2? {
+        if (!refresh) return synchronized(this) { cachedEuiccInfo2 }
+        return assistant.euiccInfo2.also { refreshed ->
+            synchronized(this) {
+                cachedEuiccInfo2 = refreshed
+            }
+        }
+    }
+
     override fun close() {
         val assistantClosed = runCatching { assistant.close() }.isSuccess
         if (!assistantClosed) runCatching { apduInterface.disconnect() }
@@ -43,7 +57,7 @@ internal object LpaSessionFactory {
         var lastFailure: Throwable? = null
         for (rawAid in settings.isdrAids) {
             var apdu: ApduInterface? = null
-            var assistant: LocalProfileAssistant? = null
+            var assistant: LocalProfileAssistantImpl? = null
             try {
                 val aid = rawAid.trim().uppercase()
                 val aidBytes = decodeIsdrAid(aid)
@@ -62,6 +76,7 @@ internal object LpaSessionFactory {
                     aid = aid,
                     assistant = assistant,
                     requiresProfileSwitchRefresh = endpoint.requiresProfileSwitchRefresh,
+                    initialEuiccInfo2 = assistant.initialEuiccInfo2,
                     apduInterface = apdu,
                 )
             } catch (error: Throwable) {
