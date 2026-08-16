@@ -133,11 +133,6 @@ gradle.taskGraph.whenReady {
                 "Use assemblePrivilegedDebug for a development build.",
         )
     }
-    if (includesPackagingVariant("NineEsimRelease") && !nineEsimKeystorePropertiesFile.isFile) {
-        throw GradleException(
-            "The 9eSIM community build requires the ignored nineesim-keystore.properties file.",
-        )
-    }
     if (includesPackagingVariant("PrivilegedRelease")) {
         verifyConfiguredCertificate(
             properties = keystoreProperties,
@@ -145,7 +140,7 @@ gradle.taskGraph.whenReady {
             expectedCertificateFile = rootProject.file("signing/hyperlpa-release-cert.pem"),
         )
     }
-    if (includesPackagingVariant("Release") || includesPackagingVariant("NineEsimRelease")) {
+    if (includesPackagingVariant("Release")) {
         verifyConfiguredCertificate(
             properties = nineEsimKeystoreProperties,
             source = "nineesim-keystore.properties",
@@ -236,13 +231,6 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-        }
-        create("nineEsimRelease") {
-            initWith(getByName("release"))
-            applicationIdSuffix = ".nineesim"
-            versionNameSuffix = "-9esim"
-            signingConfig = signingConfigs.findByName("nineEsimRelease")
-            matchingFallbacks += listOf("release")
         }
         create("privilegedDebug") {
             initWith(getByName("debug"))
