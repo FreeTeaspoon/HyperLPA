@@ -42,16 +42,20 @@ USB, Bluetooth, bridge, remote, or explicitly privileged telephony backends.
 
 ## Download and install
 
-Use the [GitHub Releases](https://github.com/FreeTeaspoon/HyperLPA/releases)
-page for published builds. For a sideloaded phone, download the ordinary APK
-whose ABI matches the device:
+**Most people should download `app-arm64-v8a-release.apk`** from the
+[GitHub Releases](https://github.com/FreeTeaspoon/HyperLPA/releases) page.
+That is the ordinary build for modern 64-bit phones and tablets. Pick a
+different `…-release.apk` only when the device has another ABI:
 
-| APK ABI | Typical target |
+| APK file | Typical target |
 | --- | --- |
-| `arm64-v8a` | Modern 64-bit phones and tablets |
-| `armeabi-v7a` | Older 32-bit ARM devices |
-| `x86_64` | Most x86 Android emulators |
-| `x86` | Older x86 Android emulators |
+| `app-arm64-v8a-release.apk` | Modern 64-bit phones and tablets (most devices) |
+| `app-armeabi-v7a-release.apk` | Older 32-bit ARM devices |
+| `app-x86_64-release.apk` | Most x86 Android emulators |
+| `app-x86-release.apk` | Older x86 Android emulators |
+
+The `SHA256SUMS` release asset lists the checksum of every APK so a download
+can be verified with `sha256sum --check`.
 
 The ordinary release uses the `app.hyperlpa` application ID and does not
 declare privileged telephony permissions. The distribution build is signed
@@ -60,13 +64,12 @@ so that compatible 9eSIM cards can authorise it. A different removable eUICC
 may require its matching vendor/community build, NBridge, USB CCID, or a
 privileged/root installation.
 
-Because the ordinary release uses a public community signing key, its AAB is
-not intended for Google Play distribution.
-
-Do not install a `privileged` build unless you administer a compatible system
-image. Sideloading it does not grant Android's protected telephony permissions;
-the APK must be installed or allowlisted with the required platform or carrier
-privileges.
+Do not install a `…-privilegedRelease.apk` build unless you administer a
+compatible system image. Sideloading it does not grant Android's protected
+telephony permissions; the APK must be installed or allowlisted with the
+required platform or carrier privileges, and it is signed with the private
+HyperLPA key, so removable cards that allowlist only the community key will
+reject it.
 
 ## Supported reader backends
 
@@ -133,7 +136,10 @@ permission set.
 | --- | --- | --- | --- |
 | `release` | `app.hyperlpa` | `nineesim-keystore.properties` using the 9eSIM Community Key | `app/build/outputs/apk/release/` and `app/build/outputs/bundle/release/` |
 | `privilegedRelease` | `app.hyperlpa.privileged` | Private `keystore.properties`, pinned to `signing/hyperlpa-release-cert.pem` | `app/build/outputs/apk/privilegedRelease/` and `app/build/outputs/bundle/privilegedRelease/` |
-| `nineEsimRelease` | `app.hyperlpa.nineesim` | The 9eSIM Community Key | `app/build/outputs/apk/nineEsimRelease/` |
+
+Because the ordinary release uses a public community signing key, its AAB is
+not suitable for Google Play distribution; app bundles are kept as workflow
+artifacts only and are not attached to GitHub Releases.
 
 The signing property files and private key files are ignored by Git. They are
 required for the corresponding release tasks and must never be committed.
@@ -148,10 +154,9 @@ Build ordinary release APKs or an app bundle with:
 ./gradlew :app:bundleRelease
 ```
 
-The side-by-side 9eSIM and privileged release tasks are:
+The privileged release task is:
 
 ```shell
-./gradlew :app:assembleNineEsimRelease
 ./gradlew :app:assemblePrivilegedRelease
 ```
 
