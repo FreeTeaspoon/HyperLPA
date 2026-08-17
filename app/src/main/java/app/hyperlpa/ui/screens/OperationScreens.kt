@@ -6,7 +6,6 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
 import android.net.Uri
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -98,6 +97,7 @@ import app.hyperlpa.ui.components.formatProfileDisplayName
 import app.hyperlpa.ui.components.TipCard
 import app.hyperlpa.ui.components.rememberProfileArtworkBitmap
 import app.hyperlpa.ui.components.redactIdentifier
+import app.hyperlpa.ui.LocalMiuixSnackbar
 import app.hyperlpa.ui.components.effect.AccentGradientBackdrop
 import app.hyperlpa.ui.components.effect.ProfileGradientBackdrop
 import app.hyperlpa.provisioning.BatchDownloadError
@@ -130,6 +130,7 @@ import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
+import top.yukonga.miuix.kmp.basic.SnackbarDuration
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.BankCards
 import top.yukonga.miuix.kmp.icon.extended.Alarm
@@ -190,11 +191,12 @@ fun ProfileDetailsScreen(
     var pickForProvider by rememberSaveable(profile?.iccid) { mutableStateOf(false) }
     var technicalDetailsExpanded by rememberSaveable(profile?.iccid) { mutableStateOf(false) }
     val context = LocalContext.current
+    val showSnackbar = LocalMiuixSnackbar.current
     val reminderPermissionRequired = stringResource(R.string.profile_reminder_permission_required)
     val iconImportFailed = stringResource(R.string.profile_icon_import_failed)
     val reportIconResult: (Boolean) -> Unit = { success ->
         if (!success) {
-            Toast.makeText(context.applicationContext, iconImportFailed, Toast.LENGTH_LONG).show()
+            showSnackbar(iconImportFailed, SnackbarDuration.Long)
         }
     }
     val providerFallback = stringResource(R.string.profile_provider_fallback)
@@ -223,11 +225,7 @@ fun ProfileDetailsScreen(
                 onSetReminder(reminderLabel, reminderAt)
                 showReminder = false
             } else {
-                Toast.makeText(
-                    context,
-                    reminderPermissionRequired,
-                    Toast.LENGTH_LONG,
-                ).show()
+                showSnackbar(reminderPermissionRequired, SnackbarDuration.Long)
             }
         }
     }
@@ -2115,7 +2113,7 @@ fun TagsAndRemindersScreen(
     onOpenNotificationSettings: () -> Unit,
     onTestNotification: () -> Unit,
 ) {
-    val context = LocalContext.current
+    val showSnackbar = LocalMiuixSnackbar.current
     val permissionRequiredMessage = stringResource(R.string.profile_reminder_permission_required)
     val manageNotificationPermission = {
         if (notificationPermissionGranted) {
@@ -2123,7 +2121,7 @@ fun TagsAndRemindersScreen(
         } else {
             onRequestNotificationPermission { granted ->
                 if (!granted) {
-                    Toast.makeText(context, permissionRequiredMessage, Toast.LENGTH_LONG).show()
+                    showSnackbar(permissionRequiredMessage, SnackbarDuration.Long)
                 }
             }
         }
@@ -2148,7 +2146,7 @@ fun TagsAndRemindersScreen(
                                 if (granted) {
                                     onSetRemindersEnabled(true)
                                 } else {
-                                    Toast.makeText(context, permissionRequiredMessage, Toast.LENGTH_LONG).show()
+                                    showSnackbar(permissionRequiredMessage, SnackbarDuration.Long)
                                 }
                             }
                         }
@@ -2188,7 +2186,7 @@ fun TagsAndRemindersScreen(
                             if (granted) {
                                 onTestNotification()
                             } else {
-                                Toast.makeText(context, permissionRequiredMessage, Toast.LENGTH_LONG).show()
+                                showSnackbar(permissionRequiredMessage, SnackbarDuration.Long)
                             }
                         }
                     },
@@ -2456,7 +2454,7 @@ fun LogsScreen(
     onBack: () -> Unit,
     onExportSupportReport: (Uri, (Boolean) -> Unit) -> Unit,
 ) {
-    val context = LocalContext.current
+    val showSnackbar = LocalMiuixSnackbar.current
     val logsExported = stringResource(R.string.logs_exported)
     val logsExportFailed = stringResource(R.string.logs_export_failed)
     val exportSupportReport = rememberLauncherForActivityResult(
@@ -2464,11 +2462,10 @@ fun LogsScreen(
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         onExportSupportReport(uri) { success ->
-            Toast.makeText(
-                context,
+            showSnackbar(
                 if (success) logsExported else logsExportFailed,
-                Toast.LENGTH_SHORT,
-            ).show()
+                SnackbarDuration.Short,
+            )
         }
     }
     val levels = listOf<LogLevel?>(null) + LogLevel.entries
@@ -2559,6 +2556,7 @@ private fun ProfileHero(
     onOpenReminder: () -> Unit,
 ) {
     val context = LocalContext.current
+    val showSnackbar = LocalMiuixSnackbar.current
     val copyPhoneLabel = stringResource(R.string.profile_copy_phone)
     val phoneClipboardLabel = stringResource(R.string.profile_phone_clipboard_label)
     val phoneCopiedMessage = stringResource(R.string.profile_phone_copied)
@@ -2606,7 +2604,7 @@ private fun ProfileHero(
                         ?.setPrimaryClip(
                             ClipData.newPlainText(phoneClipboardLabel, displayName.phoneText),
                         )
-                    Toast.makeText(context, phoneCopiedMessage, Toast.LENGTH_SHORT).show()
+                    showSnackbar(phoneCopiedMessage, SnackbarDuration.Short)
                 },
             )
         } else {
