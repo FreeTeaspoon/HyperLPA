@@ -27,6 +27,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -116,6 +117,8 @@ import top.yukonga.miuix.kmp.basic.NavigationItem
 import top.yukonga.miuix.kmp.basic.NavigationRail
 import top.yukonga.miuix.kmp.basic.NavigationRailItem
 import top.yukonga.miuix.kmp.basic.Scaffold
+import top.yukonga.miuix.kmp.basic.SnackbarHost
+import top.yukonga.miuix.kmp.basic.SnackbarHostState
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
@@ -144,6 +147,7 @@ fun HyperLpaApp(
     state: HyperLpaUiState,
     backStack: NavBackStack,
     viewModel: HyperLpaViewModel,
+    snackbarHostState: SnackbarHostState,
     notificationPermissionGranted: Boolean,
     onRequestNotificationPermission: ((Boolean) -> Unit) -> Unit,
     onOpenNotificationSettings: () -> Unit,
@@ -167,12 +171,30 @@ fun HyperLpaApp(
         else -> NavSwipeDirection.LeftToRight
     }
 
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        containerColor = navSurface,
-    ) { _ ->
-        Box(Modifier.fillMaxSize()) {
-            NavDisplay(
+    val snackbarScope = rememberCoroutineScope()
+    val showSnackbar: (String, top.yukonga.miuix.kmp.basic.SnackbarDuration) -> Unit = remember(
+        snackbarHostState,
+        snackbarScope,
+    ) {
+        { message, duration ->
+            snackbarScope.launch {
+                snackbarHostState.showSnackbar(message = message, duration = duration)
+            }
+        }
+    }
+
+    CompositionLocalProvider(LocalMiuixSnackbar provides showSnackbar) {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            containerColor = navSurface,
+            snackbarHost = {
+                if (backStack.lastOrNull() != AppRoute.Shell) {
+                    SnackbarHost(state = snackbarHostState)
+                }
+            },
+        ) { _ ->
+            Box(Modifier.fillMaxSize()) {
+                NavDisplay(
                 backStack = backStack,
                 onBack = viewModel::navigateBack,
                 transition = NavTransitions.MiuixDefault,
@@ -184,15 +206,16 @@ fun HyperLpaApp(
                     blockInputDuringTransition = false,
                     backdropColor = navSurface,
                 ),
-            ) {
-            entry<AppRoute.Shell>(swipeDismiss = swipeBackDirection) {
-                MainShell(
-                    state = currentState.value,
-                    viewModel = viewModel,
-                    bluetoothReaderState = currentBluetoothReaderState.value,
-                    onRefreshReaders = { currentOnRefreshReaders.value() },
-                )
-            }
+                ) {
+                entry<AppRoute.Shell>(swipeDismiss = swipeBackDirection) {
+                    MainShell(
+                        state = currentState.value,
+                        viewModel = viewModel,
+                        bluetoothReaderState = currentBluetoothReaderState.value,
+                        onRefreshReaders = { currentOnRefreshReaders.value() },
+                        snackbarHostState = snackbarHostState,
+                    )
+                }
             entry<AppRoute.ProfileDetails>(swipeDismiss = swipeBackDirection) { route ->
                 val profile = currentState.value.profiles.firstOrNull { it.iccid == route.iccid }
                 ProfileDetailsScreen(
@@ -496,6 +519,7 @@ fun HyperLpaApp(
                     state.selectedTab != AppTab.PROFILES,
                 onBack = { viewModel.selectTab(AppTab.PROFILES) },
             )
+            }
         }
     }
 }
@@ -526,6 +550,7 @@ private fun MainShell(
     viewModel: HyperLpaViewModel,
     bluetoothReaderState: BluetoothReaderUiState,
     onRefreshReaders: () -> Unit,
+    snackbarHostState: SnackbarHostState,
 ) {
     val tabs = AppTab.entries
     val pagerState = rememberPagerState(initialPage = state.selectedTab.ordinal) { tabs.size }
@@ -581,7 +606,10 @@ private fun MainShell(
     }
 
     if (isWide) {
-        Scaffold(containerColor = MiuixTheme.colorScheme.surface) { _ ->
+        Scaffold(
+            containerColor = MiuixTheme.colorScheme.surface,
+            snackbarHost = { SnackbarHost(state = snackbarHostState) },
+        ) { _ ->
             Row(Modifier.fillMaxSize()) {
                 NavigationRail {
                     navigationItems.forEachIndexed { index, item ->
@@ -621,6 +649,7 @@ private fun MainShell(
 
         Scaffold(
             containerColor = MiuixTheme.colorScheme.surface,
+            snackbarHost = { SnackbarHost(state = snackbarHostState) },
             bottomBar = {
                 if (state.settings.navigationStyle == NavigationStyle.FLOATING) {
                     if (state.settings.floatingBottomBarStyle == FloatingBottomBarStyle.IOS_LIKE) {

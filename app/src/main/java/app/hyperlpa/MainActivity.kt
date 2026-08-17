@@ -11,7 +11,6 @@ import android.os.Build
 import android.os.Bundle
 import android.net.Uri
 import android.provider.Settings
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -27,6 +26,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import app.hyperlpa.data.settings.AppSettings
 import app.hyperlpa.reminders.hasProfileReminderPermission
 import app.hyperlpa.reminders.showTestProfileReminder
@@ -39,6 +39,9 @@ import io.github.g00fy2.quickie.QRResult
 import io.github.g00fy2.quickie.ScanCustomCode
 import io.github.g00fy2.quickie.config.BarcodeFormat
 import io.github.g00fy2.quickie.config.ScannerConfig
+import kotlinx.coroutines.launch
+import top.yukonga.miuix.kmp.basic.SnackbarDuration
+import top.yukonga.miuix.kmp.basic.SnackbarHostState
 
 class MainActivity : ComponentActivity() {
     private val applicationGraph: HyperLpaApplication
@@ -66,6 +69,7 @@ class MainActivity : ComponentActivity() {
     private var bluetoothAdapterEnabled by mutableStateOf(false)
     private var refreshReadersAfterSettings by mutableStateOf(false)
     private var simStateReceiverRegistered = false
+    private val snackbarHostState = SnackbarHostState()
     private val simStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (isInitialStickyBroadcast) return
@@ -155,6 +159,7 @@ class MainActivity : ComponentActivity() {
                     state = state,
                     backStack = viewModel.navigationBackStack,
                     viewModel = viewModel,
+                    snackbarHostState = snackbarHostState,
                     notificationPermissionGranted = notificationPermissionGranted,
                     onRequestNotificationPermission = ::requestNotificationPermission,
                     onOpenNotificationSettings = ::openNotificationSettings,
@@ -369,7 +374,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showScannerMessage(messageRes: Int) {
-        Toast.makeText(applicationContext, messageRes, Toast.LENGTH_LONG).show()
+        lifecycleScope.launch {
+            snackbarHostState.showSnackbar(
+                message = getString(messageRes),
+                duration = SnackbarDuration.Long,
+            )
+        }
     }
 
     private fun openNotificationSettings() {
@@ -388,11 +398,12 @@ class MainActivity : ComponentActivity() {
             startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS))
         }.isSuccess
         if (!opened) {
-            Toast.makeText(
-                applicationContext,
-                R.string.reader_bluetooth_settings_unavailable,
-                Toast.LENGTH_LONG,
-            ).show()
+            lifecycleScope.launch {
+                snackbarHostState.showSnackbar(
+                    message = getString(R.string.reader_bluetooth_settings_unavailable),
+                    duration = SnackbarDuration.Long,
+                )
+            }
         }
     }
 
@@ -406,11 +417,12 @@ class MainActivity : ComponentActivity() {
                 ),
             )
         }.onFailure {
-            Toast.makeText(
-                applicationContext,
-                R.string.reader_bluetooth_settings_unavailable,
-                Toast.LENGTH_LONG,
-            ).show()
+            lifecycleScope.launch {
+                snackbarHostState.showSnackbar(
+                    message = getString(R.string.reader_bluetooth_settings_unavailable),
+                    duration = SnackbarDuration.Long,
+                )
+            }
         }
     }
 

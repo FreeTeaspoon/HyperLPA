@@ -6,7 +6,6 @@ import android.content.ClipboardManager
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -84,6 +83,7 @@ import app.hyperlpa.ui.HyperLpaUiState
 import app.hyperlpa.ui.HyperLpaViewModel
 import app.hyperlpa.ui.BluetoothReaderAvailability
 import app.hyperlpa.ui.BluetoothReaderUiState
+import app.hyperlpa.ui.LocalMiuixSnackbar
 import app.hyperlpa.ui.adaptive.AdaptiveTopAppBar
 import app.hyperlpa.ui.adaptive.CenteredContent
 import app.hyperlpa.ui.adaptive.horizontalCutoutPadding
@@ -102,6 +102,7 @@ import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Slider
 import top.yukonga.miuix.kmp.basic.SliderDefaults
+import top.yukonga.miuix.kmp.basic.SnackbarDuration
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
@@ -547,6 +548,7 @@ fun ReaderSettingsScreen(
     onOpenBluetoothSettings: () -> Unit,
 ) {
     val context = LocalContext.current
+    val showSnackbar = LocalMiuixSnackbar.current
     var showRemoteEditor by remember { mutableStateOf(false) }
     var remoteUrls by remember(state.settings.remoteReaderUrls) {
         mutableStateOf(state.settings.remoteReaderUrls.joinToString("\n"))
@@ -786,7 +788,7 @@ fun ReaderSettingsScreen(
                                 buildCompatibilityDiagnostics(state, context),
                             ),
                         )
-                        Toast.makeText(context, diagnosticsCopiedMessage, Toast.LENGTH_SHORT).show()
+                        showSnackbar(diagnosticsCopiedMessage, SnackbarDuration.Short)
                     },
                 )
             }
@@ -880,7 +882,7 @@ fun ReaderSettingsScreen(
                         remoteInputTooLong = false
                         showRemoteEditor = false
                     } else {
-                        Toast.makeText(context, remoteSaveFailedMessage, Toast.LENGTH_SHORT).show()
+                        showSnackbar(remoteSaveFailedMessage, SnackbarDuration.Short)
                     }
                 }
             }
@@ -931,7 +933,7 @@ fun ReaderSettingsScreen(
                             remoteTokenDraft = ""
                             remoteTokenEndpoint = null
                         } else {
-                            Toast.makeText(context, remoteSaveFailedMessage, Toast.LENGTH_SHORT).show()
+                            showSnackbar(remoteSaveFailedMessage, SnackbarDuration.Short)
                         }
                     }
                 }
@@ -1284,7 +1286,7 @@ fun BackupRestoreSettingsScreen(
     onBack: () -> Unit,
     viewModel: HyperLpaViewModel,
 ) {
-    val context = LocalContext.current.applicationContext
+    val showSnackbar = LocalMiuixSnackbar.current
     val backupCreated = stringResource(R.string.backup_created)
     val backupCreateFailed = stringResource(R.string.backup_create_failed)
     val backupRestored = stringResource(R.string.backup_restored)
@@ -1305,11 +1307,10 @@ fun BackupRestoreSettingsScreen(
             viewModel.cancelPreparedBackup()
         } else {
             viewModel.createPreparedBackup(uri) { success ->
-                Toast.makeText(
-                    context,
+                showSnackbar(
                     if (success) backupCreated else backupCreateFailed,
-                    Toast.LENGTH_SHORT,
-                ).show()
+                    SnackbarDuration.Short,
+                )
             }
         }
     }
@@ -1424,11 +1425,7 @@ fun BackupRestoreSettingsScreen(
                     backupPassword = ""
                     backupPasswordConfirmation = ""
                     if (!viewModel.prepareBackup(password)) {
-                        Toast.makeText(
-                            context,
-                            backupCreateFailed,
-                            Toast.LENGTH_SHORT,
-                        ).show()
+                        showSnackbar(backupCreateFailed, SnackbarDuration.Short)
                         return@SettingsConfirmationActions
                     }
                     runCatching {
@@ -1437,7 +1434,7 @@ fun BackupRestoreSettingsScreen(
                         )
                     }.onFailure {
                         viewModel.cancelPreparedBackup()
-                        Toast.makeText(context, backupCreateFailed, Toast.LENGTH_SHORT).show()
+                        showSnackbar(backupCreateFailed, SnackbarDuration.Short)
                     }
                 },
             )
@@ -1478,11 +1475,10 @@ fun BackupRestoreSettingsScreen(
                     pendingRestoreUri = null
                     restorePassword = ""
                     viewModel.restoreBackup(uri, password) { success ->
-                        Toast.makeText(
-                            context,
+                        showSnackbar(
                             if (success) backupRestored else backupRestoreFailed,
-                            Toast.LENGTH_SHORT,
-                        ).show()
+                            SnackbarDuration.Short,
+                        )
                     }
                 },
             )
@@ -1502,11 +1498,10 @@ fun BackupRestoreSettingsScreen(
             onConfirm = {
                 showResetConfirmation = false
                 viewModel.resetSettings { success ->
-                    Toast.makeText(
-                        context,
+                    showSnackbar(
                         if (success) backupResetComplete else backupResetFailed,
-                        Toast.LENGTH_SHORT,
-                    ).show()
+                        SnackbarDuration.Short,
+                    )
                 }
             },
         )
