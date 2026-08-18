@@ -142,6 +142,12 @@ import top.yukonga.miuix.kmp.nav.transition.NavTransitions
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
+@Stable
+private class RootTabBackState {
+    val targetPage = mutableStateOf(0)
+    var onBack: () -> Unit = {}
+}
+
 @Composable
 fun HyperLpaApp(
     state: HyperLpaUiState,
@@ -164,6 +170,7 @@ fun HyperLpaApp(
     val currentOnRefreshReaders = rememberUpdatedState(onRefreshReaders)
     val currentOnRequestBluetoothPermission = rememberUpdatedState(onRequestBluetoothPermission)
     val currentOnOpenBluetoothSettings = rememberUpdatedState(onOpenBluetoothSettings)
+    val rootTabBack = remember { RootTabBackState() }
     val navCornerRadius = if (rememberIsWideWindow()) 0.dp else rememberNavSystemCornerRadius()
     val navSurface = MiuixTheme.colorScheme.surface
     val swipeBackDirection = when (LocalLayoutDirection.current) {
@@ -194,6 +201,10 @@ fun HyperLpaApp(
             },
         ) { _ ->
             Box(Modifier.fillMaxSize()) {
+                RootTabBackHandler(
+                    rootTabBack = rootTabBack,
+                    isRootRoute = backStack.size == 1 && backStack.lastOrNull() == AppRoute.Shell,
+                )
                 NavDisplay(
                 backStack = backStack,
                 onBack = viewModel::navigateBack,
@@ -214,6 +225,7 @@ fun HyperLpaApp(
                         bluetoothReaderState = currentBluetoothReaderState.value,
                         onRefreshReaders = { currentOnRefreshReaders.value() },
                         snackbarHostState = snackbarHostState,
+                        rootTabBack = rootTabBack,
                     )
                 }
             entry<AppRoute.ProfileDetails>(swipeDismiss = swipeBackDirection) { route ->
@@ -514,14 +526,22 @@ fun HyperLpaApp(
                 onCancel = viewModel::cancelLastEnabledProfileDisable,
                 onConfirm = viewModel::confirmLastEnabledProfileDisable,
             )
-            MainTabBackHandler(
-                enabled = backStack.lastOrNull() == AppRoute.Shell &&
-                    state.selectedTab != AppTab.PROFILES,
-                onBack = { viewModel.selectTab(AppTab.PROFILES) },
-            )
             }
         }
     }
+}
+
+@Composable
+private fun RootTabBackHandler(
+    rootTabBack: RootTabBackState,
+    isRootRoute: Boolean,
+) {
+    val navigationEventState = rememberNavigationEventState(NavigationEventInfo.None)
+    NavigationBackHandler(
+        state = navigationEventState,
+        isBackEnabled = isRootRoute && rootTabBack.targetPage.value != AppTab.PROFILES.ordinal,
+        onBackCompleted = { rootTabBack.onBack() },
+    )
 }
 
 internal fun hasProviderIcon(
@@ -530,33 +550,23 @@ internal fun hasProviderIcon(
 ): Boolean = providerIconKey(providerName)?.let(providerIcons::containsKey) == true
 
 @Composable
-private fun MainTabBackHandler(
-    enabled: Boolean,
-    onBack: () -> Unit,
-) {
-    val navigationEventState = rememberNavigationEventState(
-        currentInfo = NavigationEventInfo.None,
-    )
-    NavigationBackHandler(
-        state = navigationEventState,
-        isBackEnabled = enabled,
-        onBackCompleted = onBack,
-    )
-}
-
-@Composable
 private fun MainShell(
     state: HyperLpaUiState,
     viewModel: HyperLpaViewModel,
     bluetoothReaderState: BluetoothReaderUiState,
     onRefreshReaders: () -> Unit,
     snackbarHostState: SnackbarHostState,
+    rootTabBack: RootTabBackState,
 ) {
     val tabs = AppTab.entries
     val pagerState = rememberPagerState(initialPage = state.selectedTab.ordinal) { tabs.size }
-    val mainPagerState = rememberMainPagerState(pagerState)
+    val mainPagerState = rememberMainPagerState(pagerState, rootTabBack)
     val selectedTab by rememberUpdatedState(state.selectedTab)
     val scrollBehaviors = tabs.map { MiuixScrollBehavior() }
+
+    rootTabBack.onBack = remember(mainPagerState) {
+        { mainPagerState.animateToPage(AppTab.PROFILES.ordinal) }
+    }
 
     LaunchedEffect(pagerState.currentPage) { mainPagerState.syncPage() }
     LaunchedEffect(state.selectedTab) {
@@ -1095,6 +1105,7 @@ private fun ProfileInstallProgressDialog(operation: LpaOperation) {
 private class MainPagerState(
     val pagerState: PagerState,
     private val scope: CoroutineScope,
+    private val rootTabBack: RootTabBackState,
 ) {
     var selectedPage by mutableIntStateOf(pagerState.currentPage)
         private set
@@ -1106,6 +1117,7 @@ private class MainPagerState(
         if (target == selectedPage) return
         navigationJob?.cancel()
         selectedPage = target
+        rootTabBack.targetPage.value = target
         navigating = true
         navigationJob = scope.launch {
             val currentJob = coroutineContext.job
@@ -1128,18 +1140,25 @@ private class MainPagerState(
                 if (navigationJob == currentJob) {
                     navigating = false
                     selectedPage = pagerState.currentPage
+                    rootTabBack.targetPage.value = selectedPage
                 }
             }
         }
     }
 
     fun syncPage() {
-        if (!navigating) selectedPage = pagerState.currentPage
+        if (!navigating) {
+            selectedPage = pagerState.currentPage
+            rootTabBack.targetPage.value = selectedPage
+        }
     }
 }
 
 @Composable
 private fun rememberMainPagerState(
     pagerState: PagerState,
+    rootTabBack: RootTabBackState,
     scope: CoroutineScope = rememberCoroutineScope(),
-): MainPagerState = remember(pagerState, scope) { MainPagerState(pagerState, scope) }
+): MainPagerState = remember(pagerState, rootTabBack, scope) {
+    MainPagerState(pagerState, scope, rootTabBack)
+}
