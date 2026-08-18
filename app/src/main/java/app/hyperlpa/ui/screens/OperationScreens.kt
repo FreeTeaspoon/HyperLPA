@@ -889,7 +889,6 @@ fun DownloadProfileScreen(
                             onValueChange(bounded)
                         },
                         label = stringResource(R.string.activation_entry_label),
-                        useLabelAsPlaceholder = true,
                         minLines = 2,
                         maxLines = 6,
                         modifier = Modifier.fillMaxWidth(),
@@ -900,7 +899,6 @@ fun DownloadProfileScreen(
                             value = confirmationCode,
                             onValueChange = { confirmationCode = it.trim().take(128) },
                             label = stringResource(app.hyperlpa.R.string.activation_confirmation_code),
-                            useLabelAsPlaceholder = true,
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                             visualTransformation = PasswordVisualTransformation(),
