@@ -26,6 +26,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.InputTransformation
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.maxLength
+import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -135,7 +140,7 @@ fun AppearanceSettingsScreen(
         )
     }
     var showDensityDialog by rememberSaveable { mutableStateOf(false) }
-    var densityText by rememberSaveable { mutableStateOf("") }
+    val densityTextState = rememberTextFieldState()
     val blurSupported = isRuntimeShaderSupported()
     val backdrop = rememberAppBackdrop()
     val haptic = LocalHapticFeedback.current
@@ -288,7 +293,7 @@ fun AppearanceSettingsScreen(
                             },
                             holdDownState = showDensityDialog,
                             onClick = {
-                                densityText = densityDraft.roundToInt().toString()
+                                densityTextState.setTextAndPlaceCursorAtEnd(densityDraft.roundToInt().toString())
                                 showDensityDialog = true
                             },
                         )
@@ -346,16 +351,14 @@ fun AppearanceSettingsScreen(
         onDismissRequest = { showDensityDialog = false },
     ) {
         TextField(
-            value = densityText,
-            onValueChange = { value -> densityText = value.filter(Char::isDigit).take(3) },
-            singleLine = true,
+            state = densityTextState,
+            inputTransformation = DensityDigitsOnlyTransformation.maxLength(3),
+            lineLimits = TextFieldLineLimits.SingleLine,
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Number,
                 imeAction = ImeAction.Done,
             ),
-            keyboardActions = KeyboardActions(
-                onDone = { focusManager.clearFocus() },
-            ),
+            onKeyboardAction = { focusManager.clearFocus() },
             trailingIcon = {
                 Text(
                     text = "%",
@@ -378,7 +381,7 @@ fun AppearanceSettingsScreen(
             TextButton(
                 text = stringResource(R.string.common_confirm),
                 onClick = {
-                    val percent = densityText.toIntOrNull()
+                    val percent = densityTextState.text.toString().toIntOrNull()
                         ?.coerceIn(
                             (MIN_INTERFACE_SCALE * 100f).roundToInt(),
                             (MAX_INTERFACE_SCALE * 100f).roundToInt(),
@@ -394,6 +397,10 @@ fun AppearanceSettingsScreen(
             )
         }
     }
+}
+
+private val DensityDigitsOnlyTransformation = InputTransformation {
+    if (!asCharSequence().all { it.isDigit() }) revertAllChanges()
 }
 
 @Composable
@@ -1388,12 +1395,11 @@ fun BackupRestoreSettingsScreen(
             backupPasswordConfirmation = ""
         },
     ) {
-        Column {
+            Column {
             TextField(
                 value = backupPassword,
                 onValueChange = { backupPassword = it.take(128) },
                 label = stringResource(R.string.backup_password),
-                useLabelAsPlaceholder = true,
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
@@ -1404,7 +1410,6 @@ fun BackupRestoreSettingsScreen(
                 value = backupPasswordConfirmation,
                 onValueChange = { backupPasswordConfirmation = it.take(128) },
                 label = stringResource(R.string.backup_confirm_password),
-                useLabelAsPlaceholder = true,
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
