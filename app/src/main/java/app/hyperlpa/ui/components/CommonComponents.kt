@@ -141,7 +141,10 @@ fun PageStateHost(
         label = "page-state",
     ) { target ->
         when (target) {
-            PageStateKind.LOADING -> LoadingState(message = resolvedLoadingMessage)
+            PageStateKind.LOADING -> LoadingState(
+                message = resolvedLoadingMessage,
+                modifier = Modifier.fillMaxSize(),
+            )
             PageStateKind.EMPTY -> EmptyState(
                 title = resolvedEmptyTitle,
                 message = resolvedEmptyMessage,
@@ -150,6 +153,7 @@ fun PageStateHost(
             PageStateKind.ERROR -> ErrorState(
                 title = resolvedErrorTitle,
                 message = resolvedErrorMessage,
+                modifier = Modifier.fillMaxSize(),
                 onRetry = onRetry,
             )
             PageStateKind.CONTENT -> content()
@@ -170,8 +174,8 @@ fun LoadingState(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        InfiniteProgressIndicator(size = 24.dp)
-        Spacer(Modifier.height(12.dp))
+        InfiniteProgressIndicator(size = 20.dp)
+        Spacer(Modifier.height(10.dp))
         Text(text = message, style = MiuixTheme.textStyles.body1, textAlign = TextAlign.Center)
     }
 }

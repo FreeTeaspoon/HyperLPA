@@ -19,11 +19,16 @@ import top.yukonga.miuix.kmp.blur.isRuntimeShaderSupported
 import top.yukonga.miuix.kmp.blur.progressiveTextureBlur
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import top.yukonga.miuix.kmp.blur.textureBlur
+import top.yukonga.miuix.kmp.shader.isRenderEffectSupported
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 @Composable
 fun rememberAppBackdrop(): LayerBackdrop? {
-    if (!LocalBlurEnabled.current || !isRuntimeShaderSupported()) return null
+    if (
+        !LocalBlurEnabled.current ||
+        !isRenderEffectSupported() ||
+        !isRuntimeShaderSupported()
+    ) return null
     val surface = MiuixTheme.colorScheme.surface
     return rememberLayerBackdrop {
         drawRect(surface)
@@ -33,7 +38,11 @@ fun rememberAppBackdrop(): LayerBackdrop? {
 
 @Composable
 fun rememberContentBackdrop(): LayerBackdrop? {
-    if (!LocalBlurEnabled.current || !isRuntimeShaderSupported()) return null
+    if (
+        !LocalBlurEnabled.current ||
+        !isRenderEffectSupported() ||
+        !isRuntimeShaderSupported()
+    ) return null
     return rememberLayerBackdrop { drawContent() }
 }
 

@@ -287,7 +287,10 @@ fun ProfileDetailsScreen(
         if (profile == null) {
             item {
                 if (isProfileDetailsLoading(profile, lpa)) {
-                    LoadingState(message = profileLoadingMessage)
+                    LoadingState(
+                        message = profileLoadingMessage,
+                        modifier = Modifier.fillParentMaxSize(),
+                    )
                 } else {
                     EmptyState(
                         title = stringResource(R.string.profile_unavailable_title),

@@ -221,10 +221,10 @@ fun ProfilesScreen(
     ) {
         CenteredContent { sidePadding ->
             if (pageState == PageStateKind.LOADING) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center,
-            ) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
                     LoadingState(message = loadingMessage)
                 }
             } else if (state.settings.profileLayout == ProfileLayout.WATERFALL && pageState == PageStateKind.CONTENT) {
@@ -1054,7 +1054,10 @@ fun NotificationsScreen(
         isRefreshing = state.lpa.operation is LpaOperation.Refreshing,
         onRefresh = onRefresh,
         modifier = modifier,
-        contentPadding = contentPadding,
+        contentPadding = PaddingValues(
+            top = contentPadding.calculateTopPadding(),
+            bottom = contentPadding.calculateBottomPadding(),
+        ),
         topAppBarScrollBehavior = scrollBehavior,
     ) {
         CenteredContent { sidePadding ->
