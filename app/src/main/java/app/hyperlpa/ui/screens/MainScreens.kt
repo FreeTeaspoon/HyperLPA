@@ -611,8 +611,18 @@ private fun ProfileCard(
 ) {
     val isEnabled = profile.state == ProfileState.ENABLED
     val fallbackName = stringResource(R.string.profile_default_name)
-    val displayName = remember(profile, state.settings.phoneFormatStrategy, fallbackName) {
-        formatProfileDisplayName(profile, state.settings.phoneFormatStrategy, fallbackName)
+    val displayName = remember(
+        profile,
+        state.settings.phoneFormatStrategy,
+        state.settings.profileNameRedaction,
+        fallbackName,
+    ) {
+        formatProfileDisplayName(
+            profile = profile,
+            strategy = state.settings.phoneFormatStrategy,
+            fallback = fallbackName,
+            redactionMode = state.settings.profileNameRedaction,
+        )
     }
     val countryFlag = if (state.settings.showProfileCountryFlagOnHome) {
         profileCountryFlag(profile)
@@ -1104,6 +1114,7 @@ fun NotificationsScreen(
                                     it,
                                     state.settings.phoneFormatStrategy,
                                     profileFallbackName,
+                                    state.settings.profileNameRedaction,
                                 ).fullText
                             },
                             providerName = profile?.providerName?.takeIf(String::isNotBlank),
@@ -1130,6 +1141,7 @@ fun NotificationsScreen(
                     it,
                     state.settings.phoneFormatStrategy,
                     profileFallbackName,
+                    state.settings.profileNameRedaction,
                 ).fullText
             },
             iccid = notification.iccid,

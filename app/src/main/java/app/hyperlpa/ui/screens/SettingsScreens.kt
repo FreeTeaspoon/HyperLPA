@@ -72,6 +72,7 @@ import app.hyperlpa.data.settings.NavigationLabels
 import app.hyperlpa.data.settings.NavigationStyle
 import app.hyperlpa.data.settings.PhoneFormatStrategy
 import app.hyperlpa.data.settings.ProfileLayout
+import app.hyperlpa.data.settings.ProfileNameRedactionMode
 import app.hyperlpa.data.settings.ProfileSort
 import app.hyperlpa.data.settings.RedactionMode
 import app.hyperlpa.data.settings.ThemeAccent
@@ -1128,6 +1129,7 @@ fun PrivacySettingsScreen(
     viewModel: HyperLpaViewModel,
 ) {
     val redactionModes = RedactionMode.entries
+    val profileNameRedactionModes = ProfileNameRedactionMode.entries
     var showClearCloudCachesConfirmation by remember { mutableStateOf(false) }
     DetailLazyScaffold(title = stringResource(R.string.privacy_title), onBack = onBack) { _ ->
         item { SectionHeading(stringResource(R.string.privacy_sensitive_identifiers)) }
@@ -1146,6 +1148,20 @@ fun PrivacySettingsScreen(
                     title = stringResource(R.string.privacy_iccid_redaction),
                     summary = stringResource(R.string.privacy_iccid_redaction_summary),
                     onSelectedIndexChange = { viewModel.setIccidRedaction(redactionModes[it]) },
+                )
+            }
+        }
+        item { SectionHeading(stringResource(R.string.privacy_profile_names)) }
+        item {
+            GroupedCard {
+                OverlayDropdownPreference(
+                    items = profileNameRedactionModes.map { stringResource(it.labelResource()) },
+                    selectedIndex = profileNameRedactionModes.indexOf(settings.profileNameRedaction),
+                    title = stringResource(R.string.privacy_profile_name_redaction),
+                    summary = stringResource(R.string.privacy_profile_name_redaction_summary),
+                    onSelectedIndexChange = {
+                        viewModel.setProfileNameRedaction(profileNameRedactionModes[it])
+                    },
                 )
             }
         }
@@ -1803,6 +1819,12 @@ private fun PhoneFormatStrategy.labelResource(): Int = when (this) {
     PhoneFormatStrategy.INTERNATIONAL_AND_MOBILE -> R.string.phone_format_international_mobile
     PhoneFormatStrategy.INTERNATIONAL_AND_ALL -> R.string.phone_format_international_all
     PhoneFormatStrategy.OFF -> R.string.phone_format_off
+}
+
+private fun ProfileNameRedactionMode.labelResource(): Int = when (this) {
+    ProfileNameRedactionMode.NONE -> R.string.privacy_profile_name_redaction_none
+    ProfileNameRedactionMode.PROVIDER_ONLY -> R.string.privacy_profile_name_redaction_provider_only
+    ProfileNameRedactionMode.NUMBERS -> R.string.privacy_profile_name_redaction_numbers
 }
 
 private fun RedactionMode.labelResource(): Int = when (this) {

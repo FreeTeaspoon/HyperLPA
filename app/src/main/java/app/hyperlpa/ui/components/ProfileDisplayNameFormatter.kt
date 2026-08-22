@@ -1,6 +1,7 @@
 package app.hyperlpa.ui.components
 
 import app.hyperlpa.data.settings.PhoneFormatStrategy
+import app.hyperlpa.data.settings.ProfileNameRedactionMode
 import app.hyperlpa.domain.model.ProfileInfo
 import com.google.i18n.phonenumbers.PhoneNumberUtil
 import java.util.Locale
@@ -18,15 +19,41 @@ fun formatProfileDisplayName(
     profile: ProfileInfo,
     strategy: PhoneFormatStrategy,
     fallback: String,
+    redactionMode: ProfileNameRedactionMode = ProfileNameRedactionMode.NONE,
 ): FormattedProfileDisplayName {
     val rawName = profile.nickname.ifBlank { profile.name.ifBlank { fallback } }
-    return formatProfileDisplayName(
-        rawName = rawName,
-        strategy = strategy,
-        mcc = profile.mcc,
-        mnc = profile.mnc,
-        iccid = profile.iccid,
-    )
+    return when (redactionMode) {
+        ProfileNameRedactionMode.NONE -> formatProfileDisplayName(
+            rawName = rawName,
+            strategy = strategy,
+            mcc = profile.mcc,
+            mnc = profile.mnc,
+            iccid = profile.iccid,
+        )
+        ProfileNameRedactionMode.PROVIDER_ONLY -> {
+            val provider = profile.providerName.trim()
+            val visibleText = provider.ifBlank { redactNameCharacters(rawName) }
+            FormattedProfileDisplayName(
+                fullText = visibleText,
+                nameText = visibleText,
+                phoneNumbers = emptyList(),
+            )
+        }
+        ProfileNameRedactionMode.NUMBERS -> {
+            val provider = profile.providerName.trim()
+            if (provider.isBlank() || !rawName.contains(provider, ignoreCase = true)) {
+                redactedProfileDisplayName()
+            } else {
+                formatProfileDisplayName(
+                    rawName = rawName,
+                    strategy = strategy,
+                    mcc = profile.mcc,
+                    mnc = profile.mnc,
+                    iccid = profile.iccid,
+                ).redactNumbers()
+            }
+        }
+    }
 }
 
 fun profileCountryFlag(profile: ProfileInfo): String? =
@@ -153,6 +180,39 @@ private data class DetectedPhoneNumber(
 
 private val PhoneCharacters = setOf('+', ' ', '.', '-', '(', ')')
 private val Whitespace = Regex("\\s+")
+
+private fun redactNameCharacters(value: String): String = buildString(value.length) {
+    value.forEach { character ->
+        append(if (character.isWhitespace()) character else '*')
+    }
+}
+
+private fun redactedProfileDisplayName(): FormattedProfileDisplayName =
+    FormattedProfileDisplayName(
+        fullText = RedactedProfileName,
+        nameText = RedactedProfileName,
+        phoneNumbers = emptyList(),
+    )
+
+private fun FormattedProfileDisplayName.redactNumbers(): FormattedProfileDisplayName {
+    val redactedFullText = fullText.redactNumberTokens()
+    val redactedNameText = nameText.redactNumberTokens()
+    return copy(
+        fullText = redactedFullText,
+        nameText = redactedNameText,
+        phoneNumbers = emptyList(),
+    )
+}
+
+private fun String.redactNumberTokens(): String = NumberToken.replace(this) { match ->
+    RedactedProfileName
+}
+
+private const val RedactedProfileName = "********"
+
+private val NumberToken = Regex(
+    """(?<!\p{L})[+()]?[0-9](?:[0-9+().\-\s]*[0-9])?(?!\p{L})""",
+)
 
 private fun String.normalizePhoneSpacing(): String = replace('\u00A0', ' ')
 

@@ -112,6 +112,13 @@ enum class PhoneFormatStrategy {
 }
 
 @Serializable
+enum class ProfileNameRedactionMode {
+    NONE,
+    PROVIDER_ONLY,
+    NUMBERS,
+}
+
+@Serializable
 enum class RedactionMode {
     NONE,
     MIDDLE,
@@ -136,6 +143,7 @@ data class AppSettings(
     val sortAscending: Boolean = true,
     val showProfileSearch: Boolean = false,
     val phoneFormatStrategy: PhoneFormatStrategy = PhoneFormatStrategy.INTERNATIONAL_AND_MOBILE,
+    val profileNameRedaction: ProfileNameRedactionMode = ProfileNameRedactionMode.NONE,
     val showProfileNameOnHome: Boolean = true,
     val showProfileCountryFlagOnHome: Boolean = false,
     val showProfileProviderOnHome: Boolean = true,
@@ -232,6 +240,8 @@ class AppSettingsStore(context: Context) {
     suspend fun setSortAscending(value: Boolean) = set(Keys.SortAscending, value)
     suspend fun setShowProfileSearch(value: Boolean) = set(Keys.ShowProfileSearch, value)
     suspend fun setPhoneFormatStrategy(value: PhoneFormatStrategy) = set(Keys.PhoneFormatStrategy, value.name)
+    suspend fun setProfileNameRedaction(value: ProfileNameRedactionMode) =
+        set(Keys.ProfileNameRedaction, value.name)
     suspend fun setShowProfileNameOnHome(value: Boolean) = set(Keys.ShowProfileNameOnHome, value)
     suspend fun setShowProfileCountryFlagOnHome(value: Boolean) =
         set(Keys.ShowProfileCountryFlagOnHome, value)
@@ -384,6 +394,7 @@ class AppSettingsStore(context: Context) {
         this[Keys.SortAscending] = settings.sortAscending
         this[Keys.ShowProfileSearch] = settings.showProfileSearch
         this[Keys.PhoneFormatStrategy] = settings.phoneFormatStrategy.name
+        this[Keys.ProfileNameRedaction] = settings.profileNameRedaction.name
         this[Keys.ShowProfileNameOnHome] = settings.showProfileNameOnHome
         this[Keys.ShowProfileCountryFlagOnHome] = settings.showProfileCountryFlagOnHome
         this[Keys.ShowProfileProviderOnHome] = settings.showProfileProviderOnHome
@@ -500,6 +511,10 @@ class AppSettingsStore(context: Context) {
             Keys.PhoneFormatStrategy,
             PhoneFormatStrategy.INTERNATIONAL_AND_MOBILE,
         ),
+        profileNameRedaction = preferences.enum(
+            Keys.ProfileNameRedaction,
+            ProfileNameRedactionMode.NONE,
+        ),
         showProfileNameOnHome = preferences[Keys.ShowProfileNameOnHome] ?: true,
         showProfileCountryFlagOnHome = preferences[Keys.ShowProfileCountryFlagOnHome] ?: false,
         showProfileProviderOnHome = preferences[Keys.ShowProfileProviderOnHome] ?: true,
@@ -604,6 +619,7 @@ class AppSettingsStore(context: Context) {
         val SortAscending = booleanPreferencesKey("sort_ascending")
         val ShowProfileSearch = booleanPreferencesKey("show_profile_search")
         val PhoneFormatStrategy = stringPreferencesKey("phone_format_strategy")
+        val ProfileNameRedaction = stringPreferencesKey("profile_name_redaction")
         val ShowProfileNameOnHome = booleanPreferencesKey("show_profile_name_on_home")
         val ShowProfileCountryFlagOnHome = booleanPreferencesKey("show_profile_country_flag_on_home")
         val ShowProfileProviderOnHome = booleanPreferencesKey("show_profile_provider_on_home")
