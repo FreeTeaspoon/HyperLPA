@@ -14,6 +14,7 @@ class AppSettingsValidationTest {
         assertEquals(DEFAULT_INTERFACE_SCALE, settings.densityScale)
         assertEquals(NavigationStyle.STANDARD, settings.navigationStyle)
         assertEquals(NavigationLabels.ICON_AND_TEXT, settings.navigationLabels)
+        assertEquals(ProfileNameRedactionMode.NONE, settings.profileNameRedaction)
     }
 
     @Test

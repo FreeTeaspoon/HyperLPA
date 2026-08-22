@@ -438,6 +438,12 @@
     <string name="redaction_none">None</string>
     <string name="redaction_middle">Middle</string>
     <string name="redaction_full">Full</string>
+    <string name="privacy_profile_names">Profile names</string>
+    <string name="privacy_profile_name_redaction">Profile name redaction</string>
+    <string name="privacy_profile_name_redaction_summary">Keep only the provider name or mask numbers and their separators</string>
+    <string name="privacy_profile_name_redaction_none">None</string>
+    <string name="privacy_profile_name_redaction_provider_only">Provider only</string>
+    <string name="privacy_profile_name_redaction_numbers">Numbers</string>
     <string name="privacy_nekoko_cloud">Nekoko Cloud</string>
     <string name="privacy_operator_icons">Operator icons</string>
     <string name="privacy_operator_icons_summary">Resolve and cache profile artwork from operator-icons.pages.dev</string>

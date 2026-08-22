@@ -29,6 +29,7 @@ import app.hyperlpa.data.settings.NavigationLabels
 import app.hyperlpa.data.settings.NavigationStyle
 import app.hyperlpa.data.settings.ProfileLayout
 import app.hyperlpa.data.settings.PhoneFormatStrategy
+import app.hyperlpa.data.settings.ProfileNameRedactionMode
 import app.hyperlpa.data.settings.ProfileSort
 import app.hyperlpa.data.settings.RedactionMode
 import app.hyperlpa.data.settings.ThemeAccent
@@ -1109,6 +1110,8 @@ class HyperLpaViewModel(
     fun setShowProfileSearch(value: Boolean) = launch { settingsStore.setShowProfileSearch(value) }
     fun setPhoneFormatStrategy(value: PhoneFormatStrategy) =
         launch { settingsStore.setPhoneFormatStrategy(value) }
+    fun setProfileNameRedaction(value: ProfileNameRedactionMode) =
+        launch { settingsStore.setProfileNameRedaction(value) }
     fun setShowProfileNameOnHome(value: Boolean) = launch { settingsStore.setShowProfileNameOnHome(value) }
     fun setShowProfileCountryFlagOnHome(value: Boolean) =
         launch { settingsStore.setShowProfileCountryFlagOnHome(value) }
