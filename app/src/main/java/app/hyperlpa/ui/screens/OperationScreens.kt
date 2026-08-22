@@ -237,8 +237,20 @@ fun ProfileDetailsScreen(
             setReminder(selectedDate.toReminderInstant(reminderZone))
         }
     }
-    val displayName = remember(profile, settings.phoneFormatStrategy, fallbackName) {
-        profile?.let { formatProfileDisplayName(it, settings.phoneFormatStrategy, fallbackName) }
+    val displayName = remember(
+        profile,
+        settings.phoneFormatStrategy,
+        settings.profileNameRedaction,
+        fallbackName,
+    ) {
+        profile?.let {
+            formatProfileDisplayName(
+                profile = it,
+                strategy = settings.phoneFormatStrategy,
+                fallback = fallbackName,
+                redactionMode = settings.profileNameRedaction,
+            )
+        }
     }
     val formattedNickname = remember(profile, settings.phoneFormatStrategy) {
         profile?.nickname?.takeIf(String::isNotBlank)?.let { nicknameValue ->

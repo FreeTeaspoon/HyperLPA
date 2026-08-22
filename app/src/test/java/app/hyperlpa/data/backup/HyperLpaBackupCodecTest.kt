@@ -2,6 +2,7 @@ package app.hyperlpa.data.backup
 
 import app.hyperlpa.data.settings.AppSettings
 import app.hyperlpa.data.settings.PhoneFormatStrategy
+import app.hyperlpa.data.settings.ProfileNameRedactionMode
 import app.hyperlpa.data.settings.ThemeMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -15,6 +16,7 @@ class HyperLpaBackupCodecTest {
         settings = AppSettings(
             themeMode = ThemeMode.DARK,
             phoneFormatStrategy = PhoneFormatStrategy.INTERNATIONAL_AND_ALL,
+            profileNameRedaction = ProfileNameRedactionMode.PROVIDER_ONLY,
             showProfileCountryFlagOnHome = true,
             hideProfileDeletion = true,
             imei = "490154203237518",
