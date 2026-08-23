@@ -493,7 +493,10 @@ class LpaRepository(
     }
 
     suspend fun refresh(): OperationOutcome {
-        cancelDeferredCardFollowUp()
+        // A manual refresh is serialized with a pending profile-switch follow-up. Do not cancel
+        // that follow-up here, or pulling to refresh immediately after switching can prevent the
+        // automatic notification delivery from ever running.
+        cancelDeferredCardRefreshes()
         return operationMutex.withLock {
             withOperation(LpaOperation.Refreshing(appContext.getString(R.string.operation_reading_profiles))) {
                 try {
@@ -1483,9 +1486,10 @@ class LpaRepository(
     private fun schedulePostSwitchFollowUp(expectedAffinity: ReaderAffinity) {
         val job = backgroundScope.launch {
             delay(PostSwitchFollowUpDelayMillis)
-            if (!operationMutex.tryLock()) return@launch
-            try {
-                if (currentReaderAffinity() != expectedAffinity) return@launch
+            // This job is created while setProfileEnabled still owns the mutex. Waiting here is
+            // required: a slow reader refresh must delay the follow-up, not make it disappear.
+            operationMutex.withLock {
+                if (currentReaderAffinity() != expectedAffinity) return@withLock
                 refreshEuiccMetadataSafely("profile switch")
                 if (
                     shouldAttemptPostSwitchNotificationDelivery(
@@ -1502,8 +1506,6 @@ class LpaRepository(
                 ) {
                     refreshNotificationsSafely("profile switch")
                 }
-            } finally {
-                operationMutex.unlock()
             }
         }
         postSwitchFollowUpJob.getAndSet(job)?.cancel()
@@ -1524,9 +1526,13 @@ class LpaRepository(
         postSwitchFollowUpJob.getAndSet(null)?.cancel()
     }
 
-    private fun cancelDeferredCardFollowUp() {
+    private fun cancelDeferredCardRefreshes() {
         cancelInitialNotificationRefresh()
         cancelInitialEuiccMetadataRefresh()
+    }
+
+    private fun cancelDeferredCardFollowUp() {
+        cancelDeferredCardRefreshes()
         cancelPostSwitchFollowUp()
     }
 
@@ -2109,6 +2115,9 @@ class LpaRepository(
                 )
                 if (removed) {
                     changed = true
+                    // The delete command is authoritative. Update the live queue before the
+                    // best-effort refresh so a transient reader error cannot leave stale UI.
+                    removeNotification(notification.seqNumber)
                 } else {
                     log(
                         LogLevel.WARNING,
