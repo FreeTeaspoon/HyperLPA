@@ -231,6 +231,34 @@ class LpaRepositoryReconciliationTest {
     }
 
     @Test
+    fun refreshCapableReadersReconcileTheDisabledProfileBeforeDeletion() {
+        assertTrue(
+            shouldReconcileProfileDisableBeforeDeletion(
+                requiresProfileSwitchRefresh = true,
+                disableSucceeded = true,
+            ),
+        )
+        assertTrue(
+            shouldReconcileProfileDisableBeforeDeletion(
+                requiresProfileSwitchRefresh = true,
+                disableSucceeded = false,
+            ),
+        )
+        assertTrue(
+            shouldReconcileProfileDisableBeforeDeletion(
+                requiresProfileSwitchRefresh = false,
+                disableSucceeded = false,
+            ),
+        )
+        assertFalse(
+            shouldReconcileProfileDisableBeforeDeletion(
+                requiresProfileSwitchRefresh = false,
+                disableSucceeded = true,
+            ),
+        )
+    }
+
+    @Test
     fun cancellationDuringAmbiguousReconciliationRequiresTheCorrectRefreshes() {
         assertEquals(
             ReconciliationRefreshRequirements(
