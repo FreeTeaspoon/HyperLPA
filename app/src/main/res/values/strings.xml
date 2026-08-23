@@ -510,7 +510,6 @@
     <string name="backup_reset_complete">Settings reset</string>
     <string name="backup_reset_failed">Could not reset settings</string>
     <string name="aid_manager_title">ISD-R AIDs</string>
-    <string name="aid_manager_selection_order">Selection order</string>
     <string name="aid_manager_summary">HyperLPA tries these application identifiers in order until the eUICC accepts one.</string>
     <string name="aid_manager_input_label">One hexadecimal AID per line</string>
     <string name="aid_manager_empty">Enter at least one AID</string>
@@ -565,6 +564,15 @@
     <string name="install_progress_percent">%1$d%%</string>
     <string name="install_progress_bytes" tools:ignore="PluralsCandidate">Installing (%1$d / %2$d bytes)…</string>
     <string name="install_progress_preparing">Preparing secure installation…</string>
+    <string name="download_progress_preparing">Preparing profile…</string>
+    <string name="download_progress_connecting">Connecting to profile server…</string>
+    <string name="download_progress_authenticating">Authenticating profile…</string>
+    <string name="download_progress_downloading">Downloading…</string>
+    <string name="download_progress_finalizing">Finalizing…</string>
+    <string name="download_progress_installing">Installing…</string>
+    <string name="download_progress_waiting">Working…</string>
+    <string name="download_progress_detail">%1$d%% · %2$s / %3$s</string>
+    <string name="download_progress_status">%1$s · %2$s</string>
 
     <!-- Profile details and editing -->
     <string name="profile_provider_fallback">this provider</string>
@@ -916,7 +924,6 @@
     <string name="statistics_unique_providers">Unique providers</string>
     <string name="statistics_unique_tags">Unique tags</string>
     <string name="logs_title">Activity logs</string>
-    <string name="logs_support_report">Support report</string>
     <string name="logs_support_included">Includes the app version, Android and device model, reader backend capability counts, feature flags, whether a current failure exists, recent warning/error timestamps, levels and categories, and sanitized notification outcomes.</string>
     <string name="logs_support_excluded">It excludes failure and activity-log message details, ICCIDs, EIDs, IMEI, activation and confirmation codes, matching IDs, APDUs, profile names, reader IDs, remote-reader URLs and credentials, and full notification addresses.</string>
     <string name="logs_export_report">Export support report</string>

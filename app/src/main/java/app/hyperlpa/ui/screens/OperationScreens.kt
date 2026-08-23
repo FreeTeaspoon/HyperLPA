@@ -13,10 +13,13 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -25,6 +28,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.captionBar
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
@@ -45,9 +49,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -72,6 +80,7 @@ import app.hyperlpa.domain.model.ActivityLogEntry
 import app.hyperlpa.domain.model.DownloadRequest
 import app.hyperlpa.domain.model.DownloadRequestError
 import app.hyperlpa.domain.model.DownloadRequestException
+import app.hyperlpa.domain.model.DownloadStage
 import app.hyperlpa.domain.model.EuiccInfo
 import app.hyperlpa.domain.model.LogLevel
 import app.hyperlpa.domain.model.LpaNotification
@@ -120,6 +129,9 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.navigationevent.NavigationEventInfo
+import androidx.navigationevent.compose.NavigationBackHandler
+import androidx.navigationevent.compose.rememberNavigationEventState
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
 import top.yukonga.miuix.kmp.basic.Button
@@ -131,6 +143,7 @@ import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.basic.SnackbarDuration
+import top.yukonga.miuix.kmp.basic.Surface
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.BankCards
 import top.yukonga.miuix.kmp.icon.extended.Alarm
@@ -144,6 +157,7 @@ import top.yukonga.miuix.kmp.icon.extended.Messages
 import top.yukonga.miuix.kmp.icon.extended.Refresh
 import top.yukonga.miuix.kmp.icon.extended.Scan
 import top.yukonga.miuix.kmp.icon.extended.Search
+import top.yukonga.miuix.kmp.icon.extended.UploadCloud
 import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
@@ -319,6 +333,7 @@ fun ProfileDetailsScreen(
                     settings = settings,
                     artworkBitmap = artworkBitmap,
                     displayName = requireNotNull(displayName),
+                    onOpenIconOptions = { showIconOptions = true },
                     onOpenTags = openTagsEditor,
                     onOpenReminder = openReminderEditor,
                 )
@@ -904,6 +919,7 @@ fun DownloadProfileScreen(
                             onValueChange(bounded)
                         },
                         label = stringResource(R.string.activation_entry_label),
+                        useLabelAsPlaceholder = true,
                         minLines = 2,
                         maxLines = 6,
                         modifier = Modifier.fillMaxWidth(),
@@ -914,6 +930,7 @@ fun DownloadProfileScreen(
                             value = confirmationCode,
                             onValueChange = { confirmationCode = it.trim().take(128) },
                             label = stringResource(app.hyperlpa.R.string.activation_confirmation_code),
+                            useLabelAsPlaceholder = true,
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                             visualTransformation = PasswordVisualTransformation(),
@@ -1160,6 +1177,7 @@ fun ProfileDownloadConfirmationScreen(
     cloudIcon: ByteArray?,
     estimatedDownloadBytes: Long?,
     enrichmentLoading: Boolean,
+    downloadOperation: LpaOperation.Downloading?,
     showCancelConfirmation: Boolean,
     onBack: () -> Unit,
     onDownload: () -> Unit,
@@ -1176,10 +1194,23 @@ fun ProfileDownloadConfirmationScreen(
         .joinToString(" ")
         .ifBlank { stringResource(R.string.common_unavailable) }
     var moreExpanded by rememberSaveable { mutableStateOf(false) }
+    val progressOperation = downloadOperation?.takeUnless { it.stage == DownloadStage.CONFIRMING }
+    val progressVisible = progressOperation != null
+    val navigationEventState = rememberNavigationEventState(
+        currentInfo = NavigationEventInfo.None,
+    )
+    val handleBack: () -> Unit = if (progressVisible) ({}) else onBack
+
+    NavigationBackHandler(
+        state = navigationEventState,
+        isBackEnabled = progressVisible,
+        onBackCompleted = {},
+    )
 
     DetailLazyScaffold(
         title = "",
-        onBack = onBack,
+        onBack = handleBack,
+        showBackButton = !progressVisible,
         collapsedTitle = displayName,
         collapsedBarRevealStart = 132.dp,
         background = {
@@ -1294,18 +1325,32 @@ fun ProfileDownloadConfirmationScreen(
                 }
             }
         }
-        item {
-            Button(
-                onClick = onDownload,
-                colors = ButtonDefaults.buttonColorsPrimary(),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 12.dp, top = 6.dp, end = 12.dp, bottom = 18.dp)
-                    .defaultMinSize(minHeight = 52.dp),
-            ) {
-                Icon(MiuixIcons.Download, contentDescription = null, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(stringResource(R.string.common_download))
+        if (progressOperation != null) {
+            item {
+                ProfileDownloadProgressBar(
+                    operation = progressOperation,
+                    modifier = Modifier.padding(
+                        start = 12.dp,
+                        top = 6.dp,
+                        end = 12.dp,
+                        bottom = 18.dp,
+                    ),
+                )
+            }
+        } else {
+            item {
+                Button(
+                    onClick = onDownload,
+                    colors = ButtonDefaults.buttonColorsPrimary(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 12.dp, top = 6.dp, end = 12.dp, bottom = 18.dp)
+                        .defaultMinSize(minHeight = 52.dp),
+                ) {
+                    Icon(MiuixIcons.Download, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.common_download))
+                }
             }
         }
     }
@@ -1323,6 +1368,111 @@ fun ProfileDownloadConfirmationScreen(
             destructive = true,
             onConfirm = onConfirmCancel,
         )
+    }
+}
+
+@Composable
+private fun ProfileDownloadProgressBar(
+    operation: LpaOperation.Downloading,
+    modifier: Modifier = Modifier,
+) {
+    val sentBytes = operation.sentBytes?.coerceAtLeast(0L)
+    val totalBytes = operation.totalBytes?.takeIf { it > 0L }
+    val targetProgress = if (sentBytes != null && totalBytes != null) {
+        (sentBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
+    } else {
+        null
+    }
+    val progress by animateFloatAsState(
+        targetValue = targetProgress ?: 0f,
+        animationSpec = tween(durationMillis = 300),
+    )
+    val stageText = when (operation.stage) {
+        DownloadStage.PREPARING -> stringResource(R.string.download_progress_preparing)
+        DownloadStage.CONNECTING -> stringResource(R.string.download_progress_connecting)
+        DownloadStage.AUTHENTICATING -> stringResource(R.string.download_progress_authenticating)
+        DownloadStage.CONFIRMING -> stringResource(R.string.download_progress_preparing)
+        DownloadStage.DOWNLOADING -> stringResource(R.string.download_progress_downloading)
+        DownloadStage.FINALIZING -> stringResource(R.string.download_progress_finalizing)
+        DownloadStage.INSTALLING -> stringResource(R.string.download_progress_installing)
+    }
+    val progressText = if (targetProgress != null && sentBytes != null && totalBytes != null) {
+        stringResource(
+            R.string.download_progress_status,
+            stageText,
+            stringResource(
+                R.string.download_progress_detail,
+                (targetProgress * 100).roundToInt(),
+                formatBytes(sentBytes),
+                formatBytes(totalBytes),
+            ),
+        )
+    } else {
+        stageText
+    }
+    val mutedStage = operation.stage == DownloadStage.DOWNLOADING ||
+        operation.stage == DownloadStage.INSTALLING
+    val contentColor = if (progress < 0.45f) {
+        if (MiuixTheme.isDynamicColor) {
+            MiuixTheme.colorScheme.onSecondaryContainer
+        } else {
+            MiuixTheme.colorScheme.onSecondaryVariant
+        }
+    } else {
+        MiuixTheme.colorScheme.onPrimary
+    }
+    val trackColor = if (mutedStage) {
+        MiuixTheme.colorScheme.disabledSecondaryVariant
+    } else if (MiuixTheme.isDynamicColor) {
+        MiuixTheme.colorScheme.secondaryContainer
+    } else {
+        MiuixTheme.colorScheme.secondaryVariant
+    }
+    val progressColor = MiuixTheme.colorScheme.primary
+
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .semantics {
+                progressBarRangeInfo = targetProgress?.let {
+                    ProgressBarRangeInfo(progress, 0f..1f)
+                } ?: ProgressBarRangeInfo.Indeterminate
+            },
+        shape = RoundedCornerShape(ButtonDefaults.CornerRadius),
+        color = trackColor,
+        contentColor = contentColor,
+    ) {
+        Row(
+            modifier = Modifier
+                .defaultMinSize(
+                    minWidth = ButtonDefaults.MinWidth,
+                    minHeight = 52.dp,
+                )
+                .drawWithContent {
+                    if (progress > 0f) {
+                        drawRect(
+                            color = progressColor,
+                            size = Size(
+                                width = size.width * progress,
+                                height = size.height,
+                            ),
+                        )
+                    }
+                    drawContent()
+                }
+                .padding(ButtonDefaults.InsideMargin),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            InfiniteProgressIndicator(color = contentColor)
+            Spacer(Modifier.width(16.dp))
+            Text(
+                text = progressText,
+                color = contentColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
@@ -1349,6 +1499,7 @@ fun ProfileDownloadResultScreen(
     DetailLazyScaffold(
         title = "",
         onBack = onBack,
+        showBackButton = false,
         collapsedTitle = displayName,
         collapsedBarRevealStart = 132.dp,
         background = {
@@ -1406,21 +1557,6 @@ fun ProfileDownloadResultScreen(
                 )
             }
         }
-        if (profile.state != ProfileState.ENABLED && profile.iccid.isNotBlank()) {
-            item {
-                Button(
-                    onClick = onEnable,
-                    enabled = !busy,
-                    colors = ButtonDefaults.buttonColorsPrimary(),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 12.dp, top = 6.dp, end = 12.dp, bottom = 8.dp)
-                        .defaultMinSize(minHeight = 52.dp),
-                ) {
-                    Text(stringResource(R.string.download_enable_profile))
-                }
-            }
-        }
         if (profile.iccid.isNotBlank()) {
             item {
                 Button(
@@ -1428,16 +1564,7 @@ fun ProfileDownloadResultScreen(
                     enabled = !busy,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(
-                            start = 12.dp,
-                            top = if (profile.state != ProfileState.ENABLED && profile.iccid.isNotBlank()) {
-                                0.dp
-                            } else {
-                                6.dp
-                            },
-                            end = 12.dp,
-                            bottom = 8.dp,
-                        )
+                        .padding(start = 12.dp, top = 8.dp, end = 12.dp, bottom = 0.dp)
                         .defaultMinSize(minHeight = 52.dp),
                 ) {
                     Icon(MiuixIcons.Edit, contentDescription = null, modifier = Modifier.size(19.dp))
@@ -1447,20 +1574,35 @@ fun ProfileDownloadResultScreen(
             }
         }
         item {
-            Button(
-                onClick = onDone,
-                enabled = !busy,
+            val canEnable = profile.state != ProfileState.ENABLED && profile.iccid.isNotBlank()
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(
-                        start = 12.dp,
-                        top = if (profile.iccid.isNotBlank()) 0.dp else 6.dp,
-                        end = 12.dp,
-                        bottom = 18.dp,
-                    )
-                    .defaultMinSize(minHeight = 52.dp),
+                    .padding(start = 12.dp, top = 6.dp, end = 12.dp, bottom = 18.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(stringResource(R.string.common_done))
+                Button(
+                    onClick = onDone,
+                    enabled = !busy,
+                    modifier = Modifier
+                        .weight(if (canEnable) 1f else 2f)
+                        .defaultMinSize(minHeight = 52.dp),
+                ) {
+                    Text(stringResource(R.string.common_done))
+                }
+                if (canEnable) {
+                    Button(
+                        onClick = onEnable,
+                        enabled = !busy,
+                        colors = ButtonDefaults.buttonColorsPrimary(),
+                        modifier = Modifier
+                            .weight(1f)
+                            .defaultMinSize(minHeight = 52.dp),
+                    ) {
+                        Text(stringResource(R.string.download_enable_profile))
+                    }
+                }
             }
         }
     }
@@ -2487,8 +2629,20 @@ fun LogsScreen(
         .mapIndexed { index, entry -> index to entry }
         .asReversed()
         .filter { (_, entry) -> levels[selectedLevel] == null || entry.level == levels[selectedLevel] }
-    DetailLazyScaffold(title = stringResource(R.string.logs_title), onBack = onBack) { _ ->
-        item { SectionHeading(stringResource(R.string.logs_support_report)) }
+    DetailLazyScaffold(
+        title = stringResource(R.string.logs_title),
+        onBack = onBack,
+        actions = {
+            IconButton(
+                onClick = { exportSupportReport.launch("hyperlpa-support-report.txt") },
+            ) {
+                Icon(
+                    MiuixIcons.UploadCloud,
+                    contentDescription = stringResource(R.string.logs_export_report),
+                )
+            }
+        },
+    ) { _ ->
         item {
             TipCard {
                 Text(
@@ -2501,12 +2655,6 @@ fun LogsScreen(
                     text = stringResource(R.string.logs_support_excluded),
                     fontSize = 13.sp,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                )
-                Spacer(Modifier.height(12.dp))
-                TextButton(
-                    text = stringResource(R.string.logs_export_report),
-                    onClick = { exportSupportReport.launch("hyperlpa-support-report.txt") },
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
                 )
             }
         }
@@ -2572,6 +2720,7 @@ private fun ProfileHero(
     settings: AppSettings,
     artworkBitmap: Bitmap?,
     displayName: FormattedProfileDisplayName,
+    onOpenIconOptions: () -> Unit,
     onOpenTags: () -> Unit,
     onOpenReminder: () -> Unit,
 ) {
@@ -2581,18 +2730,29 @@ private fun ProfileHero(
     val phoneClipboardLabel = stringResource(R.string.profile_phone_clipboard_label)
     val phoneCopiedMessage = stringResource(R.string.profile_phone_copied)
     val phoneNumberInteractionSource = remember { MutableInteractionSource() }
+    val profileIconInteractionSource = remember { MutableInteractionSource() }
     val profileTags = profile.tags
         .filter(String::isNotBlank)
         .sortedBy(String::lowercase)
     val reminderText = profile.reminderAt?.formatReminderDate()
+    val hasHeroMetadata = profileTags.isNotEmpty() || reminderText != null
     Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 24.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp)
+            .padding(top = 24.dp, bottom = if (hasHeroMetadata) 0.dp else 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         ResolvedProfileArtwork(
             profile = profile,
             bitmap = artworkBitmap,
             isEnabled = profile.state == ProfileState.ENABLED,
+            modifier = Modifier.clickable(
+                interactionSource = profileIconInteractionSource,
+                indication = null,
+                onClickLabel = stringResource(R.string.profile_custom_icon),
+                onClick = onOpenIconOptions,
+            ),
             size = 78.dp,
             cornerRadius = 20.dp,
         )
@@ -2649,7 +2809,7 @@ private fun ProfileHero(
             style = MiuixTheme.textStyles.footnote1,
             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
         )
-        if (profileTags.isNotEmpty() || reminderText != null) {
+        if (hasHeroMetadata) {
             Spacer(Modifier.height(6.dp))
             ProfileHeroMetadataRow(
                 tags = profileTags,

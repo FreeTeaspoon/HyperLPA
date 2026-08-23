@@ -18,6 +18,7 @@ sealed interface AppRoute : NavKey {
     data class ProfileDetails(val iccid: String) : AppRoute
     data object DownloadProfile : AppRoute
     data object ConfirmProfileDownload : AppRoute
+    data class ProfileDownloadHistorySlot(val slot: Int) : AppRoute
     data class ProfileDownloadResult(
         val result: app.hyperlpa.domain.model.ProfileDownloadResult,
     ) : AppRoute
