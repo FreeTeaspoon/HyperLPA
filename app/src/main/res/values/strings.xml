@@ -627,7 +627,8 @@
     <string name="profile_delete_first_title">Delete this profile?</string>
     <string name="profile_delete_first_summary">This cannot be undone. You may need the original activation code to install it again.</string>
     <string name="profile_delete_final_title">Delete profile permanently?</string>
-    <string name="profile_delete_final_summary">This is your final confirmation. If the profile is active, it will be disabled first, then permanently removed from the eUICC.</string>
+    <string name="profile_delete_final_enabled_summary">This is your final confirmation. The profile will be disabled first, then permanently removed from the eUICC.</string>
+    <string name="profile_delete_final_disabled_summary">This is your final confirmation. The profile will be permanently removed from the eUICC.</string>
     <string name="common_continue">Continue</string>
     <string name="profile_tags_title">Profile tags</string>
     <string name="profile_reminder_title_sheet">Profile reminder</string>
