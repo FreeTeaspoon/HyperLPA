@@ -71,13 +71,15 @@ internal fun rememberProfileArtworkBitmap(
         profile?.iconBase64.orEmpty(),
         cloudIcon?.contentHashCode()?.toString().orEmpty(),
     )
+    val cachedBitmap = profile?.let { ProfileArtworkBatchCache.getBitmap(it, cloudIcon) }
     return key(artworkKey) {
         val bitmap by produceState<Bitmap?>(
-            initialValue = null,
+            initialValue = cachedBitmap,
             profile?.customIconUri,
             profile?.iconBase64,
             cloudIcon?.contentHashCode(),
         ) {
+            if (cachedBitmap != null) return@produceState
             value = withContext(Dispatchers.IO) {
                 loadProfileArtworkBitmap(context, profile, cloudIcon)
             }
@@ -161,44 +163,46 @@ internal fun ResolvedProfileArtwork(
     cornerRadius: Dp = 12.dp,
 ) {
     val shape = RoundedCornerShape(cornerRadius)
-    Crossfade(
-        targetState = bitmap,
-        modifier = modifier.size(size),
-        animationSpec = tween(durationMillis = ProfileArtworkCrossfadeMillis),
-        label = "Profile artwork",
-    ) { resolvedBitmap ->
-        if (resolvedBitmap != null) {
-            Surface(
-                modifier = Modifier.fillMaxSize(),
-                shape = shape,
-                color = MiuixTheme.colorScheme.secondaryContainer,
-            ) {
-                Image(
-                    bitmap = resolvedBitmap.asImageBitmap(),
-                    contentDescription = stringResource(
-                        R.string.profile_artwork_description,
-                        profile.providerName.ifBlank { stringResource(R.string.profile_default_name) },
-                    ),
-                    contentScale = ContentScale.Crop,
-                    filterQuality = FilterQuality.High,
-                    modifier = Modifier.fillMaxSize().clip(shape),
-                )
-            }
-        } else {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = MiuixIcons.BankCards,
-                    contentDescription = null,
-                    modifier = Modifier.size(size * 0.52f),
-                    tint = if (isEnabled) {
-                        MiuixTheme.colorScheme.primary
-                    } else {
-                        MiuixTheme.colorScheme.onSurfaceVariantActions
-                    },
-                )
+    key(profile.iccid) {
+        Crossfade(
+            targetState = bitmap,
+            modifier = modifier.size(size),
+            animationSpec = tween(durationMillis = ProfileArtworkCrossfadeMillis),
+            label = "Profile artwork",
+        ) { resolvedBitmap ->
+            if (resolvedBitmap != null) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    shape = shape,
+                    color = MiuixTheme.colorScheme.secondaryContainer,
+                ) {
+                    Image(
+                        bitmap = resolvedBitmap.asImageBitmap(),
+                        contentDescription = stringResource(
+                            R.string.profile_artwork_description,
+                            profile.providerName.ifBlank { stringResource(R.string.profile_default_name) },
+                        ),
+                        contentScale = ContentScale.Crop,
+                        filterQuality = FilterQuality.High,
+                        modifier = Modifier.fillMaxSize().clip(shape),
+                    )
+                }
+            } else {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = MiuixIcons.BankCards,
+                        contentDescription = null,
+                        modifier = Modifier.size(size * 0.52f),
+                        tint = if (isEnabled) {
+                            MiuixTheme.colorScheme.primary
+                        } else {
+                            MiuixTheme.colorScheme.onSurfaceVariantActions
+                        },
+                    )
+                }
             }
         }
     }
@@ -231,6 +235,20 @@ private object ProfileArtworkBatchCache {
     @Synchronized
     fun get(key: ProfileArtworkBatchKey): ProfileArtworkLoadState? =
         cached[key]
+
+    @Synchronized
+    fun getBitmap(profile: ProfileInfo, cloudIcon: ByteArray?): Bitmap? {
+        val input = ProfileArtworkInput(
+            iccid = profile.iccid,
+            customIconUri = profile.customIconUri,
+            embeddedIcon = profile.iconBase64,
+            cloudIconHash = cloudIcon?.contentHashCode(),
+        )
+        val matchingBatch = cached.keys.toList().asReversed().firstOrNull { batchKey ->
+            input in batchKey.inputs
+        } ?: return null
+        return cached[matchingBatch]?.bitmaps?.get(profile.iccid)
+    }
 
     @Synchronized
     fun put(key: ProfileArtworkBatchKey, state: ProfileArtworkLoadState) {

@@ -1597,7 +1597,6 @@ fun AidManagerScreen(
     }
 
     DetailLazyScaffold(title = stringResource(R.string.aid_manager_title), onBack = onBack) { _ ->
-        item { SectionHeading(stringResource(R.string.aid_manager_selection_order)) }
         item {
             TipCard(text = stringResource(R.string.aid_manager_summary))
         }

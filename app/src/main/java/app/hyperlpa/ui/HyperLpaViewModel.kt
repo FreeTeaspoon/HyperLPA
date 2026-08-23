@@ -216,6 +216,9 @@ class HyperLpaViewModel(
     val batchDownloadState = provisioningCoordinator.batchState
     val singleDownloadActive = provisioningCoordinator.singleDownloadActive
     private var simStateRefreshJob: Job? = null
+    private var profileDownloadHistoryCompactionJob: Job? = null
+    private var pendingProfileDownloadFinishJob: Job? = null
+    private var profileDownloadFinishInProgress = false
     private var pendingBackupPassword: CharArray? = null
     private var notificationPermissionContinuation: ((Boolean) -> Unit)? = null
     private var runtimePermissionRequestInProgress = false
@@ -472,12 +475,18 @@ class HyperLpaViewModel(
                     lpa.completedProfileDownload != null &&
                         lpa.operation is LpaOperation.Idle &&
                         top !is AppRoute.ProfileDownloadResult -> {
-                        backStack.removeAll { route ->
-                            route == AppRoute.DownloadProfile ||
-                                route == AppRoute.ConfirmProfileDownload ||
-                                route is AppRoute.ProfileDownloadResult
+                        val resultRoute = AppRoute.ProfileDownloadResult(lpa.completedProfileDownload)
+                        if (top == AppRoute.ConfirmProfileDownload) {
+                            backStack.add(resultRoute)
+                            scheduleProfileDownloadHistoryCompaction(resultRoute)
+                        } else {
+                            backStack.removeAll { route ->
+                                route == AppRoute.DownloadProfile ||
+                                    route == AppRoute.ConfirmProfileDownload ||
+                                    route is AppRoute.ProfileDownloadResult
+                            }
+                            backStack.add(resultRoute)
                         }
-                        backStack.add(AppRoute.ProfileDownloadResult(lpa.completedProfileDownload))
                         showCancelDownloadConfirmation.value = false
                     }
                     lpa.pendingProfileDownload == null &&
@@ -526,6 +535,7 @@ class HyperLpaViewModel(
     }
 
     fun navigateBack() {
+        if (profileDownloadFinishInProgress) return
         when (backStack.lastOrNull()) {
             AppRoute.ConfirmProfileDownload -> {
                 val operation = repository.state.value.operation as? LpaOperation.Downloading
@@ -583,6 +593,11 @@ class HyperLpaViewModel(
         }
         launch { repository.setProfileEnabled(iccid, enabled) }
     }
+    fun enableProfileFromDownloadResult(iccid: String) {
+        if (iccid.isBlank()) return
+        setProfileEnabled(iccid, enabled = true)
+        finishProfileDownload()
+    }
     fun cancelLastEnabledProfileDisable() {
         pendingProfileDisableConfirmation.value = null
     }
@@ -623,13 +638,64 @@ class HyperLpaViewModel(
         provisioningCoordinator.cancelSingleDownload()
     }
     fun finishProfileDownload() {
+        if (profileDownloadFinishInProgress) return
+        profileDownloadFinishInProgress = true
+        val pendingCompaction = profileDownloadHistoryCompactionJob
+        profileDownloadHistoryCompactionJob = null
+        pendingProfileDownloadFinishJob = viewModelScope.launch {
+            if (pendingCompaction?.isActive == true) {
+                pendingCompaction.join()
+            }
+            val compactedBeforePop = compactProfileDownloadHistory()
+            if (compactedBeforePop) {
+                delay(ProfileDownloadNavigationTransitionDurationMillis)
+            }
+            clearProfileDownloadState()
+            if (backStack.lastOrNull() is AppRoute.ProfileDownloadResult) {
+                backStack.removeAt(backStack.lastIndex)
+                delay(ProfileDownloadNavigationTransitionDurationMillis)
+            }
+            finishProfileDownloadNow()
+        }
+    }
+    private fun clearProfileDownloadState() {
         showCancelDownloadConfirmation.value = false
         activationCodeDraft.value = ""
         selectedTab.value = AppTab.PROFILES
-        backStack.clear()
-        backStack.add(AppRoute.Shell)
         repository.clearProfileDownloadResult()
         downloadPreviewCloudData.value = DownloadPreviewCloudData()
+    }
+    private fun finishProfileDownloadNow() {
+        clearProfileDownloadState()
+        pendingProfileDownloadFinishJob = null
+        backStack.clear()
+        backStack.add(AppRoute.Shell)
+        profileDownloadFinishInProgress = false
+    }
+    private fun scheduleProfileDownloadHistoryCompaction(
+        resultRoute: AppRoute.ProfileDownloadResult,
+    ) {
+        profileDownloadHistoryCompactionJob?.cancel()
+        profileDownloadHistoryCompactionJob = viewModelScope.launch {
+            delay(ProfileDownloadNavigationTransitionDurationMillis)
+            if (backStack.lastOrNull() == resultRoute) {
+                compactProfileDownloadHistory()
+            }
+        }
+    }
+    private fun compactProfileDownloadHistory(): Boolean {
+        val resultIndex = backStack.lastIndex
+        if (backStack.getOrNull(resultIndex) !is AppRoute.ProfileDownloadResult) return false
+        val downloadIndex = resultIndex - 2
+        if (downloadIndex < 1 ||
+            backStack.getOrNull(downloadIndex) != AppRoute.DownloadProfile ||
+            backStack.getOrNull(downloadIndex + 1) != AppRoute.ConfirmProfileDownload
+        ) {
+            return false
+        }
+        backStack[downloadIndex] = AppRoute.ProfileDownloadHistorySlot(slot = 0)
+        backStack[downloadIndex + 1] = AppRoute.ProfileDownloadHistorySlot(slot = 1)
+        return true
     }
     fun processNotification(sequenceNumber: Long) = launch { repository.processNotification(sequenceNumber) }
     fun deleteNotification(sequenceNumber: Long) = launch { repository.deleteNotification(sequenceNumber) }
@@ -1285,11 +1351,13 @@ private const val MinBackupPasswordCharacters = 10
 private const val MaxBackupPasswordCharacters = 128
 private const val MaxActivationInputCharacters = 4_096
 private const val CloudEnrichmentConcurrency = 4
+private const val ProfileDownloadNavigationTransitionDurationMillis = 500L
 
 private fun NavKey?.toPersistedRoute(): String? = when (val route = this as? AppRoute) {
     null,
     AppRoute.Shell,
     is AppRoute.ProfileDownloadResult,
+    is AppRoute.ProfileDownloadHistorySlot,
     AppRoute.ConfirmProfileDownload,
     -> null
     is AppRoute.ProfileDetails -> "profile:${route.iccid}"

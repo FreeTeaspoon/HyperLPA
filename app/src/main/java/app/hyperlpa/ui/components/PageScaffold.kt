@@ -50,6 +50,7 @@ fun DetailLazyScaffold(
     title: String,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    showBackButton: Boolean = true,
     actions: @Composable RowScope.() -> Unit = {},
     background: (@Composable BoxScope.() -> Unit)? = null,
     collapsedTitle: String? = null,
@@ -140,8 +141,13 @@ fun DetailLazyScaffold(
             containerColor = if (hasBackground) Color.Transparent else MiuixTheme.colorScheme.surface,
             topBar = {
                 val navigationIcon: @Composable () -> Unit = {
-                    IconButton(onClick = onBack) {
-                        Icon(MiuixIcons.Back, contentDescription = stringResource(app.hyperlpa.R.string.common_back))
+                    if (showBackButton) {
+                        IconButton(onClick = onBack) {
+                            Icon(
+                                MiuixIcons.Back,
+                                contentDescription = stringResource(app.hyperlpa.R.string.common_back),
+                            )
+                        }
                     }
                 }
                 if (hasBackground) {

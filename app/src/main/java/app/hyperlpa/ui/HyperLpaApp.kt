@@ -60,7 +60,6 @@ import app.hyperlpa.data.settings.NavigationLabels
 import app.hyperlpa.data.settings.NavigationStyle
 import app.hyperlpa.data.metadata.providerIconKey
 import app.hyperlpa.domain.model.LpaOperation
-import app.hyperlpa.domain.model.DownloadStage
 import app.hyperlpa.domain.model.ProfileState
 import app.hyperlpa.ui.adaptive.AdaptiveTopAppBar
 import app.hyperlpa.ui.adaptive.rememberIsWideWindow
@@ -102,13 +101,11 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
-import kotlin.math.roundToInt
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.FloatingNavigationBar
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
-import top.yukonga.miuix.kmp.basic.LinearProgressIndicator
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.NavigationBar
 import top.yukonga.miuix.kmp.basic.NavigationBarDisplayMode
@@ -278,7 +275,10 @@ fun HyperLpaApp(
                     },
                 )
             }
-            entry<AppRoute.DownloadProfile>(swipeDismiss = swipeBackDirection) {
+            entry<AppRoute.DownloadProfile>(
+                transition = NavTransitions.MiuixDefault,
+                swipeDismiss = swipeBackDirection,
+            ) {
                 val singleDownloadActive by viewModel.singleDownloadActive.collectAsStateWithLifecycle()
                 DownloadProfileScreen(
                     initialValue = currentState.value.activationCodeDraft,
@@ -290,7 +290,10 @@ fun HyperLpaApp(
                     onContinue = viewModel::downloadProfile,
                 )
             }
-            entry<AppRoute.ConfirmProfileDownload>(swipeDismiss = swipeBackDirection) {
+            entry<AppRoute.ConfirmProfileDownload>(
+                transition = NavTransitions.MiuixDefault,
+                swipeDismiss = NavSwipeDirection.None,
+            ) {
                 val livePreview = currentState.value.lpa.pendingProfileDownload
                 var retainedPreview by remember { mutableStateOf(livePreview) }
                 var retainedIcon by remember { mutableStateOf(currentState.value.downloadPreviewIcon) }
@@ -332,6 +335,7 @@ fun HyperLpaApp(
                         } else {
                             retainedEnrichmentLoading
                         },
+                        downloadOperation = currentState.value.lpa.operation as? LpaOperation.Downloading,
                         showCancelConfirmation = currentState.value.showCancelDownloadConfirmation,
                         onBack = viewModel::navigateBack,
                         onDownload = viewModel::confirmProfileDownload,
@@ -340,7 +344,10 @@ fun HyperLpaApp(
                     )
                 }
             }
-            entry<AppRoute.ProfileDownloadResult>(swipeDismiss = swipeBackDirection) { route ->
+            entry<AppRoute.ProfileDownloadResult>(
+                transition = NavTransitions.MiuixDefault,
+                swipeDismiss = NavSwipeDirection.None,
+            ) { route ->
                 val result = route.result
                 val profile = currentState.value.profiles
                     .firstOrNull { it.iccid == result.profile.iccid }
@@ -352,9 +359,22 @@ fun HyperLpaApp(
                         ?: currentState.value.operatorIcons[result.profile.iccid],
                     busy = currentState.value.lpa.operation !is LpaOperation.Idle,
                     onBack = viewModel::navigateBack,
-                    onEnable = { viewModel.setProfileEnabled(profile.iccid, true) },
+                    onEnable = { viewModel.enableProfileFromDownloadResult(profile.iccid) },
                     onRename = { nickname -> viewModel.renameProfile(profile.iccid, nickname) },
                     onDone = viewModel::finishProfileDownload,
+                )
+            }
+            entry<AppRoute.ProfileDownloadHistorySlot>(
+                transition = NavTransitions.None,
+                swipeDismiss = NavSwipeDirection.None,
+            ) {
+                MainShell(
+                    state = currentState.value,
+                    viewModel = viewModel,
+                    bluetoothReaderState = currentBluetoothReaderState.value,
+                    onRefreshReaders = { currentOnRefreshReaders.value() },
+                    snackbarHostState = snackbarHostState,
+                    rootTabBack = rootTabBack,
                 )
             }
             entry<AppRoute.BatchDownload>(swipeDismiss = swipeBackDirection) {
@@ -516,7 +536,6 @@ fun HyperLpaApp(
         }
 
             OperationProgressDialog(operation = state.lpa.operation)
-            ProfileInstallProgressDialog(operation = state.lpa.operation)
             OperationFailureDialog(
                 failure = state.lpa.failure,
                 onDismiss = viewModel::clearFailure,
@@ -1032,71 +1051,6 @@ private fun OperationProgressDialog(operation: LpaOperation) {
             contentAlignment = Alignment.Center,
         ) {
             InfiniteProgressIndicator()
-        }
-    }
-}
-
-@Composable
-private fun ProfileInstallProgressDialog(operation: LpaOperation) {
-    val download = operation as? LpaOperation.Downloading
-    val show = download?.stage == DownloadStage.DOWNLOADING ||
-        download?.stage == DownloadStage.FINALIZING ||
-        download?.stage == DownloadStage.INSTALLING
-    val sentBytes = download?.sentBytes
-    val totalBytes = download?.totalBytes
-    val progress = if (sentBytes != null && totalBytes != null && totalBytes > 0) {
-        (sentBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
-    } else {
-        null
-    }
-
-    NonDismissibleProgressDialog(
-        show = show,
-        title = stringResource(app.hyperlpa.R.string.install_progress_title),
-        summary = stringResource(app.hyperlpa.R.string.install_progress_summary),
-    ) {
-        if (progress != null && sentBytes != null && totalBytes != null) {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                LinearProgressIndicator(
-                    progress = progress,
-                    modifier = Modifier.fillMaxWidth(),
-                    height = 6.dp,
-                )
-                Spacer(Modifier.size(14.dp))
-                Text(
-                    text = stringResource(
-                        app.hyperlpa.R.string.install_progress_percent,
-                        (progress * 100).roundToInt(),
-                    ),
-                    style = MiuixTheme.textStyles.title2,
-                )
-                Spacer(Modifier.size(6.dp))
-                Text(
-                    text = stringResource(
-                        app.hyperlpa.R.string.install_progress_bytes,
-                        sentBytes,
-                        totalBytes,
-                    ),
-                    style = MiuixTheme.textStyles.body2,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                )
-            }
-        } else {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
-            ) {
-                InfiniteProgressIndicator()
-                Spacer(Modifier.size(12.dp))
-                Text(
-                    text = stringResource(app.hyperlpa.R.string.install_progress_preparing),
-                    style = MiuixTheme.textStyles.body1,
-                )
-            }
         }
     }
 }
