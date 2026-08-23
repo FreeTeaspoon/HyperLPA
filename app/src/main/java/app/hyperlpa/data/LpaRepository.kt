@@ -672,16 +672,21 @@ class LpaRepository(
     }
 
     /**
-     * SGP.22 only permits deleting a disabled profile. Keep the profile-switch refresh flag off
-     * so the same ISD-R session can issue the delete immediately after the disable command.
+     * SGP.22 only permits deleting a disabled profile. Honor the reader's profile-switch refresh
+     * requirement, then verify the disabled state on the original reader and eUICC before delete.
      */
     private suspend fun disableProfileForDeletion(
         iccid: String,
         deletionAffinity: ReaderAffinity,
     ) {
+        val refreshRequired = requireSession().requiresProfileSwitchRefresh
         var disableFailure: Throwable? = null
         var disabled = try {
-            requireSession().assistant.switchProfile(iccid, enabled = false, refresh = false)
+            requireSession().assistant.switchProfile(
+                iccid,
+                enabled = false,
+                refresh = refreshRequired,
+            )
         } catch (error: Throwable) {
             if (error is CancellationException) {
                 mutationOutcomeRequiresRefresh.set(true)
@@ -690,11 +695,20 @@ class LpaRepository(
             disableFailure = error
             false
         }
-        if (!disabled) {
+        if (
+            shouldReconcileProfileDisableBeforeDeletion(
+                requiresProfileSwitchRefresh = refreshRequired,
+                disableSucceeded = disabled,
+            )
+        ) {
             log(
                 LogLevel.WARNING,
                 "Profile",
-                "The pre-delete disable response was inconclusive; reconnecting to verify card state",
+                if (refreshRequired) {
+                    "The pre-delete disable requested a card refresh; reconnecting to verify card state"
+                } else {
+                    "The pre-delete disable response was inconclusive; reconnecting to verify card state"
+                },
             )
             disabled = verifyProfileSwitchState(
                 iccid = iccid,
@@ -2534,6 +2548,11 @@ internal sealed interface ProfileDeletionReconciliation {
 
 internal fun requiresDisableBeforeDeletion(profileState: ProfileState): Boolean =
     profileState == ProfileState.ENABLED
+
+internal fun shouldReconcileProfileDisableBeforeDeletion(
+    requiresProfileSwitchRefresh: Boolean,
+    disableSucceeded: Boolean,
+): Boolean = requiresProfileSwitchRefresh || !disableSucceeded
 
 internal fun classifyProfileDeletionReconciliation(
     expectedAffinity: ReaderAffinity,

@@ -7,6 +7,7 @@ import app.hyperlpa.domain.model.ProfileInfo
 import app.hyperlpa.domain.model.ProfileState
 import app.hyperlpa.domain.model.ReaderInfo
 import app.hyperlpa.domain.model.ReaderKind
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -74,6 +75,22 @@ class ProfileDetailsStateTest {
                     initialized = true,
                 ),
             ),
+        )
+    }
+
+    @Test
+    fun deleteConfirmationExplainsDisableOnlyForAnEnabledProfile() {
+        assertEquals(
+            app.hyperlpa.R.string.profile_delete_final_enabled_summary,
+            profileDeleteFinalSummaryRes(ProfileState.ENABLED),
+        )
+        assertEquals(
+            app.hyperlpa.R.string.profile_delete_final_disabled_summary,
+            profileDeleteFinalSummaryRes(ProfileState.DISABLED),
+        )
+        assertEquals(
+            app.hyperlpa.R.string.profile_delete_final_disabled_summary,
+            profileDeleteFinalSummaryRes(null),
         )
     }
 }

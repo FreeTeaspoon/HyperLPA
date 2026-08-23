@@ -581,7 +581,7 @@ fun ProfileDetailsScreen(
     OverlayDialog(
         show = showDeleteConfirmation && !settings.hideProfileDeletion,
         title = stringResource(R.string.profile_delete_final_title),
-        summary = stringResource(R.string.profile_delete_final_summary),
+        summary = stringResource(profileDeleteFinalSummaryRes(profile?.state)),
         onDismissRequest = { showDeleteConfirmation = false },
     ) {
         DialogActionRow(
@@ -2558,6 +2558,13 @@ internal fun isProfileDetailsLoading(
     lpa.operation is LpaOperation.Refreshing -> true
     else -> false
 }
+
+internal fun profileDeleteFinalSummaryRes(profileState: ProfileState?): Int =
+    if (profileState == ProfileState.ENABLED) {
+        R.string.profile_delete_final_enabled_summary
+    } else {
+        R.string.profile_delete_final_disabled_summary
+    }
 
 @Composable
 private fun ProfileHero(
