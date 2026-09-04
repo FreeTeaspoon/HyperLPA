@@ -95,12 +95,22 @@ data class HyperLpaUiState(
     val pendingProfileDisableConfirmation: String? = null,
     val profileEnrichmentReady: Boolean = false,
     val notificationHistory: List<NotificationHistoryEntry> = emptyList(),
+    val requestedProfileSwitchIccid: String? = null,
+    val requestedProfileSwitchEnabled: Boolean = false,
 ) {
     val currentEuiccName: String?
         get() = normalizeEuiccEid(lpa.euiccInfo?.eid)?.let { eid -> euiccNames[eid] }
 
     val profiles: List<ProfileInfo> by lazy {
-        profilesWithOptimisticSwitch(lpa.profiles, lpa.operation)
+        val operationPreview = profilesWithOptimisticSwitch(lpa.profiles, lpa.operation)
+        val switchPreview = requestedProfileSwitchIccid?.let { iccid ->
+            profilesWithOptimisticSwitch(
+                profiles = operationPreview,
+                targetIccid = iccid,
+                enabled = requestedProfileSwitchEnabled,
+            )
+        } ?: operationPreview
+        switchPreview
             .map { profile ->
                 val extra = metadata[profile.iccid]
                 val measuredBytes = extra
@@ -158,19 +168,31 @@ internal fun profilesWithOptimisticSwitch(
     operation: LpaOperation,
 ): List<ProfileInfo> {
     val switching = operation as? LpaOperation.Switching ?: return profiles
+    return profilesWithOptimisticSwitch(
+        profiles = profiles,
+        targetIccid = switching.iccid,
+        enabled = switching.enable,
+    )
+}
+
+internal fun profilesWithOptimisticSwitch(
+    profiles: List<ProfileInfo>,
+    targetIccid: String,
+    enabled: Boolean,
+): List<ProfileInfo> {
     val previousEnabledIccid = profiles
         .singleOrNull { profile ->
-            profile.iccid != switching.iccid && profile.state == ProfileState.ENABLED
+            profile.iccid != targetIccid && profile.state == ProfileState.ENABLED
         }
         ?.iccid
     return profiles.map { profile ->
         val displayedState = when {
-            profile.iccid == switching.iccid -> if (switching.enable) {
+            profile.iccid == targetIccid -> if (enabled) {
                 ProfileState.ENABLED
             } else {
                 ProfileState.DISABLED
             }
-            switching.enable && profile.iccid == previousEnabledIccid -> ProfileState.DISABLED
+            enabled && profile.iccid == previousEnabledIccid -> ProfileState.DISABLED
             else -> profile.state
         }
         if (displayedState == profile.state) profile else profile.copy(state = displayedState)
@@ -207,6 +229,8 @@ class HyperLpaViewModel(
     private var suppressedDownloadPreviewSource: DownloadPreviewCloudSourceKey? = null
     private val showCancelDownloadConfirmation = MutableStateFlow(false)
     private val pendingProfileDisableConfirmation = MutableStateFlow<String?>(null)
+    private val requestedProfileSwitch = MutableStateFlow<ProfileSwitchRequest?>(null)
+    private var profileSwitchRequestSequence = 0L
     private val cloudEnrichmentSemaphore = Semaphore(CloudEnrichmentConcurrency)
     // Serializes settings/profile-metadata edits with backup snapshots and restores. Repository
     // operations have their own mutex; restore additionally acquires that barrier before commit.
@@ -239,6 +263,7 @@ class HyperLpaViewModel(
         notificationHistoryStore.history,
         pendingProfileDisableConfirmation,
         metadataStore.euiccNames,
+        requestedProfileSwitch,
     ) { values ->
         val settings = values[0] as AppSettings
         val lpa = values[1] as LpaRepositoryState
@@ -246,6 +271,7 @@ class HyperLpaViewModel(
         val refreshToken = values[7] as Int
         val cloudData = values[8] as CloudProfileData
         val previewCloudData = values[9] as DownloadPreviewCloudData
+        val requestedSwitch = values[14] as ProfileSwitchRequest?
         val expectedCloudInput = CloudInputs(
             loadOperatorIcons = settings.loadOperatorIcons,
             estimateProfileSize = settings.estimateProfileSize,
@@ -272,6 +298,8 @@ class HyperLpaViewModel(
             notificationHistory = values[11] as List<NotificationHistoryEntry>,
             pendingProfileDisableConfirmation = values[12] as String?,
             euiccNames = values[13] as Map<String, String>,
+            requestedProfileSwitchIccid = requestedSwitch?.iccid,
+            requestedProfileSwitchEnabled = requestedSwitch?.enabled ?: false,
             profileEnrichmentReady = lpa.profiles.isEmpty() ||
                 (!settings.loadOperatorIcons && !settings.estimateProfileSize) ||
                 cloudData.input?.enrichmentKey == expectedCloudInput.enrichmentKey,
@@ -582,8 +610,7 @@ class HyperLpaViewModel(
     fun disconnectReader() = launch { repository.disconnectSession() }
     fun refreshProfiles() = launch(repository::refresh)
     fun setProfileEnabled(iccid: String, enabled: Boolean) {
-        if (repository.state.value.operation is LpaOperation.Switching) return
-        val profiles = repository.state.value.profiles
+        val profiles = state.value.profiles
         if (requiresLastEnabledProfileConfirmation(profiles, iccid, enabled)) {
             pendingProfileDisableConfirmation.value = iccid
             return
@@ -591,7 +618,7 @@ class HyperLpaViewModel(
         if (enabled && pendingProfileDisableConfirmation.value == iccid) {
             pendingProfileDisableConfirmation.value = null
         }
-        launch { repository.setProfileEnabled(iccid, enabled) }
+        enqueueProfileSwitch(iccid, enabled)
     }
     fun enableProfileFromDownloadResult(iccid: String) {
         if (iccid.isBlank()) return
@@ -607,7 +634,7 @@ class HyperLpaViewModel(
         val stillEnabled = repository.state.value.profiles.any { profile ->
             profile.iccid == iccid && profile.state == ProfileState.ENABLED
         }
-        if (stillEnabled) launch { repository.setProfileEnabled(iccid, false) }
+        if (stillEnabled) enqueueProfileSwitch(iccid, enabled = false)
     }
     fun deleteProfile(iccid: String) = launch { repository.deleteProfile(iccid) }
     fun renameProfile(iccid: String, nickname: String) = launch { repository.renameProfile(iccid, nickname) }
@@ -1268,6 +1295,24 @@ class HyperLpaViewModel(
         }
     }
 
+    private fun enqueueProfileSwitch(iccid: String, enabled: Boolean) {
+        val request = ProfileSwitchRequest(
+            sequence = ++profileSwitchRequestSequence,
+            iccid = iccid,
+            enabled = enabled,
+        )
+        requestedProfileSwitch.value = request
+        launch {
+            // A newer tap can replace this request while it waits for the active eUICC command.
+            if (requestedProfileSwitch.value != request) return@launch
+            try {
+                repository.setProfileEnabled(request.iccid, request.enabled)
+            } finally {
+                requestedProfileSwitch.compareAndSet(request, null)
+            }
+        }
+    }
+
     private fun currentReminderSchedules(): Map<String, Pair<String, Instant?>> {
         val fallbackProfileName = getApplication<Application>().getString(R.string.profile_default_name)
         val profileLabels = state.value.lpa.profiles.associate { profile ->
@@ -1408,6 +1453,12 @@ private fun String?.toAppRoute(): AppRoute? = when {
         else -> null
     }
 }
+
+private data class ProfileSwitchRequest(
+    val sequence: Long,
+    val iccid: String,
+    val enabled: Boolean,
+)
 
 private data class CloudInputs(
     val loadOperatorIcons: Boolean,

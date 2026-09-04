@@ -97,6 +97,29 @@ class LastEnabledProfileSafetyTest {
         assertEquals(ProfileState.ENABLED, preview["new"])
     }
 
+    @Test
+    fun `queued profile switch preview replaces in-flight switch immediately`() {
+        val profiles = listOf(
+            profile("old", ProfileState.ENABLED),
+            profile("first", ProfileState.DISABLED),
+            profile("latest", ProfileState.DISABLED),
+        )
+
+        val inFlightPreview = profilesWithOptimisticSwitch(
+            profiles,
+            LpaOperation.Switching(iccid = "first", enable = true),
+        )
+        val queuedPreview = profilesWithOptimisticSwitch(
+            profiles = inFlightPreview,
+            targetIccid = "latest",
+            enabled = true,
+        ).associate { it.iccid to it.state }
+
+        assertEquals(ProfileState.DISABLED, queuedPreview["old"])
+        assertEquals(ProfileState.DISABLED, queuedPreview["first"])
+        assertEquals(ProfileState.ENABLED, queuedPreview["latest"])
+    }
+
     private fun profile(iccid: String, state: ProfileState) = ProfileInfo(
         iccid = iccid,
         state = state,
