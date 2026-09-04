@@ -148,8 +148,9 @@ fun ProfilesScreen(
     // must not invalidate the home list while the bottom-sheet entrance animation is running.
     val profileActionsState = remember { mutableStateOf<ProfileInfo?>(null) }
     val profiles = state.profiles
-    val profileSwitchLocked = state.lpa.operation is LpaOperation.Switching ||
-        state.lpa.operation is LpaOperation.Connecting
+    // The view model serializes switch requests, so another profile stays tappable while the
+    // active eUICC command finishes its refresh and reconnect tail.
+    val profileSwitchLocked = state.lpa.operation is LpaOperation.Connecting
     val artworkLoadState = rememberProfileArtworkBitmaps(
         profiles = profiles,
         cloudIcons = state.operatorIcons,
