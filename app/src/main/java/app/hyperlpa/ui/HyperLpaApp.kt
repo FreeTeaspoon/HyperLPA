@@ -242,7 +242,7 @@ fun HyperLpaApp(
                     ),
                     onBack = viewModel::navigateBack,
                     onEnableChange = { enabled -> viewModel.setProfileEnabled(route.iccid, enabled) },
-                    profileSwitchEnabled = currentState.value.lpa.operation !is LpaOperation.Switching,
+                    profileSwitchEnabled = currentState.value.lpa.operation !is LpaOperation.Connecting,
                     onSetPinned = { pinned -> viewModel.setProfilePinned(route.iccid, pinned) },
                     onRename = { nickname -> viewModel.renameProfile(route.iccid, nickname) },
                     onDelete = { viewModel.deleteProfile(route.iccid) },
