@@ -171,6 +171,10 @@ data class AppSettings(
     val notificationAutoSend: Boolean = true,
     val notificationAutoRemove: Boolean = true,
     val scheduledReminders: Boolean = true,
+    // This is device-local setup state. It is intentionally excluded from portable backups so a
+    // restored backup still gets a chance to verify reader compatibility on its destination.
+    @Transient
+    val compatibilityWizardCompleted: Boolean = false,
     val eidRedaction: RedactionMode = RedactionMode.NONE,
     val iccidRedaction: RedactionMode = RedactionMode.NONE,
     // Remote enrichment is opt-in because even public asset requests disclose the
@@ -270,6 +274,8 @@ class AppSettingsStore(context: Context) {
     suspend fun setNotificationAutoSend(value: Boolean) = set(Keys.NotificationAutoSend, value)
     suspend fun setNotificationAutoRemove(value: Boolean) = set(Keys.NotificationAutoRemove, value)
     suspend fun setScheduledReminders(value: Boolean) = set(Keys.ScheduledReminders, value)
+    suspend fun setCompatibilityWizardCompleted(value: Boolean) =
+        set(Keys.CompatibilityWizardCompleted, value)
     suspend fun setEidRedaction(value: RedactionMode) = set(Keys.EidRedaction, value.name)
     suspend fun setIccidRedaction(value: RedactionMode) = set(Keys.IccidRedaction, value.name)
     suspend fun setLoadOperatorIcons(value: Boolean) = set(Keys.LoadOperatorIcons, value)
@@ -422,6 +428,7 @@ class AppSettingsStore(context: Context) {
         this[Keys.NotificationAutoSend] = settings.notificationAutoSend
         this[Keys.NotificationAutoRemove] = settings.notificationAutoRemove
         this[Keys.ScheduledReminders] = settings.scheduledReminders
+        this[Keys.CompatibilityWizardCompleted] = settings.compatibilityWizardCompleted
         this[Keys.EidRedaction] = settings.eidRedaction.name
         this[Keys.IccidRedaction] = settings.iccidRedaction.name
         this[Keys.LoadOperatorIcons] = settings.loadOperatorIcons
@@ -542,6 +549,7 @@ class AppSettingsStore(context: Context) {
         notificationAutoSend = preferences[Keys.NotificationAutoSend] ?: true,
         notificationAutoRemove = preferences[Keys.NotificationAutoRemove] ?: true,
         scheduledReminders = preferences[Keys.ScheduledReminders] ?: true,
+        compatibilityWizardCompleted = preferences[Keys.CompatibilityWizardCompleted] ?: false,
         eidRedaction = preferences.enum(Keys.EidRedaction, RedactionMode.NONE),
         iccidRedaction = preferences.enum(Keys.IccidRedaction, RedactionMode.NONE),
         loadOperatorIcons = preferences[Keys.LoadOperatorIcons] ?: false,
@@ -647,6 +655,7 @@ class AppSettingsStore(context: Context) {
         val NotificationAutoSend = booleanPreferencesKey("notification_auto_send")
         val NotificationAutoRemove = booleanPreferencesKey("notification_auto_remove")
         val ScheduledReminders = booleanPreferencesKey("scheduled_reminders")
+        val CompatibilityWizardCompleted = booleanPreferencesKey("compatibility_wizard_completed")
         val EidRedaction = stringPreferencesKey("eid_redaction")
         val IccidRedaction = stringPreferencesKey("iccid_redaction")
         val LoadOperatorIcons = booleanPreferencesKey("load_operator_icons")

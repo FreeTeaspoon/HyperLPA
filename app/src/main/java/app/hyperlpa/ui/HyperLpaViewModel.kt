@@ -571,6 +571,7 @@ class HyperLpaViewModel(
                     showCancelDownloadConfirmation.value = true
                 }
             }
+            AppRoute.CompatibilityWizard -> dismissCompatibilityWizard()
             is AppRoute.ProfileDownloadResult -> finishProfileDownload()
             else -> if (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
         }
@@ -1245,6 +1246,15 @@ class HyperLpaViewModel(
             }
         }
     }
+    fun dismissCompatibilityWizard() = launch {
+        settingsStore.setCompatibilityWizardCompleted(true)
+        if (navigationBackStack.lastOrNull() == AppRoute.CompatibilityWizard) {
+            navigationBackStack.removeAt(navigationBackStack.lastIndex)
+        }
+    }
+    fun openReaderSettingsFromCompatibilityWizard() {
+        navigate(AppRoute.ReaderSettings)
+    }
     fun setEidRedaction(value: RedactionMode) = launch { settingsStore.setEidRedaction(value) }
     fun setIccidRedaction(value: RedactionMode) = launch { settingsStore.setIccidRedaction(value) }
     fun setLoadOperatorIcons(value: Boolean) = launch { settingsStore.setLoadOperatorIcons(value) }
@@ -1398,9 +1408,20 @@ private const val MaxActivationInputCharacters = 4_096
 private const val CloudEnrichmentConcurrency = 4
 private const val ProfileDownloadNavigationTransitionDurationMillis = 500L
 
+internal fun shouldOpenCompatibilityWizard(
+    settingsLoaded: Boolean,
+    wizardCompleted: Boolean,
+    activationCodeDraft: String,
+    currentRoute: AppRoute?,
+): Boolean = settingsLoaded &&
+    !wizardCompleted &&
+    activationCodeDraft.isBlank() &&
+    currentRoute == AppRoute.Shell
+
 private fun NavKey?.toPersistedRoute(): String? = when (val route = this as? AppRoute) {
     null,
     AppRoute.Shell,
+    AppRoute.CompatibilityWizard,
     is AppRoute.ProfileDownloadResult,
     is AppRoute.ProfileDownloadHistorySlot,
     AppRoute.ConfirmProfileDownload,

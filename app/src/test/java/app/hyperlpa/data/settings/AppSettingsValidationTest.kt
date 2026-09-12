@@ -10,6 +10,7 @@ class AppSettingsValidationTest {
     fun appearanceDefaultsMatchReference() {
         val settings = AppSettings()
 
+        assertEquals(false, settings.compatibilityWizardCompleted)
         assertEquals(false, settings.predictiveBack)
         assertEquals(DEFAULT_INTERFACE_SCALE, settings.densityScale)
         assertEquals(NavigationStyle.STANDARD, settings.navigationStyle)
