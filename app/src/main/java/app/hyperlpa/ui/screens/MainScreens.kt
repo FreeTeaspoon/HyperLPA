@@ -1930,6 +1930,11 @@ fun SettingsScreen(
                     onClick = { onNavigate(AppRoute.ReaderSettings) },
                 )
                 ArrowPreference(
+                    title = stringResource(R.string.settings_compatibility_setup),
+                    summary = stringResource(R.string.settings_compatibility_setup_summary),
+                    onClick = { onNavigate(AppRoute.CompatibilityWizard) },
+                )
+                ArrowPreference(
                     title = stringResource(R.string.settings_notification_processing),
                     summary = stringResource(R.string.settings_notification_processing_summary),
                     onClick = { onNavigate(AppRoute.NotificationSettings) },

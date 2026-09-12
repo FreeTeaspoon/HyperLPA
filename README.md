@@ -82,7 +82,7 @@ available.
 | Android OMAPI | Secure elements exposed by the device | The device must advertise a usable OMAPI reader. Removable cards also enforce their ARA-M certificate allowlist. |
 | NBridge / OTBridge | A compatible installed bridge provider | The provider authority and signing certificate must match HyperLPA's verified trust policy. |
 | USB CCID | External smart-card and eUICC readers | A compatible USB CCID reader and USB host/OTG support. |
-| Bluetooth LE | External APDU readers | Pair the reader in Android settings first, grant Nearby devices permission, and grant Location on Android versions that require it for discovery. Supported protocol families include ESTKme RED/RED 2, SimLink, and BeeSIM. |
+| Bluetooth LE | External APDU readers | Pair the reader in Android settings first, grant Nearby devices permission, and grant Location on Android versions that require it for discovery. Each reader search waits a few seconds for a Bluetooth scan. Supported protocol families include ESTKme RED/RED 2, SimLink, and BeeSIM. |
 | Remote / RemoCard v2 | A network-attached reader | Configure an HTTPS endpoint. Bearer credentials are optional for servers that do not require them and are stored in Android Keystore-protected storage. Use only a reader you trust. |
 | Privileged telephony | The phone's built-in telephony eUICC interface | Only the explicitly privileged builds include this backend. System, carrier, or equivalent platform access is still required. |
 

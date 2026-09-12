@@ -76,6 +76,7 @@ import app.hyperlpa.ui.screens.AidManagerScreen
 import app.hyperlpa.ui.screens.AppearanceSettingsScreen
 import app.hyperlpa.ui.screens.BatchDownloadScreen
 import app.hyperlpa.ui.screens.BackupRestoreSettingsScreen
+import app.hyperlpa.ui.screens.CompatibilityWizardScreen
 import app.hyperlpa.ui.screens.DownloadProfileScreen
 import app.hyperlpa.ui.screens.ProfileDownloadConfirmationScreen
 import app.hyperlpa.ui.screens.ProfileDownloadResultScreen
@@ -173,6 +174,23 @@ fun HyperLpaApp(
     val swipeBackDirection = when (LocalLayoutDirection.current) {
         LayoutDirection.Rtl -> NavSwipeDirection.RightToLeft
         else -> NavSwipeDirection.LeftToRight
+    }
+
+    LaunchedEffect(
+        state.settingsLoaded,
+        state.settings.compatibilityWizardCompleted,
+        state.activationCodeDraft,
+        backStack.lastOrNull(),
+    ) {
+        if (shouldOpenCompatibilityWizard(
+                settingsLoaded = state.settingsLoaded,
+                wizardCompleted = state.settings.compatibilityWizardCompleted,
+                activationCodeDraft = state.activationCodeDraft,
+                currentRoute = backStack.lastOrNull() as? AppRoute,
+            )
+        ) {
+            viewModel.navigate(AppRoute.CompatibilityWizard)
+        }
     }
 
     val snackbarScope = rememberCoroutineScope()
@@ -424,6 +442,20 @@ fun HyperLpaApp(
                         currentOnRequestBluetoothPermission.value()
                     },
                     onOpenBluetoothSettings = { currentOnOpenBluetoothSettings.value() },
+                )
+            }
+            entry<AppRoute.CompatibilityWizard>(swipeDismiss = NavSwipeDirection.None) {
+                CompatibilityWizardScreen(
+                    state = currentState.value,
+                    bluetoothReaderState = currentBluetoothReaderState.value,
+                    onBack = viewModel::dismissCompatibilityWizard,
+                    onDiscoverReaders = { currentOnRefreshReaders.value() },
+                    onRequestBluetoothPermission = {
+                        currentOnRequestBluetoothPermission.value()
+                    },
+                    onOpenBluetoothSettings = { currentOnOpenBluetoothSettings.value() },
+                    onOpenReaderSettings = viewModel::openReaderSettingsFromCompatibilityWizard,
+                    onContinue = viewModel::dismissCompatibilityWizard,
                 )
             }
             entry<AppRoute.NotificationSettings>(swipeDismiss = swipeBackDirection) {
