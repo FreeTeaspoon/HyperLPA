@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HyperLPA project assessment</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,650&family=IBM+Plex+Mono:wght@400;500&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --ink: #e7e2d4;
+      --muted: #9a9586;
+      --faint: #6d6a5f;
+      --paper: #141510;
+      --raised: #1c1d16;
+      --line: #2c2d24;
+      --lime: #c6f04a;
+      --amber: #e8b84a;
+      --coral: #ff6a4a;
+      --sky: #7eb8c9;
+      --gold: #c9a227;
+      --measure: 72rem;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(1200px 600px at 0% -10%, #24281a 0%, transparent 55%),
+        var(--paper);
+      color: var(--ink);
+      font-family: "Source Sans 3", sans-serif;
+      font-size: 1.05rem;
+      line-height: 1.55;
+    }
+
+    a { color: var(--lime); text-decoration-thickness: 1px; text-underline-offset: 0.18em; }
+    a:hover { color: #e8ff8a; }
+    code, .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.86em; }
+    h1, h2, h3 { font-family: Fraunces, Georgia, serif; font-weight: 650; letter-spacing: -0.02em; }
+    h1 { font-size: clamp(2.4rem, 5vw, 4.1rem); line-height: 1.05; margin: 0 0 0.6rem; }
+    h2 { font-size: 1.85rem; margin: 0 0 0.75rem; }
+    h3 { font-size: 1.2rem; margin: 1.6rem 0 0.4rem; font-variation-settings: "opsz" 20; }
+    p { margin: 0 0 0.95rem; max-width: 46rem; }
+    ul, ol { max-width: 46rem; padding-left: 1.2rem; }
+    li { margin: 0.35rem 0; }
+    strong { font-weight: 700; }
+
+    .wrap { width: min(100% - 2rem, var(--measure)); margin: 0 auto; }
+    header.hero {
+      padding: 3.2rem 0 2.2rem;
+      border-bottom: 1px solid var(--line);
+    }
+    .kicker {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.75rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--gold);
+      margin-bottom: 0.85rem;
+    }
+    .lede { font-size: 1.22rem; max-width: 42rem; color: #d8d3c4; }
+    .meta {
+      display: flex; flex-wrap: wrap; gap: 0.55rem 1.4rem;
+      margin-top: 1.4rem; color: var(--muted);
+      font-family: "IBM Plex Mono", monospace; font-size: 0.78rem;
+    }
+
+    nav.toc {
+      position: sticky; top: 0; z-index: 4;
+      backdrop-filter: blur(16px);
+      background: color-mix(in srgb, var(--paper) 82%, transparent);
+      border-bottom: 1px solid var(--line);
+    }
+    nav.toc .wrap {
+      display: flex; gap: 1.1rem; overflow-x: auto;
+      padding: 0.7rem 0; font-size: 0.86rem;
+      white-space: nowrap;
+    }
+    nav.toc a { color: var(--muted); text-decoration: none; }
+    nav.toc a:hover { color: var(--ink); }
+
+    section { padding: 2.6rem 0; border-bottom: 1px solid var(--line); }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+    @media (max-width: 820px) { .grid-2 { grid-template-columns: 1fr; } }
+
+    .card {
+      background: var(--raised);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 1.05rem 1.15rem;
+    }
+    .card p:last-child, .card ul:last-child { margin-bottom: 0; }
+
+    .sev {
+      display: inline-block;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.68rem;
+      letter-spacing: 0.08em;
+      padding: 0.12rem 0.42rem;
+      border-radius: 999px;
+      vertical-align: 0.12em;
+      margin-right: 0.35rem;
+    }
+    .p1 { background: #3a160f; color: var(--coral); }
+    .p2 { background: #34280c; color: var(--amber); }
+    .p3 { background: #1b2a30; color: var(--sky); }
+
+    .filebar { margin: 0.55rem 0 0.85rem; }
+    .filebar .row {
+      display: grid;
+      grid-template-columns: minmax(9rem, 18rem) 1fr auto;
+      gap: 0.7rem; align-items: center;
+      margin: 0.38rem 0;
+      font-size: 0.88rem;
+    }
+    .filebar .name { font-family: "IBM Plex Mono", monospace; font-size: 0.74rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .filebar .track { height: 0.42rem; background: #2a2b22; border-radius: 99px; overflow: hidden; }
+    .filebar .fill { height: 100%; background: linear-gradient(90deg, var(--gold), var(--lime)); border-radius: 99px; }
+    .filebar .n { font-family: "IBM Plex Mono", monospace; font-size: 0.74rem; color: var(--ink); }
+
+    table {
+      width: 100%; border-collapse: collapse; font-size: 0.95rem;
+      margin: 0.8rem 0 1.1rem;
+    }
+    th, td {
+      text-align: left; padding: 0.55rem 0.5rem;
+      border-bottom: 1px solid var(--line); vertical-align: top;
+    }
+    th { color: var(--muted); font-weight: 600; font-size: 0.8rem; letter-spacing: 0.04em; text-transform: uppercase; }
+    td code { word-break: break-all; }
+
+    .callout {
+      border-left: 3px solid var(--lime);
+      padding: 0.15rem 0 0.15rem 1rem;
+      margin: 1.1rem 0 1.3rem;
+      color: #ddd8ca;
+    }
+    .order { counter-reset: step; list-style: none; padding: 0; max-width: 48rem; }
+    .order li {
+      counter-increment: step;
+      display: grid;
+      grid-template-columns: 2.2rem 1fr;
+      gap: 0.8rem;
+      margin: 0 0 1rem;
+    }
+    .order li::before {
+      content: counter(step);
+      font-family: Fraunces, serif;
+      font-size: 1.35rem;
+      color: var(--lime);
+      line-height: 1.2;
+    }
+
+    footer {
+      padding: 2rem 0 3rem;
+      color: var(--faint);
+      font-size: 0.88rem;
+    }
+
+    @media print {
+      body { background: white; color: #111; }
+      nav.toc { display: none; }
+      .card, header.hero, section { border-color: #ccc; }
+      a { color: #111; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="wrap">
+      <div class="kicker">Source assessment · 28 Aug 2026 · v0.1.1 (code 2)</div>
+      <h1>HyperLPA is a careful LPA trapped in files that are too large to change safely.</h1>
+      <p class="lede">I read the app and JNI tree, not the vendored Miuix checkout. Backup crypto, reader affinity, privilege-split CI, and support-report redaction are better than most sideloaded eSIM tools. The thing that will hurt you next is not a missing TLS flag. It is <code>OperationScreens.kt</code> at 3,272 lines, <code>LpaRepository.kt</code> at 2,655, and a ViewModel with about 100 public methods.</p>
+      <div class="meta">
+        <span>64 production Kotlin files · 26,964 lines</span>
+        <span>32 unit tests · 4 connected tests</span>
+        <span>minSdk 28 · target 37 · GPL-3.0</span>
+        <span>Scope: <code>app/src</code> and <code>libs/lpac-jni</code></span>
+      </div>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <div class="wrap">
+      <a href="#first">Do this first</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#security">Security</a>
+      <a href="#reliability">Reliability</a>
+      <a href="#tests">Tests</a>
+      <a href="#ui">UI</a>
+      <a href="#build">Build</a>
+      <a href="#product">Product</a>
+      <a href="#order">Order of work</a>
+    </div>
+  </nav>
+
+  <main>
+    <section id="first">
+      <div class="wrap">
+        <h2>Do this first</h2>
+        <p>If this were my repo I would not start with Hilt, Argon2, or a settings rewrite. Five changes pay rent immediately.</p>
+        <ol class="order">
+          <li>
+            <div>
+              <strong>Finish the first-run reader gate.</strong>
+              The compatibility wizard is already wired into <code>NavDisplay</code>, <code>Routes.kt</code>, and <code>shouldOpenCompatibilityWizard()</code>. It is still uncommitted on the working tree. Until it lands, discovery auto-connects the first available reader when <code>lastReaderId</code> is empty. Two cards on first launch can mean the wrong eUICC.
+            </div>
+          </li>
+          <li>
+            <div>
+              <strong>Pin remote-reader TLS (TOFU).</strong>
+              RemoCard already requires HTTPS and rejects userinfo, query, and fragment. Trust is still the platform CA store. APDU traffic is the crown jewels, and it is the one path that leaves the device on a URL the user typed.
+            </div>
+          </li>
+          <li>
+            <div>
+              <strong>Slice the 3k-line Compose and repository files along seams you already have.</strong>
+              <code>downloadProfileBoundToReader</code> and <code>readerReconnectCandidateIds</code> are the right cuts. Nobody can review a download path buried at line 745 of a 2,655-line file.
+            </div>
+          </li>
+          <li>
+            <div>
+              <strong>Test the ViewModel’s download confirmation and navigation.</strong>
+              Reconciliation helpers already have 539 lines of tests. The ViewModel has zero. The next regression will be “back stack and live download disagree after process death.”
+            </div>
+          </li>
+          <li>
+            <div>
+              <strong>Run connected tests on API 28.</strong>
+              CI uses API 35. The README promises 28+. Four existing instrumentation tests are enough to catch Compose/minSdk surprises.
+            </div>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="architecture">
+      <div class="wrap">
+        <h2>Architecture</h2>
+        <p>The package layout is honest: <code>lpa</code> for transports, <code>data</code> for stores, <code>ui</code> for Compose, <code>provisioning</code> for durable downloads. The problem is concentration. Six files over 1,000 lines hold more than 12,500 of the 26,964 production lines.</p>
+
+        <div class="filebar">
+          <div class="row"><span class="name">OperationScreens.kt</span><span class="track"><span class="fill" style="width:100%"></span></span><span class="n">3272</span></div>
+          <div class="row"><span class="name">LpaRepository.kt</span><span class="track"><span class="fill" style="width:81%"></span></span><span class="n">2655</span></div>
+          <div class="row"><span class="name">MainScreens.kt</span><span class="track"><span class="fill" style="width:62%"></span></span><span class="n">2029</span></div>
+          <div class="row"><span class="name">SettingsScreens.kt</span><span class="track"><span class="fill" style="width:56%"></span></span><span class="n">1842</span></div>
+          <div class="row"><span class="name">HyperLpaViewModel.kt</span><span class="track"><span class="fill" style="width:48%"></span></span><span class="n">1563</span></div>
+          <div class="row"><span class="name">HyperLpaApp.kt</span><span class="track"><span class="fill" style="width:35%"></span></span><span class="n">1150</span></div>
+        </div>
+
+        <h3><span class="sev p1">P1</span> One ViewModel owns the product</h3>
+        <p><code>HyperLpaViewModel</code> has about 100 public methods. Roughly 65 are one-line settings forwards from <code>setThemeMode</code> through <code>setRemoteReaderToken</code>. The rest mix navigation, reader connect, profile CRUD, batch download, backup, cloud icons, notification permission, and the wizard. <code>MainActivity</code> stuffs the whole application graph into its factory.</p>
+        <p>State is one <code>HyperLpaUiState</code> combined from 14 flows. That data class also sorts, filters, and applies optimistic profile-switch state. Search keystrokes therefore re-merge settings, metadata, and operator icon bytes. <code>batchDownloadState</code> already lives outside the blob, which is the team admitting the blob is awkward.</p>
+        <p class="callout">Keep a thin shell ViewModel for tab and snackbars. Split settings, provisioning, profiles, and backup. Move sort and filter out of the UI state class into a pure function. Generate the settings setters or pass <code>AppSettingsStore</code> into settings screens.</p>
+
+        <h3><span class="sev p1">P1</span> The repository is the other god object</h3>
+        <p><code>LpaRepository</code> owns six reader backends, session lifecycle, notification delivery, SM-DS discovery, download confirmation, and activity logs. Inside it the design is careful: <code>operationMutex</code>, <code>selectedReaderTargetId</code>, reconnect candidates that refuse to fall through to a different card. That care is why the file is so hard to split, and why it must be split. The native lpac context is not thread-safe. The mutex belongs at a session layer, not in a 2,600-line kitchen.</p>
+        <p class="callout">Cut along <code>ReaderDiscovery</code>, <code>EuiccSession</code>, <code>ProfileOperations</code>, <code>NotificationProcessor</code>. Keep the mutex with the session.</p>
+
+        <h3><span class="sev p2">P2</span> Manual DI is fine until the split</h3>
+        <p><code>HyperLpaApplication</code> is a 125-line graph. No Hilt, no Koin. At current size that is the right call. The moment you split the ViewModel you will copy constructor lists. Add Hilt then, not before.</p>
+
+        <h3><span class="sev p2">P2</span> Navigation restore drops the high-stakes routes</h3>
+        <p><code>Routes.kt</code> is 52 lines and clean. Miuix <code>NavDisplay</code> is the right stack. Restoration is not. <code>toPersistedRoute()</code> maps <code>CompatibilityWizard</code>, <code>ConfirmProfileDownload</code>, <code>ProfileDownloadResult</code>, and history slots to <code>null</code>. Process death on a confirmation screen returns the user to the shell. The download job can survive in <code>ProvisioningCoordinator</code>. The UI does not reattach to it.</p>
+        <p class="callout">Persist the full back stack, or on restore, if a live or interrupted download exists, push the confirmation or batch route again.</p>
+
+        <h3><span class="sev p2">P2</span> Business logic still lives in Compose</h3>
+        <p><code>DownloadRequest.parse</code> runs inside the download form around line 887 of <code>OperationScreens.kt</code>. Image QR scanning (field names <code>carddata</code>, <code>activationCode</code>) sits around 1090. Line 1976 hardcodes <code>"GlobalPlatform"</code> instead of a string resource. Split that file by screen. Put parse and scan in an <code>ActivationCodeParser</code> that unit tests already almost have.</p>
+      </div>
+    </section>
+
+    <section id="security">
+      <div class="wrap">
+        <h2>Security</h2>
+        <p>This area is stronger than the architecture. Android backup is off. Device-to-device extraction is excluded. Remote tokens sit in Keystore-backed AES-GCM with the endpoint URL as AAD. HyperLPA’s own backup strips those tokens. GSMA CI trust for ES9+ is the correct SGP.22 model, not a public-CA pin. The remaining holes are specific.</p>
+
+        <div class="grid-2">
+          <article class="card">
+            <h3><span class="sev p1">P1</span> Remote APDUs ride public CAs</h3>
+            <p><code>RemoCardClient</code> requires <code>HttpsURLConnection</code>, 15s/30s timeouts, 2 MiB caps, no redirects. There is no SPKI pin and no <code>network_security_config</code>. Payload “encryption” is AES-CBC with no MAC, documented as not a security boundary. The bearer token still goes on every request after handshake. Anyone who can MITM a user-chosen host with a valid cert sees APDUs.</p>
+            <p>Fix: TOFU pin when the user adds a host. Show the fingerprint. Store it. Replace CBC with TLS-only or an AEAD in a future RemoCard version. Stop sending the long-lived bearer after session establishment.</p>
+          </article>
+          <article class="card">
+            <h3><span class="sev p2">P2</span> Keystore tokens unlock in a pocket</h3>
+            <p><code>RemoteCredentialCipher</code> is the right shape: AES-256-GCM, 12-byte nonce, non-exportable key, <code>setRandomizedEncryptionRequired(true)</code>. It does not set <code>setUnlockedDeviceRequired(true)</code>. Tokens decrypt while the phone is locked. That is a product choice for headless readers. It is weaker than a screen-lock-bound key.</p>
+            <p>Fix: require an unlocked device at minimum. Biometric gating as an opt-in setting, default off.</p>
+          </article>
+          <article class="card">
+            <h3><span class="sev p2">P2</span> Backup KDF is 2023 OWASP</h3>
+            <p>PBKDF2-HMAC-SHA256, 310,000 iterations, 16-byte salt, AES-256-GCM, 128-bit tag, AAD bound to format and version. Decrypt accepts 210k–1,000k iterations. Password floor is 10 characters. Ciphertext is zeroed. Fine for an offline file. Not what I would pick in 2026.</p>
+            <p>Fix: bump iterations on the next envelope version, or Argon2id via a small native helper. Keep the range check.</p>
+          </article>
+          <article class="card">
+            <h3><span class="sev p2">P2</span> JNI logs notification handles always</h3>
+            <p>APDU logging in the app is gated on <code>developerMode &amp;&amp; apduLogging</code>. USB verbose logs sizes, not hex. <code>LocalProfileAssistantImpl</code> still calls <code>Log.d</code> for notification handle and replay with no gate. Sequence numbers can land in logcat on user devices.</p>
+            <p>Fix: put those <code>Log.d</code> calls on the same verbose flow. Keep USB hex-free.</p>
+          </article>
+        </div>
+
+        <h3>What I would leave alone</h3>
+        <ul>
+          <li>GSMA CI trust in <code>HttpInterfaceImpl</code> / <code>RootCertificates.kt</code>. Public-CA pinning would be wrong for ES9+.</li>
+          <li>HTTPS-only RSP URLs, no redirects, 32 MiB body cap, header injection checks. Test that a public-CA-only chain is rejected.</li>
+          <li>Privilege split. Ordinary APKs do not declare <code>READ_PRIVILEGED_PHONE_STATE</code>. CI greps both APKs. Hidden API exemptions are flavor-gated.</li>
+          <li><code>nineesim-keystore.properties</code> is gitignored. The community-key passwords in the release workflow are public by design.</li>
+          <li>Manifest <code>usesCleartextTraffic="false"</code>. No debug network-security override in app resources.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="reliability">
+      <div class="wrap">
+        <h2>Reliability</h2>
+        <p>Three process-death stories, only one of them complete.</p>
+        <table>
+          <thead>
+            <tr><th>Layer</th><th>What survives</th><th>Gap</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Backup restore journal</td>
+              <td><code>HyperLpaApplication.onCreate</code> <code>runBlocking</code> recovers a two-DataStore restore before UI starts. Orphaned icon cleanup waits until the journal is clear.</td>
+              <td>This is the most careful startup code in the app. Leave the structure.</td>
+            </tr>
+            <tr>
+              <td>Provisioning queue</td>
+              <td>Keystore AES-GCM in <code>noBackupFilesDir</code>. FGS is <code>START_NOT_STICKY</code> so Android will not replay an activation code. Recovered batches need explicit Resume. Affinity checks block the wrong card.</td>
+              <td>After death, the UI does not reopen Batch / Confirm. The user has to find the interrupted job.</td>
+            </tr>
+            <tr>
+              <td>Navigation</td>
+              <td>Selected tab and a subset of settings routes in <code>onSaveInstanceState</code>.</td>
+              <td>Confirmation, result, wizard, search query, and activation draft do not survive process death.</td>
+            </tr>
+          </tbody>
+        </table>
+        <p><span class="sev p2">P2</span> USB <code>runBlocking { verboseLoggingFlow.first() }</code> on a hot path can stall if the flow never emits. Snapshot verbose logging into a <code>volatile Boolean</code> updated from settings, the way <code>LpaRepository.verboseLoggingEnabled</code> already does.</p>
+        <p><span class="sev p2">P2</span> Auto-connect after first selection is locked to that reader. Initial selection is not. If <code>lastReaderId</code> is unset, <code>readerReconnectCandidateIds</code> falls through discovery order across six providers. That is the wizard’s job. Finish it, and refuse auto-connect when more than one reader is available.</p>
+      </div>
+    </section>
+
+    <section id="tests">
+      <div class="wrap">
+        <h2>Tests</h2>
+        <p>The ratio is about 9 production lines per unit-test line. That would be acceptable if the 9 were UI and the 1 were domain. It is the opposite. Helpers are well tested. The cores are not.</p>
+        <div class="grid-2">
+          <article class="card">
+            <h3>Covered</h3>
+            <p>Backup codec, settings validation, provisioning models, metadata store, notification history sanitization, support-report redaction, repository reconciliation (539 lines), download-request parsing, Nekoko helpers, USB parsing, NBridge trust, remote-reader crypto helpers, reminder isolation, RSP URL validator, SM-DP+ cert verifier, ASAN/UBSAN host tests for derutil and the profile parser. Those native tests are hooked to <code>testDebugUnitTest</code>, so CI actually runs them.</p>
+          </article>
+          <article class="card">
+            <h3>The hole</h3>
+            <p>Zero tests for <code>HyperLpaViewModel</code>. No tests for <code>LpaRepository.connect</code>, <code>downloadProfile</code>, or notification send. No tests for OMAPI, telephony, or the BLE provider beyond policy snippets. <code>LpaEngineTest</code> is 29 lines of AID hex decode. Four instrumentation tests, 179 lines, API 35 only. Wizard instrumentation is uncommitted.</p>
+          </article>
+        </div>
+        <p class="callout">Highest-value next test: a fake <code>ApduInterface</code> plus <code>HttpInterface</code> around <code>LocalProfileAssistantImpl</code>. Then a ViewModel test with a fake coordinator for navigation and download confirmation. Then an API 28 emulator job, even if it only runs the four existing tests.</p>
+      </div>
+    </section>
+
+    <section id="ui">
+      <div class="wrap">
+        <h2>UI and product chrome</h2>
+        <p>Miuix is not a skin here. Theme, blur, NavDisplay, predictive back, snackbars, and preference cards are the real stack. The screens are too big for the quality of the toolkit.</p>
+        <ul>
+          <li><span class="sev p1">P1</span> <code>OperationScreens.kt</code> is 42 functions in one file. Split download, details, eUICC, and QR. The wizard is 240 lines, already reachable from Tools, with swipe-dismiss disabled. Land it as a first-run gate or take the route out until it is done.</li>
+          <li><span class="sev p2">P2</span> Only <code>values/strings.xml</code>. RTL is declared. A HyperOS-styled LPA with no Chinese strings is a product mismatch. Extract is done. Add <code>values-zh-rCN</code> before adding more English literals.</li>
+          <li><span class="sev p2">P2</span> Profile cards and hidden-label nav items have <code>contentDescription</code>. Many icons still pass <code>null</code>. Download confirmation is a high-stakes screen and should be read as operator, redacted ICCID, confirm, cancel.</li>
+          <li><span class="sev p3">P3</span> <code>CenteredBox</code> takes <code>maxWidth</code> and ignores it. The modifier chain is <code>.then(Modifier)</code>, a no-op. Tablets get a centered phone layout. There is no list-detail two-pane at 1200.dp even though <code>WindowMode.EXPANDED</code> exists.</li>
+          <li><span class="sev p3">P3</span> Remaining literal: <code>"GlobalPlatform"</code> in eUICC details. QR JSON keys are protocol, not UI copy.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="build">
+      <div class="wrap">
+        <h2>Build and CI</h2>
+        <p>Release packaging is unusually serious for a 0.1 app: ABI splits, community vs private signing, certificate pinning in Gradle, permission greps, apksigner v3 checks, SHA256SUMS on GitHub Releases. The gaps are about what CI does not run, not what it signs.</p>
+        <ul>
+          <li><span class="sev p1">P1</span> Connected tests only on API 35. Release workflow runs no connected tests. No screenshot tests (Paparazzi / Roborazzi).</li>
+          <li><span class="sev p3">P3</span> <code>lpac-jni</code> hardcodes <code>core-ktx:1.19.0</code> and coroutines instead of the version catalog. App is Java 21. JNI module is Java 17. Document that or align them.</li>
+          <li><span class="sev p3">P3</span> App ProGuard only keeps source/line attributes. JNI consumer keeps look complete. A smoke test that a minified APK can still <code>System.loadLibrary</code> and construct <code>LocalProfileAssistantImpl</code> would catch a keep-rule miss before a tag.</li>
+          <li><span class="sev p3">P3</span> Spotless lives under <code>third_party/miuix</code> only. Do not add detekt until the 3k-line files are split. It will only generate noise.</li>
+          <li><code>httpProxyFlow</code> is passed as <code>flowOf("")</code> from <code>LpaSessionFactory</code>. Proxy support is dead. Wire it or delete it.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="product">
+      <div class="wrap">
+        <h2>Product</h2>
+        <p>HyperLPA already covers the EasyEUICC-class core: list, enable, disable, delete, rename, activation codes, QR, <code>lpa:</code> links, notifications, SM-DS, default SM-DP+, memory reset, confirmation codes, IMEI in download, batch queue, tags, reminders, redaction, encrypted backup. That is a lot for version 0.1.1.</p>
+        <p>What is still missing, relative to a “full” LPA:</p>
+        <ul>
+          <li><span class="sev p2">P2</span> First-run multi-reader choice. Always show the connected EID in the top bar. Disable auto-connect when <code>readers.size &gt; 1</code>.</li>
+          <li><span class="sev p2">P2</span> MEP as a first-class UI. Telephony ports are listed. There is no “enable this profile on port 2” model.</li>
+          <li><span class="sev p2">P2</span> App lock before showing ICCID and EID, even with redaction settings. People will screenshot the details page.</li>
+          <li><span class="sev p2">P2</span> No Android <code>EuiccManager</code> / downloadable-LPA path. Fine if that is a deliberate non-goal. Say so in the README so carrier-download expectations die early.</li>
+          <li><span class="sev p3">P3</span> Offline: local list and metadata work. Auto notification send already checks <code>NET_CAPABILITY_VALIDATED</code>. The download screen still lets the user type a confirmation code before failing. Disable Download and Process notifications when unvalidated, with a reason.</li>
+          <li><span class="sev p3">P3</span> README is unusually good. Gaps: RemoCard server setup, how to install the privileged APK on a system image, activation-code anatomy (<code>LPA:1$…</code>), and what the wizard will do.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="order">
+      <div class="wrap">
+        <h2>Order of work</h2>
+        <p>Leave PBKDF2, manual DI, and GSMA-CI TLS alone until the list below is done. They are not why a change in this codebase is scary. The 3,272-line Compose file is.</p>
+        <ol>
+          <li>Land the wizard, or hide the route. No auto-connect when multiple readers exist.</li>
+          <li>TOFU pin for remote readers.</li>
+          <li>Split <code>OperationScreens.kt</code> and <code>LpaRepository.kt</code> along existing types.</li>
+          <li>ViewModel tests for navigation plus download confirmation, with a fake coordinator.</li>
+          <li>API 28 connected job.</li>
+          <li>Chinese strings. The toolkit is Miuix. The only locale is US English.</li>
+          <li>Then, if you still want it: Hilt with the ViewModel split, iteration bump on backups, tablet two-pane, dead <code>CenteredBox</code> / proxy flow cleanup.</li>
+        </ol>
+        <p class="callout">This is a 0.1.1 that already behaves like a 1.0 on security hygiene and release engineering. Treat the god files as the actual 0.2 milestone. Everything else is polish on a product people can already trust with a card, as long as they only plug in one.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      Written from the HyperLPA working tree on 28 August 2026. Uncommitted wizard work was treated as in-progress, not as shipped. Miuix third-party sources were used only as dependency context.
+    </div>
+  </footer>
+</body>
+</html>
