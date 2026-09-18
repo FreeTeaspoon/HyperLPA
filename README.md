@@ -37,6 +37,8 @@ USB, Bluetooth, bridge, remote, or explicitly privileged telephony backends.
   artwork. Installed eSIM profiles remain on the eUICC and are not copied into
   the backup.
 - Export redacted diagnostics and privacy-safe support reports.
+- Pair Android devices through an encrypted Cloudflare relay and manage their
+  SIM adapters from the same active-reader dropdown, including across networks.
 - Use adaptive layouts, predictive back, system/light/dark themes, Monet and
   accent palettes, pure black mode, and a Miuix-style interface.
 
@@ -87,6 +89,12 @@ available.
 | Privileged telephony | The phone's built-in telephony eUICC interface | Only the explicitly privileged builds include this backend. System, carrier, or equivalent platform access is still required. |
 
 ## Requirements
+
+For remote device control, deploy the [encrypted relay](relay/README.md), then
+open **Settings → Remote devices** on each phone to register and pair them.
+The phone holding the SIM performs downloads and other card operations. The
+relay forwards encrypted commands and results. A web management UI is planned
+for a later build; this build manages paired devices from Android.
 
 - Android 9 / API 28 or newer.
 - A compatible eUICC and at least one usable reader backend.
