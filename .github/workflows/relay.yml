@@ -1,0 +1,25 @@
+name: Relay checks
+
+on:
+  pull_request:
+    paths: ['relay/**', 'app/src/test/resources/device-protocol-vector.json', '.github/workflows/relay.yml']
+  push:
+    branches: [main]
+    paths: ['relay/**', 'app/src/test/resources/device-protocol-vector.json', '.github/workflows/relay.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: relay
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: node --version
+      - run: npm ci
+      - run: npm run check
+      - run: npm test

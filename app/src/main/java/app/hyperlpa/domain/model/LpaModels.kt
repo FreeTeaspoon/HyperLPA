@@ -1,10 +1,14 @@
+@file:kotlinx.serialization.UseSerializers(app.hyperlpa.remote.DeviceInstantSerializer::class)
+
 package app.hyperlpa.domain.model
 
 import androidx.compose.runtime.Immutable
+import kotlinx.serialization.Serializable
 import java.math.BigInteger
 import java.net.URI
 import java.time.Instant
 
+@Serializable
 enum class ReaderKind {
     NBRIDGE,
     OMAPI,
@@ -15,6 +19,7 @@ enum class ReaderKind {
 }
 
 @Immutable
+@Serializable
 data class ReaderInfo(
     val id: String,
     val name: String,
@@ -22,13 +27,17 @@ data class ReaderInfo(
     val detail: String? = null,
     val available: Boolean = true,
     val eid: String? = null,
+    val deviceId: String? = null,
+    val sourceReaderId: String? = null,
 )
 
+@Serializable
 enum class ProfileState {
     ENABLED,
     DISABLED,
 }
 
+@Serializable
 enum class ProfileClass {
     OPERATIONAL,
     TESTING,
@@ -37,6 +46,7 @@ enum class ProfileClass {
 }
 
 @Immutable
+@Serializable
 data class ProfileInfo(
     val iccid: String,
     val state: ProfileState,
@@ -62,6 +72,7 @@ data class ProfileInfo(
     val sizeIsEstimated: Boolean = false,
 )
 
+@Serializable
 enum class NotificationOperation {
     INSTALL,
     ENABLE,
@@ -71,6 +82,7 @@ enum class NotificationOperation {
 }
 
 @Immutable
+@Serializable
 data class LpaNotification(
     val sequenceNumber: Long,
     val operation: NotificationOperation,
@@ -82,6 +94,7 @@ data class LpaNotification(
 )
 
 @Immutable
+@Serializable
 data class EuiccInfo(
     val eid: String,
     val sgp22Version: String = "",
@@ -108,6 +121,7 @@ data class EuiccInfo(
 )
 
 @Immutable
+@Serializable
 data class DownloadRequest(
     val smdpAddress: String,
     val matchingId: String? = null,
@@ -187,6 +201,7 @@ data class DownloadRequest(
     }
 }
 
+@Serializable
 enum class DownloadRequestError {
     CONFIRMATION_CODE_TOO_LONG,
     CONFIRMATION_CODE_INVALID,
@@ -269,6 +284,7 @@ internal fun normalizeRspServerAddress(value: String): String {
 }
 
 @Immutable
+@Serializable
 data class ProfileDownloadPreview(
     val profile: ProfileInfo,
     val request: DownloadRequest,
@@ -276,30 +292,43 @@ data class ProfileDownloadPreview(
 )
 
 @Immutable
+@Serializable
 data class ProfileDownloadResult(
     val profile: ProfileInfo,
     val installedBytes: Long? = null,
     val freeNonVolatileMemory: Int? = null,
 )
 
+@Serializable
 sealed interface LpaOperation {
+    @Serializable
     data object Idle : LpaOperation
+    @Serializable
     data class DiscoveringReaders(val message: String) : LpaOperation
+    @Serializable
     data class Connecting(val readerName: String) : LpaOperation
+    @Serializable
     data class Refreshing(val message: String) : LpaOperation
+    @Serializable
     data class Switching(val iccid: String, val enable: Boolean) : LpaOperation
+    @Serializable
     data class Deleting(val iccid: String) : LpaOperation
+    @Serializable
     data class Renaming(val iccid: String) : LpaOperation
+    @Serializable
     data class Downloading(
         val stage: DownloadStage,
         val profileName: String? = null,
         val sentBytes: Long? = null,
         val totalBytes: Long? = null,
     ) : LpaOperation
+    @Serializable
     data class ProcessingNotification(val sequenceNumber: Long) : LpaOperation
+    @Serializable
     data class Resetting(val message: String) : LpaOperation
 }
 
+@Serializable
 enum class DownloadStage {
     PREPARING,
     CONNECTING,
@@ -311,6 +340,7 @@ enum class DownloadStage {
 }
 
 @Immutable
+@Serializable
 data class OperationFailure(
     val title: String,
     val message: String,
@@ -318,14 +348,19 @@ data class OperationFailure(
     val recoverable: Boolean = true,
 )
 
+@Serializable
 sealed interface OperationOutcome {
+    @Serializable
     data object Success : OperationOutcome
+    @Serializable
     data class Failed(val failure: OperationFailure) : OperationOutcome
     /** A card-changing command may have completed, but authoritative refresh was unavailable. */
+    @Serializable
     data class Unverified(val failure: OperationFailure) : OperationOutcome
 }
 
 @Immutable
+@Serializable
 data class ActivityLogEntry(
     val timestamp: Instant,
     val level: LogLevel,
@@ -333,6 +368,7 @@ data class ActivityLogEntry(
     val message: String,
 )
 
+@Serializable
 enum class LogLevel {
     DEBUG,
     INFO,

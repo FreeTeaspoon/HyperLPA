@@ -540,6 +540,7 @@ private fun ProfilesHeader(
                         }
                         OverlayDropdownPreference(
                             title = stringResource(R.string.profiles_active_reader),
+                            enabled = state.lpa.operation is LpaOperation.Idle,
                             summary = state.lpa.selectedReader?.detail
                                 ?: stringResource(R.string.profiles_select_reader),
                             items = state.lpa.readers.map { it.name },
@@ -1928,6 +1929,11 @@ fun SettingsScreen(
                     title = stringResource(R.string.settings_reader_types),
                     summary = stringResource(R.string.settings_reader_types_summary),
                     onClick = { onNavigate(AppRoute.ReaderSettings) },
+                )
+                ArrowPreference(
+                    title = stringResource(R.string.remote_title),
+                    summary = stringResource(R.string.remote_settings_summary),
+                    onClick = { onNavigate(AppRoute.RemoteDevices) },
                 )
                 ArrowPreference(
                     title = stringResource(R.string.settings_compatibility_setup),

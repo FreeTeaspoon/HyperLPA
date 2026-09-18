@@ -9,6 +9,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import app.hyperlpa.BuildConfig
+import app.hyperlpa.remote.DeviceCommand
+import app.hyperlpa.remote.DeviceAction
+import app.hyperlpa.remote.DeviceSnapshot
+import app.hyperlpa.remote.RemoteArtwork
+import app.hyperlpa.remote.DeviceCrypto
 import app.hyperlpa.R
 import app.hyperlpa.data.LpaRepository
 import app.hyperlpa.data.LpaRepositoryState
@@ -209,6 +214,7 @@ class HyperLpaViewModel(
     private val supportReportBuilder: SupportReportBuilder,
     private val provisioningCoordinator: ProvisioningCoordinator,
 ) : AndroidViewModel(application) {
+    internal val remoteDevices = (application as app.hyperlpa.HyperLpaApplication).remoteDevices
     private val backupManager = HyperLpaBackupManager(application, settingsStore, metadataStore)
     private val profileIconStorage = ProfileIconStorage(application)
     private val backStack = navBackStackOf(AppRoute.Shell)
@@ -264,10 +270,12 @@ class HyperLpaViewModel(
         pendingProfileDisableConfirmation,
         metadataStore.euiccNames,
         requestedProfileSwitch,
+        remoteDevices.view,
     ) { values ->
         val settings = values[0] as AppSettings
         val lpa = values[1] as LpaRepositoryState
-        val metadata = values[5] as Map<String, ProfileMetadata>
+        val remote = (values[15] as DeviceSnapshot?).takeIf { lpa.selectedReader?.deviceId != null }
+        val metadata = remote?.metadata ?: values[5] as Map<String, ProfileMetadata>
         val refreshToken = values[7] as Int
         val cloudData = values[8] as CloudProfileData
         val previewCloudData = values[9] as DownloadPreviewCloudData
@@ -288,16 +296,16 @@ class HyperLpaViewModel(
             searchQuery = values[3] as String,
             activationCodeDraft = values[4] as String,
             metadata = metadata,
-            providerIcons = values[6] as Map<String, String>,
+            providerIcons = remote?.providerIcons ?: values[6] as Map<String, String>,
             operatorIcons = cloudData.operatorIcons,
             profileSizePredictions = cloudData.profileSizePredictions,
             downloadPreviewIcon = previewCloudData.operatorIcon,
             estimatedDownloadBytes = previewCloudData.estimatedBytes,
             downloadPreviewEnrichmentLoading = previewCloudData.loading,
             showCancelDownloadConfirmation = values[10] as Boolean,
-            notificationHistory = values[11] as List<NotificationHistoryEntry>,
+            notificationHistory = remote?.history ?: values[11] as List<NotificationHistoryEntry>,
             pendingProfileDisableConfirmation = values[12] as String?,
-            euiccNames = values[13] as Map<String, String>,
+            euiccNames = remote?.euiccNames ?: values[13] as Map<String, String>,
             requestedProfileSwitchIccid = requestedSwitch?.iccid,
             requestedProfileSwitchEnabled = requestedSwitch?.enabled ?: false,
             profileEnrichmentReady = lpa.profiles.isEmpty() ||
@@ -316,7 +324,7 @@ class HyperLpaViewModel(
             }
         }
         viewModelScope.launch {
-            repository.state
+            repository.localState
                 .map { lpa ->
                     lpa.profiles.associate { profile -> profile.iccid to profile.providerName }
                 }
@@ -333,13 +341,14 @@ class HyperLpaViewModel(
                 repository.state,
                 metadataStore.metadata,
                 cloudRefreshToken,
-            ) { settings, lpa, metadata, refreshToken ->
+                remoteDevices.view,
+            ) { settings, lpa, metadata, refreshToken, remote ->
                 CloudInputs(
                     loadOperatorIcons = settings.loadOperatorIcons,
                     estimateProfileSize = settings.estimateProfileSize,
                     profiles = lpa.profiles,
                     eid = lpa.euiccInfo?.eid,
-                    metadata = metadata,
+                    metadata = remote?.metadata?.takeIf { lpa.selectedReader?.deviceId != null } ?: metadata,
                     refreshToken = refreshToken,
                 )
             }
@@ -603,13 +612,17 @@ class HyperLpaViewModel(
             repository.discoverReaders(autoConnect = true)
         }
     }
-    fun connectReader(readerId: String) = launch {
-        if (repository.connect(readerId) is OperationOutcome.Success) {
-            settingsStore.setLastReaderId(readerId)
+    fun connectReader(readerId: String) {
+        // Do not queue a reader change behind a mutation while the screen still shows its old card.
+        if (dataMutationMutex.isLocked || repository.state.value.operation !is LpaOperation.Idle) return
+        launch {
+            if (repository.connect(readerId) is OperationOutcome.Success) {
+                settingsStore.setLastReaderId(readerId)
+            }
         }
     }
     fun disconnectReader() = launch { repository.disconnectSession() }
-    fun refreshProfiles() = launch(repository::refresh)
+    fun refreshProfiles() = readerAction(repository::refresh)
     fun setProfileEnabled(iccid: String, enabled: Boolean) {
         val profiles = state.value.profiles
         if (requiresLastEnabledProfileConfirmation(profiles, iccid, enabled)) {
@@ -635,10 +648,10 @@ class HyperLpaViewModel(
         val stillEnabled = repository.state.value.profiles.any { profile ->
             profile.iccid == iccid && profile.state == ProfileState.ENABLED
         }
-        if (stillEnabled) enqueueProfileSwitch(iccid, enabled = false)
+        if (stillEnabled) enqueueProfileSwitch(iccid, enabled = false, allowDisconnect = true)
     }
-    fun deleteProfile(iccid: String) = launch { repository.deleteProfile(iccid) }
-    fun renameProfile(iccid: String, nickname: String) = launch { repository.renameProfile(iccid, nickname) }
+    fun deleteProfile(iccid: String) = readerAction { repository.deleteProfile(iccid) }
+    fun renameProfile(iccid: String, nickname: String) = readerAction { repository.renameProfile(iccid, nickname) }
     fun downloadProfile(request: DownloadRequest) {
         provisioningCoordinator.startSingleDownload(request)
     }
@@ -725,19 +738,20 @@ class HyperLpaViewModel(
         backStack[downloadIndex + 1] = AppRoute.ProfileDownloadHistorySlot(slot = 1)
         return true
     }
-    fun processNotification(sequenceNumber: Long) = launch { repository.processNotification(sequenceNumber) }
-    fun deleteNotification(sequenceNumber: Long) = launch { repository.deleteNotification(sequenceNumber) }
-    fun resendNotification(entry: NotificationHistoryEntry) = launch {
+    fun processNotification(sequenceNumber: Long) = readerAction { repository.processNotification(sequenceNumber) }
+    fun deleteNotification(sequenceNumber: Long) = readerAction { repository.deleteNotification(sequenceNumber) }
+    fun resendNotification(entry: NotificationHistoryEntry) = readerAction {
         repository.resendNotification(entry)
     }
-    fun deleteNotificationHistoryEntry(entry: NotificationHistoryEntry) = launch {
-        notificationHistoryStore.delete(entry)
+    fun deleteNotificationHistoryEntry(entry: NotificationHistoryEntry) = readerAction {
+        if (remoteDevices.isSelected) remoteDevices.execute(DeviceCommand(DeviceAction.DELETE_HISTORY, history = entry, confirmed = true))
+        else notificationHistoryStore.delete(entry)
     }
-    fun resetEuiccMemory() = launch(repository::resetEuiccMemory)
-    fun setDefaultSmdpAddress(address: String) = launch {
+    fun resetEuiccMemory() = readerAction(repository::resetEuiccMemory)
+    fun setDefaultSmdpAddress(address: String) = readerAction {
         repository.setDefaultSmdpAddress(address)
     }
-    fun discoverProfiles(smdsAddress: String?) = launch {
+    fun discoverProfiles(smdsAddress: String?) = readerAction {
         repository.discoverProfiles(smdsAddress)
     }
     fun useDiscoveredSmdpAddress(address: String) {
@@ -769,14 +783,23 @@ class HyperLpaViewModel(
         runtimePermissionRequestInProgress = false
     }
 
-    fun setProfileTags(iccid: String, tags: Set<String>) = launch { metadataStore.setTags(iccid, tags) }
-    fun setProfilePinned(iccid: String, pinned: Boolean) = launch {
-        metadataStore.setPinned(iccid, pinned)
+    fun setProfileTags(iccid: String, tags: Set<String>) = readerAction {
+        if (remoteDevices.isSelected) remoteDevices.execute(DeviceCommand(DeviceAction.TAGS, iccid = iccid, tags = tags))
+        else metadataStore.setTags(iccid, tags)
     }
-    fun setEuiccName(eid: String, name: String?) = launch {
-        metadataStore.setEuiccName(eid, name)
+    fun setProfilePinned(iccid: String, pinned: Boolean) = readerAction {
+        if (remoteDevices.isSelected) remoteDevices.execute(DeviceCommand(DeviceAction.PIN, iccid = iccid, enabled = pinned))
+        else metadataStore.setPinned(iccid, pinned)
     }
-    fun setProfileReminder(iccid: String, label: String, reminderAt: Instant?) = launch {
+    fun setEuiccName(eid: String, name: String?) = readerAction {
+        if (remoteDevices.isSelected) remoteDevices.execute(DeviceCommand(DeviceAction.EUICC_NAME, text = name))
+        else metadataStore.setEuiccName(eid, name)
+    }
+    fun setProfileReminder(iccid: String, label: String, reminderAt: Instant?) = readerAction {
+        if (remoteDevices.isSelected) {
+            remoteDevices.execute(DeviceCommand(DeviceAction.REMINDER, iccid = iccid, text = label, number = reminderAt?.toEpochMilli()))
+            return@readerAction
+        }
         withProfileReminderIsolation {
             withContext(NonCancellable) {
                 if (reminderAt != null && !state.value.settings.scheduledReminders) {
@@ -793,7 +816,15 @@ class HyperLpaViewModel(
         applyToProvider: Boolean = false,
         providerName: String? = null,
         onComplete: (Boolean) -> Unit = {},
-    ) = launch {
+    ) = readerAction(onRejected = { onComplete(false) }) {
+        if (remoteDevices.isSelected) {
+            val outcome = runCatching {
+                val encoded = uri?.let { withContext(Dispatchers.IO) { DeviceCrypto.encode(RemoteArtwork.read(getApplication(), it)) } }
+                remoteDevices.execute(DeviceCommand(DeviceAction.ICON, iccid = iccid, applyToProvider = applyToProvider, image = encoded))
+            }
+            onComplete(outcome.getOrNull() is OperationOutcome.Success)
+            return@readerAction
+        }
         var pendingImport: PendingProfileIconImport? = null
         var importCommitted = false
         val result = runCatching {
@@ -848,7 +879,11 @@ class HyperLpaViewModel(
         hidden: Boolean,
         providerName: String? = null,
         onComplete: (Boolean) -> Unit = {},
-    ) = launch {
+    ) = readerAction(onRejected = { onComplete(false) }) {
+        if (remoteDevices.isSelected) {
+            onComplete(remoteDevices.execute(DeviceCommand(DeviceAction.HIDE_PROVIDER_ICON, iccid = iccid, enabled = hidden)) is OperationOutcome.Success)
+            return@readerAction
+        }
         val result = runCatching {
             withContext(NonCancellable) {
                 metadataStore.setProviderIconHidden(
@@ -871,7 +906,11 @@ class HyperLpaViewModel(
         iccid: String,
         providerName: String?,
         onComplete: (Boolean) -> Unit = {},
-    ) = launch {
+    ) = readerAction(onRejected = { onComplete(false) }) {
+        if (remoteDevices.isSelected) {
+            onComplete(remoteDevices.execute(DeviceCommand(DeviceAction.APPLY_PROVIDER_ICON, iccid = iccid)) is OperationOutcome.Success)
+            return@readerAction
+        }
         var pendingImport: PendingProfileIconImport? = null
         var importCommitted = false
         val result = runCatching {
@@ -1299,24 +1338,36 @@ class HyperLpaViewModel(
         }
     }
 
+    private fun readerAction(block: suspend () -> Unit) = readerAction(onRejected = {}, block = block)
+
+    private fun readerAction(onRejected: () -> Unit, block: suspend () -> Unit) {
+        val selected = repository.state.value.selectedReaderId
+        val affinity = repository.selectedReaderAffinitySnapshot()
+        launch {
+            // Revocation or reader removal must never redirect queued work onto a local SIM.
+            if (selected == repository.state.value.selectedReaderId &&
+                affinity == repository.selectedReaderAffinitySnapshot()) block() else onRejected()
+        }
+    }
+
     private fun launch(block: suspend () -> Unit) {
         viewModelScope.launch {
             dataMutationMutex.withLock { block() }
         }
     }
 
-    private fun enqueueProfileSwitch(iccid: String, enabled: Boolean) {
+    private fun enqueueProfileSwitch(iccid: String, enabled: Boolean, allowDisconnect: Boolean = false) {
         val request = ProfileSwitchRequest(
             sequence = ++profileSwitchRequestSequence,
             iccid = iccid,
             enabled = enabled,
         )
         requestedProfileSwitch.value = request
-        launch {
+        readerAction(onRejected = { requestedProfileSwitch.compareAndSet(request, null) }) {
             // A newer tap can replace this request while it waits for the active eUICC command.
-            if (requestedProfileSwitch.value != request) return@launch
+            if (requestedProfileSwitch.value != request) return@readerAction
             try {
-                repository.setProfileEnabled(request.iccid, request.enabled)
+                repository.setProfileEnabled(request.iccid, request.enabled, allowDisconnect)
             } finally {
                 requestedProfileSwitch.compareAndSet(request, null)
             }
@@ -1431,6 +1482,7 @@ private fun NavKey?.toPersistedRoute(): String? = when (val route = this as? App
     AppRoute.BatchDownload -> "batch"
     AppRoute.EuiccDetails -> "euicc"
     AppRoute.ReaderSettings -> "readers"
+    AppRoute.RemoteDevices -> "remote-devices"
     AppRoute.NotificationSettings -> "notifications"
     AppRoute.NotificationHistory -> "notification-history"
     AppRoute.AppearanceSettings -> "appearance"
@@ -1457,6 +1509,7 @@ private fun String?.toAppRoute(): AppRoute? = when {
         "batch" -> AppRoute.BatchDownload
         "euicc" -> AppRoute.EuiccDetails
         "readers" -> AppRoute.ReaderSettings
+        "remote-devices" -> AppRoute.RemoteDevices
         "notifications" -> AppRoute.NotificationSettings
         "notification-history" -> AppRoute.NotificationHistory
         "appearance" -> AppRoute.AppearanceSettings

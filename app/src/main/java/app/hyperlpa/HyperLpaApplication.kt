@@ -36,6 +36,10 @@ class HyperLpaApplication : Application() {
         )
     }
     val provisioningCoordinator by lazy { ProvisioningCoordinator(this, lpaRepository) }
+    internal val remoteDevices by lazy {
+        app.hyperlpa.remote.RemoteDevices(this, lpaRepository, settingsStore, metadataStore, notificationHistoryStore)
+            .also(lpaRepository::attachDevices)
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -93,6 +97,7 @@ class HyperLpaApplication : Application() {
             runCatching { notificationHistoryStore.initialize() }
         }
         // Recover status for display only. Potentially completed downloads are never replayed.
+        remoteDevices
         provisioningCoordinator
     }
 

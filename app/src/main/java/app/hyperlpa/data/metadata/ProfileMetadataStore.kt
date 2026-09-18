@@ -1,3 +1,5 @@
+@file:kotlinx.serialization.UseSerializers(app.hyperlpa.remote.DeviceInstantSerializer::class)
+
 package app.hyperlpa.data.metadata
 
 import android.content.Context
@@ -47,6 +49,7 @@ data class StoredProfileMetadata(
     val isProviderIconHidden: Boolean = false,
 )
 
+@Serializable
 data class ProfileMetadata(
     val tags: Set<String> = emptySet(),
     val reminderAt: Instant? = null,

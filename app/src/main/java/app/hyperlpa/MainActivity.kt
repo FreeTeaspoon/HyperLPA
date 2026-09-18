@@ -222,6 +222,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        lifecycleScope.launch {
+            if (applicationGraph.remoteDevices.shouldResume()) runCatching {
+                app.hyperlpa.remote.RemoteAccessService.start(this@MainActivity)
+            }
+        }
         notificationPermissionGranted = hasProfileReminderPermission(this)
         val previousBluetoothState = Triple(
             bluetoothSupported,

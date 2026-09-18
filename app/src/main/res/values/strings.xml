@@ -1033,4 +1033,64 @@
     <string name="support_report_history">%1$s action=%2$s status=%3$s trigger=%4$s operation=%5$s</string>
     <string name="support_report_history_host"> host=%1$s</string>
     <string name="support_report_history_reason"> reason=%1$s</string>
+
+    <string name="remote_title">Remote devices</string>
+    <string name="remote_settings_summary">Pair devices and manage their SIM adapters</string>
+    <string name="remote_delivery_failed">A message could not be delivered. Reconnect and check the operation status.</string>
+    <string name="remote_storage_unavailable">Device keys could not be opened. Unlock this phone and reopen HyperLPA.</string>
+    <string name="remote_action_failed">The remote operation could not be completed.</string>
+    <string name="remote_disconnect_first">Turn off remote access and remove paired devices before changing the relay.</string>
+    <string name="remote_configure_first">Configure the relay first.</string>
+    <string name="remote_connect_first">Connect to the relay first.</string>
+    <string name="remote_pair_wrong_relay">Use a pairing code from another device on the same relay.</string>
+    <string name="remote_already_paired">This device is already paired, or the pairing limit has been reached.</string>
+    <string name="remote_operation_running">Wait for the current operation to finish.</string>
+    <string name="remote_reader_unavailable">The remote adapter is unavailable. Connect the adapter and refresh readers.</string>
+    <string name="remote_device_offline">The device is offline. Remote access must be enabled on both devices.</string>
+    <string name="remote_outcome_unknown">The operation outcome is not verified. HyperLPA will check its status when the device reconnects. Do not repeat the operation until its result is known.</string>
+    <string name="remote_working">Waiting for the remote device…</string>
+    <string name="remote_host_working">A paired device is using an adapter…</string>
+    <string name="remote_request_conflict">This request does not match the original operation.</string>
+    <string name="remote_command_expired">This command expired before it could start. Refresh the adapter and try again.</string>
+    <string name="remote_card_changed">The card in this adapter has changed. Select the adapter again.</string>
+    <string name="remote_confirmation_required">Confirm this action before sending it to the device.</string>
+    <string name="remote_last_profile_confirmation">Confirm before disabling the last enabled profile. The device may lose its connection.</string>
+    <string name="remote_profile_missing">This profile is no longer present on the selected adapter.</string>
+    <string name="remote_notification_title">Remote access is enabled</string>
+    <string name="remote_notification_summary">Paired devices can manage this phone’s SIM adapters. Open HyperLPA to change access.</string>
+    <string name="remote_relay">Relay</string>
+    <string name="remote_relay_address">Relay address</string>
+    <string name="remote_enrollment_key">Enrollment key</string>
+    <string name="remote_device_name">Device name</string>
+    <string name="remote_save">Connect relay</string>
+    <string name="remote_access">Remote access</string>
+    <string name="remote_access_summary">Keep this phone available to paired devices</string>
+    <string name="remote_connected">Connected to relay</string>
+    <string name="remote_disconnected">Disconnected</string>
+    <string name="remote_setup_tip">Deploy the HyperLPA relay to your Cloudflare account, then enter its HTTPS address and enrollment key on each device. The enrollment key registers a device; pairing separately grants access to its adapters.</string>
+    <string name="remote_pairing_tip">Create a pairing code on one device and enter it on the other. Approve the request on the first device. Each paired device can then manage the other’s adapters.</string>
+    <string name="remote_create_code">Create pairing code</string>
+    <string name="remote_copy_code">Copy code</string>
+    <string name="remote_code_copied">Pairing code copied</string>
+    <string name="remote_code_label">Pairing code</string>
+    <string name="remote_pair">Pair device</string>
+    <string name="remote_peers">Paired devices</string>
+    <string name="remote_waiting_approval">Waiting for approval on the other device</string>
+    <string name="remote_incoming_request">Pairing request</string>
+    <string name="remote_approve">Approve</string>
+    <string name="remote_remove">Remove</string>
+    <string name="remote_remove_title">Remove paired device?</string>
+    <string name="remote_remove_summary">This device will lose access to your adapters. Pair again to restore access.</string>
+    <string name="remote_remove_relay">Remove relay</string>
+    <string name="remote_remove_relay_title">Remove this device from the relay?</string>
+    <string name="remote_remove_relay_summary">Remote access will stop and all local pairings will be removed. This does not change installed SIM profiles.</string>
+    <string name="remote_cancel">Cancel</string>
+    <string name="remote_refresh">Refresh devices</string>
+    <string name="remote_online">Online</string>
+    <string name="remote_offline">Offline</string>
+    <string name="remote_pending_operations">An operation is waiting for its result. Keep remote access enabled on both devices.</string>
+    <string name="remote_background_tip">Remote access uses a persistent notification. Allow notifications and background activity for HyperLPA on both phones. A force-stopped app cannot receive commands until it is opened again.</string>
+    <string name="remote_name_save">Save name</string>
+    <string name="remote_operation_limit">The remote operation journal is full. Try again after older records expire.</string>
+    <string name="remote_download_cancelled">The remote download was cancelled before it started.</string>
 </resources>

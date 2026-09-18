@@ -3,9 +3,13 @@ package app.hyperlpa.data
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
-import androidx.compose.runtime.Immutable
 import app.hyperlpa.BuildConfig
 import app.hyperlpa.R
+import app.hyperlpa.remote.RemoteDevices
+import app.hyperlpa.remote.DeviceCommand
+import app.hyperlpa.remote.DeviceAction
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collect
 import app.hyperlpa.data.cloud.decodeMccMnc
 import app.hyperlpa.data.history.NotificationHistoryAction
 import app.hyperlpa.data.history.NotificationHistoryEntry
@@ -100,26 +104,6 @@ internal fun shouldAttemptPostSwitchNotificationDelivery(
 private enum class SessionRefreshScope {
     FULL,
     PROFILE_SWITCH_STATE,
-}
-
-@Immutable
-data class LpaRepositoryState(
-    val readers: List<ReaderInfo> = emptyList(),
-    val selectedReaderId: String? = null,
-    val profiles: List<ProfileInfo> = emptyList(),
-    val notifications: List<LpaNotification> = emptyList(),
-    val euiccInfo: EuiccInfo? = null,
-    val pendingProfileDownload: ProfileDownloadPreview? = null,
-    val completedProfileDownload: ProfileDownloadResult? = null,
-    val discoveredSmdpAddresses: List<String> = emptyList(),
-    val operation: LpaOperation = LpaOperation.Idle,
-    val failure: OperationFailure? = null,
-    val initialized: Boolean = false,
-    val logs: List<ActivityLogEntry> = emptyList(),
-    val readerSnapshotPendingRefresh: Boolean = false,
-) {
-    val selectedReader: ReaderInfo?
-        get() = readers.firstOrNull { it.id == selectedReaderId }
 }
 
 /** Identifies both the logical reader and the physical eUICC currently behind it. */
@@ -220,7 +204,52 @@ class LpaRepository(
     }
     private val mutableState = MutableStateFlow(LpaRepositoryState())
 
-    val state: StateFlow<LpaRepositoryState> = mutableState.asStateFlow()
+    internal val localState: StateFlow<LpaRepositoryState> = mutableState.asStateFlow()
+    private val deviceController = MutableStateFlow<RemoteDevices?>(null)
+    private val presentationState = MutableStateFlow(LpaRepositoryState())
+    val state: StateFlow<LpaRepositoryState>
+        get() = if (deviceController.value == null) mutableState.asStateFlow() else presentationState.asStateFlow()
+    private var devicePresentationJob: Job? = null
+
+    init {
+        devicePresentationJob = backgroundScope.launch { mutableState.collect { presentationState.value = it } }
+    }
+
+    internal fun attachDevices(devices: RemoteDevices) {
+        deviceController.value = devices
+        devicePresentationJob?.cancel()
+        devicePresentationJob = backgroundScope.launch {
+            combine(mutableState, devices.view, devices.readers) { local, remote, readers ->
+                (remote?.lpa ?: local).copy(readers = local.readers + readers)
+            }.collect { presentationState.value = it }
+        }
+    }
+
+    private suspend fun remoteOrLocal(command: DeviceCommand, local: suspend () -> OperationOutcome): OperationOutcome {
+        val devices = deviceController.value
+        return if (devices?.isSelected == true) devices.execute(command) else local()
+    }
+
+    /** No device API may open a second hardware session while a local operation is running. */
+    internal suspend fun <T> withDeviceHostingSession(block: suspend () -> T): T {
+        cancelDeferredCardFollowUp()
+        return operationMutex.withLock {
+            val previous = mutableState.value.selectedReaderId?.let(endpointById::get)
+            val hadSession = session != null
+            closeSession()
+            try {
+                mutableState.value = mutableState.value.copy(operation = LpaOperation.Refreshing(appContext.getString(R.string.remote_host_working)))
+                block()
+            } finally {
+                if (hadSession && previous != null) {
+                    try { connectInternal(previous) }
+                    catch (_: Exception) { mutationOutcomeRequiresRefresh.set(true) }
+                }
+                mutableState.value = mutableState.value.copy(operation = LpaOperation.Idle)
+            }
+        }
+    }
+
 
     fun updateSettings(value: AppSettings) {
         settings = value
@@ -284,6 +313,7 @@ class LpaRepository(
         autoConnect: Boolean = true,
         includeRemoteReaders: Boolean = settings.autoLoadRemoteReaders,
     ) {
+        deviceController.value?.discover()
         cancelDeferredCardFollowUp()
         operationMutex.withLock {
             withOperation(LpaOperation.DiscoveringReaders(appContext.getString(R.string.reader_loading))) {
@@ -481,6 +511,10 @@ class LpaRepository(
     }
 
     suspend fun connect(readerId: String): OperationOutcome {
+        val devices = deviceController.value
+        if (devices?.readers?.value?.any { it.id == readerId } == true) return devices.select(readerId)
+        if (devices != null && !devices.deselect()) return OperationOutcome.Failed(OperationFailure(
+            appContext.getString(R.string.remote_title), appContext.getString(R.string.remote_operation_running)))
         cancelDeferredCardFollowUp()
         return operationMutex.withLock {
             val endpoint = endpointById[readerId]
@@ -492,7 +526,10 @@ class LpaRepository(
         }
     }
 
-    suspend fun refresh(): OperationOutcome {
+    suspend fun refresh(): OperationOutcome =
+        remoteOrLocal(DeviceCommand(DeviceAction.REFRESH)) { refreshLocal() }
+
+    private suspend fun refreshLocal(): OperationOutcome {
         // A manual refresh is serialized with a pending profile-switch follow-up. Do not cancel
         // that follow-up here, or pulling to refresh immediately after switching can prevent the
         // automatic notification delivery from ever running.
@@ -509,7 +546,10 @@ class LpaRepository(
         }
     }
 
-    suspend fun setProfileEnabled(iccid: String, enabled: Boolean): OperationOutcome {
+    suspend fun setProfileEnabled(iccid: String, enabled: Boolean, allowDisconnect: Boolean = false): OperationOutcome =
+        remoteOrLocal(DeviceCommand(DeviceAction.SWITCH, iccid = iccid, enabled = enabled, confirmed = allowDisconnect)) { setProfileEnabledLocal(iccid, enabled, allowDisconnect) }
+
+    private suspend fun setProfileEnabledLocal(iccid: String, enabled: Boolean, allowDisconnect: Boolean): OperationOutcome {
         cancelDeferredCardFollowUp()
         return operationMutex.withLock {
             withOperation(LpaOperation.Switching(iccid, enabled)) {
@@ -520,6 +560,9 @@ class LpaRepository(
                 )
             }
             val switchAffinity = prepareProfileSwitchSession(iccid)
+            check(enabled || allowDisconnect || !requiresLastEnabledProfileConsent(mutableState.value.profiles, iccid)) {
+                appContext.getString(R.string.remote_last_profile_confirmation)
+            }
             var assistant = requireSession().assistant
             var modemRefreshRequested = requireSession().requiresProfileSwitchRefresh
             val desiredState = if (enabled) ProfileState.ENABLED else ProfileState.DISABLED
@@ -588,7 +631,10 @@ class LpaRepository(
         }
     }
 
-    suspend fun deleteProfile(iccid: String) = operationMutex.withLock {
+    suspend fun deleteProfile(iccid: String): OperationOutcome =
+        remoteOrLocal(DeviceCommand(DeviceAction.DELETE, iccid = iccid, confirmed = true)) { deleteProfileLocal(iccid) }
+
+    private suspend fun deleteProfileLocal(iccid: String) = operationMutex.withLock {
         withOperation(LpaOperation.Deleting(iccid)) {
             if (mutationOutcomeRequiresRefresh.get()) {
                 throw OutcomeUnverifiedException(
@@ -728,7 +774,10 @@ class LpaRepository(
         updateProfileState(iccid, enabled = false)
     }
 
-    suspend fun renameProfile(iccid: String, nickname: String) = operationMutex.withLock {
+    suspend fun renameProfile(iccid: String, nickname: String): OperationOutcome =
+        remoteOrLocal(DeviceCommand(DeviceAction.RENAME, iccid = iccid, text = nickname)) { renameProfileLocal(iccid, nickname) }
+
+    private suspend fun renameProfileLocal(iccid: String, nickname: String) = operationMutex.withLock {
         withOperation(LpaOperation.Renaming(iccid)) {
             prepareMutationSession()
             val trimmedNickname = nickname.trim()
@@ -742,7 +791,10 @@ class LpaRepository(
         }
     }
 
-    suspend fun downloadProfile(
+    suspend fun downloadProfile(request: DownloadRequest, confirmBeforeInstall: Boolean = true): OperationOutcome =
+        remoteOrLocal(DeviceCommand(DeviceAction.DOWNLOAD, download = request, confirmBeforeInstall = confirmBeforeInstall)) { downloadProfileLocal(request, confirmBeforeInstall) }
+
+    private suspend fun downloadProfileLocal(
         request: DownloadRequest,
         confirmBeforeInstall: Boolean = true,
     ) = operationMutex.withLock {
@@ -760,23 +812,33 @@ class LpaRepository(
         expectedAffinity: ReaderAffinity?,
         confirmBeforeInstall: Boolean,
         onReady: suspend () -> Unit = {},
-    ): BoundProfileDownloadResult = operationMutex.withLock {
-        val affinityMatches = expectedAffinity != null &&
-            verifyReaderAffinityForProvisioning(expectedAffinity)
-        if (!affinityMatches) {
-            publishReaderAffinityFailure(expectedAffinity)
-            return@withLock BoundProfileDownloadResult.ReaderMismatch
+    ): BoundProfileDownloadResult {
+        val devices = deviceController.value
+        if (devices?.isSelected == true) {
+            if (expectedAffinity == null || devices.affinity() != expectedAffinity) return BoundProfileDownloadResult.ReaderMismatch
+            onReady()
+            return BoundProfileDownloadResult.Attempted(devices.execute(DeviceCommand(DeviceAction.DOWNLOAD,
+                download = request, confirmBeforeInstall = confirmBeforeInstall), expectedAffinity))
         }
-        onReady()
-        BoundProfileDownloadResult.Attempted(
-            downloadProfileLocked(request, confirmBeforeInstall),
-        )
+        return operationMutex.withLock {
+            val affinityMatches = expectedAffinity != null &&
+                verifyReaderAffinityForProvisioning(expectedAffinity)
+            if (!affinityMatches) {
+                publishReaderAffinityFailure(expectedAffinity)
+                return@withLock BoundProfileDownloadResult.ReaderMismatch
+            }
+            onReady()
+            BoundProfileDownloadResult.Attempted(
+                downloadProfileLocked(request, confirmBeforeInstall),
+            )
+        }
     }
 
-    internal fun selectedReaderAffinitySnapshot(): ReaderAffinity? = currentReaderAffinity()
+    internal fun selectedReaderAffinitySnapshot(): ReaderAffinity? =
+        deviceController.value.let { devices -> if (devices?.isSelected == true) devices.affinity() else currentReaderAffinity() }
 
     internal fun matchesSelectedReaderAffinity(expectedAffinity: ReaderAffinity): Boolean =
-        currentReaderAffinity() == expectedAffinity
+        selectedReaderAffinitySnapshot() == expectedAffinity
 
     private suspend fun downloadProfileLocked(
         request: DownloadRequest,
@@ -993,7 +1055,10 @@ class LpaRepository(
         }
     }
 
-    suspend fun processNotification(sequenceNumber: Long) = operationMutex.withLock {
+    suspend fun processNotification(sequenceNumber: Long): OperationOutcome =
+        remoteOrLocal(DeviceCommand(DeviceAction.PROCESS_NOTIFICATION, number = sequenceNumber)) { processNotificationLocal(sequenceNumber) }
+
+    private suspend fun processNotificationLocal(sequenceNumber: Long) = operationMutex.withLock {
         withOperation(LpaOperation.ProcessingNotification(sequenceNumber)) {
             prepareMutationSession()
             val assistant = requireSession().assistant
@@ -1055,7 +1120,10 @@ class LpaRepository(
         }
     }
 
-    suspend fun deleteNotification(sequenceNumber: Long) = operationMutex.withLock {
+    suspend fun deleteNotification(sequenceNumber: Long): OperationOutcome =
+        remoteOrLocal(DeviceCommand(DeviceAction.DELETE_NOTIFICATION, number = sequenceNumber, confirmed = true)) { deleteNotificationLocal(sequenceNumber) }
+
+    private suspend fun deleteNotificationLocal(sequenceNumber: Long) = operationMutex.withLock {
         withOperation(LpaOperation.ProcessingNotification(sequenceNumber)) {
             prepareMutationSession()
             val notification = mutableState.value.notifications
@@ -1095,7 +1163,10 @@ class LpaRepository(
      * therefore be sent after the eUICC has removed the notification. Legacy entries fall back to
      * the card's pending sequence when it is still present.
      */
-    suspend fun resendNotification(entry: NotificationHistoryEntry) =
+    suspend fun resendNotification(entry: NotificationHistoryEntry): OperationOutcome =
+        remoteOrLocal(DeviceCommand(DeviceAction.RESEND_NOTIFICATION, history = entry)) { resendNotificationLocal(entry) }
+
+    private suspend fun resendNotificationLocal(entry: NotificationHistoryEntry) =
         operationMutex.withLock {
             val sequenceNumber = entry.sequenceNumber
                 ?: throw IllegalStateException(appContext.getString(R.string.failure_notification_resend_unavailable))
@@ -1160,7 +1231,10 @@ class LpaRepository(
             }
         }
 
-    suspend fun resetEuiccMemory() = operationMutex.withLock {
+    suspend fun resetEuiccMemory(): OperationOutcome =
+        remoteOrLocal(DeviceCommand(DeviceAction.RESET, confirmed = true)) { resetEuiccMemoryLocal() }
+
+    private suspend fun resetEuiccMemoryLocal() = operationMutex.withLock {
         withOperation(LpaOperation.Resetting(appContext.getString(R.string.operation_resetting_memory))) {
             if (mutationOutcomeRequiresRefresh.get()) {
                 throw OutcomeUnverifiedException(
@@ -1230,7 +1304,10 @@ class LpaRepository(
         }
     }
 
-    suspend fun setDefaultSmdpAddress(address: String) = operationMutex.withLock {
+    suspend fun setDefaultSmdpAddress(address: String): OperationOutcome =
+        remoteOrLocal(DeviceCommand(DeviceAction.SET_SMDP, text = address)) { setDefaultSmdpAddressLocal(address) }
+
+    private suspend fun setDefaultSmdpAddressLocal(address: String) = operationMutex.withLock {
         withOperation(
             LpaOperation.Refreshing(appContext.getString(R.string.operation_updating_default_smdp)),
         ) {
@@ -1243,7 +1320,10 @@ class LpaRepository(
         }
     }
 
-    suspend fun discoverProfiles(smdsAddress: String? = null) = operationMutex.withLock {
+    suspend fun discoverProfiles(smdsAddress: String? = null): OperationOutcome =
+        remoteOrLocal(DeviceCommand(DeviceAction.DISCOVER, text = smdsAddress)) { discoverProfilesLocal(smdsAddress) }
+
+    private suspend fun discoverProfilesLocal(smdsAddress: String? = null) = operationMutex.withLock {
         withOperation(
             LpaOperation.Refreshing(appContext.getString(R.string.operation_discovering_profiles)),
         ) {
@@ -1265,6 +1345,9 @@ class LpaRepository(
     }
 
     suspend fun disconnectSession(): OperationOutcome {
+        val devices = deviceController.value
+        if (devices?.isSelected == true) return if (devices.deselect()) OperationOutcome.Success else
+            OperationOutcome.Failed(OperationFailure(appContext.getString(R.string.remote_title), appContext.getString(R.string.remote_operation_running)))
         cancelProfileDownload()
         cancelDeferredCardFollowUp()
         return operationMutex.withLock {
@@ -1309,19 +1392,27 @@ class LpaRepository(
     }
 
     fun clearFailure() {
+        deviceController.value?.clearFailure()
         mutableState.value = mutableState.value.copy(failure = null)
     }
 
     fun clearProfileDownloadResult() {
+        deviceController.value?.clearDownloadResult()
         mutableState.value = mutableState.value.copy(completedProfileDownload = null)
     }
 
-    fun requiresAuthoritativeRefreshBeforeDownload(): Boolean =
-        downloadOutcomeRequiresRefresh.get()
+    fun requiresAuthoritativeRefreshBeforeDownload(): Boolean = deviceController.value.let { devices ->
+        if (devices?.isSelected == true) devices.needsRefresh else downloadOutcomeRequiresRefresh.get()
+    }
 
-    fun confirmProfileDownload() = resolvePendingProfileDownload(true)
+    fun confirmProfileDownload() {
+        val devices = deviceController.value
+        if (devices?.isSelected == true) devices.decideDownload(true) else resolvePendingProfileDownload(true)
+    }
 
     fun cancelProfileDownload() {
+        val devices = deviceController.value
+        if (devices?.isSelected == true) { devices.decideDownload(false); return }
         downloadCancellationRequested.set(true)
         resolvePendingProfileDownload(false)
     }
@@ -2653,3 +2744,7 @@ private fun Throwable.toFailure(context: Context): OperationFailure {
         }
     }
 }
+
+internal fun requiresLastEnabledProfileConsent(profiles: List<ProfileInfo>, iccid: String): Boolean =
+    profiles.count { it.state == ProfileState.ENABLED } == 1 &&
+        profiles.any { it.iccid == iccid && it.state == ProfileState.ENABLED }
