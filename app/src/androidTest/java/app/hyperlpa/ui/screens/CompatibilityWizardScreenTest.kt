@@ -1,8 +1,9 @@
 package app.hyperlpa.ui.screens
 
-import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import app.hyperlpa.data.LpaRepositoryState
@@ -50,7 +51,9 @@ class CompatibilityWizardScreenTest {
             }
         }
 
-        compose.onNodeWithText("eUICC access setup").assertIsDisplayed()
+        // Miuix exposes expanded and collapsed title nodes during the scroll transition.
+        val titles = compose.onAllNodesWithText("eUICC access setup")
+        assertTrue(titles.fetchSemanticsNodes().indices.any { titles[it].isDisplayed() })
         compose.onNodeWithText(
             "HyperLPA manages eSIM profiles through a compatible eUICC reader. " +
                 "This setup checks what your device can use and points you to the next step.",

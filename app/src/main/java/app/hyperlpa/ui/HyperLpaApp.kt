@@ -431,6 +431,9 @@ fun HyperLpaApp(
                     onUseDiscoveredAddress = viewModel::useDiscoveredSmdpAddress,
                 )
             }
+            entry<AppRoute.RemoteDevices>(swipeDismiss = swipeBackDirection) {
+                app.hyperlpa.ui.screens.RemoteDevicesScreen(viewModel.remoteDevices, viewModel::navigateBack)
+            }
             entry<AppRoute.ReaderSettings>(swipeDismiss = swipeBackDirection) {
                 ReaderSettingsScreen(
                     state = currentState.value,
