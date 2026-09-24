@@ -133,6 +133,36 @@ class DownloadRequestTest {
     }
 
     @Test
+    fun builtActivationCodesParseBackToTheSameFields() {
+        val cases = listOf(
+            DownloadRequest("smdp.example", matchingId = null),
+            DownloadRequest("smdp.example", matchingId = "matching-id"),
+            DownloadRequest("smdp.example", matchingId = "", smdpOid = "1.2.3"),
+            DownloadRequest("smdp.example", matchingId = "matching-id", confirmationCodeRequired = true),
+            DownloadRequest("smdp.example", matchingId = "", smdpOid = "1.2.3", confirmationCodeRequired = true),
+        )
+        cases.forEach { expected ->
+            val code = buildActivationCode(
+                expected.smdpAddress,
+                expected.matchingId,
+                expected.smdpOid,
+                expected.confirmationCodeRequired,
+            )
+            val parsed = DownloadRequest.parse(code)
+            assertEquals(code, expected.smdpAddress, parsed.smdpAddress)
+            assertEquals(code, expected.matchingId, parsed.matchingId)
+            assertEquals(code, expected.smdpOid, parsed.smdpOid)
+            assertEquals(code, expected.confirmationCodeRequired, parsed.confirmationCodeRequired)
+        }
+    }
+
+    @Test
+    fun bareAddressStaysADefaultSmdpDownload() {
+        assertEquals("smdp.example", buildActivationCode("smdp.example", null, null, false))
+        assertEquals("LPA:1\$smdp.example\$", buildActivationCode("smdp.example", "", null, false))
+    }
+
+    @Test
     fun nicknameLimitCountsUnicodeCodePointsWithoutSplittingSurrogates() {
         val value = "a".repeat(63) + "😀" + "tail"
         val truncated = value.takeUnicodeCodePoints(64)

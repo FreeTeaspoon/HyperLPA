@@ -3,6 +3,9 @@ package app.hyperlpa.ui
 import android.app.Application
 import android.graphics.BitmapFactory
 import android.net.Uri
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.core.net.toUri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
@@ -219,6 +222,14 @@ class HyperLpaViewModel(
     private val profileIconStorage = ProfileIconStorage(application)
     private val backStack = navBackStackOf(AppRoute.Shell)
     val navigationBackStack: NavBackStack = backStack
+
+    // Snapshot state, not flows: the display must see these in the same frame as the back stack.
+    var firstRunHandoffPending by mutableStateOf(false)
+        private set
+    var instantNavigation by mutableStateOf(false)
+        private set
+    var startRouteResolved = false
+        private set
     private val selectedTab = MutableStateFlow(AppTab.PROFILES)
     private val searchQuery = MutableStateFlow("")
     private val activationCodeDraft = MutableStateFlow("")
@@ -317,6 +328,18 @@ class HyperLpaViewModel(
     init {
         viewModelScope.launch {
             settingsStore.settings.collect { settings ->
+                if (!startRouteResolved) {
+                    if (shouldOpenCompatibilityWizard(
+                            settingsLoaded = true,
+                            wizardCompleted = settings.compatibilityWizardCompleted,
+                            activationCodeDraft = activationCodeDraft.value,
+                            currentRoute = backStack.singleOrNull() as? AppRoute,
+                        )
+                    ) {
+                        backStack[0] = AppRoute.FirstRunSetup
+                    }
+                    startRouteResolved = true
+                }
                 repository.updateSettings(settings)
                 if (!repository.state.value.initialized) {
                     repository.discoverReaders(autoConnect = settings.autoLoadProfiles)
@@ -561,6 +584,10 @@ class HyperLpaViewModel(
             ?: AppTab.PROFILES
         val restoredRoute = snapshot.route.toAppRoute()
         backStack.clear()
+        if (restoredRoute == AppRoute.FirstRunSetup) {
+            backStack.add(AppRoute.FirstRunSetup)
+            return
+        }
         backStack.add(AppRoute.Shell)
         if (restoredRoute != null && restoredRoute != AppRoute.Shell) {
             backStack.add(restoredRoute)
@@ -601,8 +628,10 @@ class HyperLpaViewModel(
         activationCodeDraft.value = value
     }
 
-    fun refreshReaders() = launch {
-        repository.discoverReaders(autoConnect = true, includeRemoteReaders = true)
+    fun refreshReaders(): Job = viewModelScope.launch {
+        dataMutationMutex.withLock {
+            repository.discoverReaders(autoConnect = true, includeRemoteReaders = true)
+        }
     }
     fun onSimStateChanged() {
         simStateRefreshJob?.cancel()
@@ -1291,8 +1320,25 @@ class HyperLpaViewModel(
             navigationBackStack.removeAt(navigationBackStack.lastIndex)
         }
     }
-    fun openReaderSettingsFromCompatibilityWizard() {
-        navigate(AppRoute.ReaderSettings)
+    fun finishFirstRunSetup() {
+        if (backStack.lastOrNull() != AppRoute.FirstRunSetup) return
+        viewModelScope.launch { settingsStore.setCompatibilityWizardCompleted(true) }
+        backStack.add(AppRoute.Shell)
+        firstRunHandoffPending = true
+    }
+
+    /** Drops the first-run page from under the shell once the shell's open animation has settled. */
+    fun completeFirstRunHandoff() {
+        firstRunHandoffPending = false
+        if (backStack.toList() != listOf(AppRoute.FirstRunSetup, AppRoute.Shell)) return
+        // Removing the root shifts the shell to index 0 while the display still sits at index 1.
+        // An instant transition keeps that one-frame correction from replaying as a back animation.
+        instantNavigation = true
+        backStack.removeAt(0)
+    }
+
+    fun endInstantNavigation() {
+        instantNavigation = false
     }
     fun setEidRedaction(value: RedactionMode) = launch { settingsStore.setEidRedaction(value) }
     fun setIccidRedaction(value: RedactionMode) = launch { settingsStore.setIccidRedaction(value) }
@@ -1477,12 +1523,14 @@ private fun NavKey?.toPersistedRoute(): String? = when (val route = this as? App
     is AppRoute.ProfileDownloadHistorySlot,
     AppRoute.ConfirmProfileDownload,
     -> null
+    AppRoute.FirstRunSetup -> "first-run-setup"
     is AppRoute.ProfileDetails -> "profile:${route.iccid}"
     AppRoute.DownloadProfile -> "download"
     AppRoute.BatchDownload -> "batch"
     AppRoute.EuiccDetails -> "euicc"
     AppRoute.ReaderSettings -> "readers"
     AppRoute.RemoteDevices -> "remote-devices"
+    AppRoute.PhoneNotificationSettings -> "phone-notification-settings"
     is AppRoute.PhoneNotificationHistory -> "phone-notifications:${route.deviceId}"
     AppRoute.NotificationSettings -> "notifications"
     AppRoute.NotificationHistory -> "notification-history"
@@ -1509,11 +1557,13 @@ private fun String?.toAppRoute(): AppRoute? = when {
         .takeIf { it == "local" || it.matches(Regex("[a-f0-9-]{36}")) }
         ?.let(AppRoute::PhoneNotificationHistory)
     else -> when (this) {
+        "first-run-setup" -> AppRoute.FirstRunSetup
         "download" -> AppRoute.DownloadProfile
         "batch" -> AppRoute.BatchDownload
         "euicc" -> AppRoute.EuiccDetails
         "readers" -> AppRoute.ReaderSettings
         "remote-devices" -> AppRoute.RemoteDevices
+        "phone-notification-settings" -> AppRoute.PhoneNotificationSettings
         "notifications" -> AppRoute.NotificationSettings
         "notification-history" -> AppRoute.NotificationHistory
         "appearance" -> AppRoute.AppearanceSettings

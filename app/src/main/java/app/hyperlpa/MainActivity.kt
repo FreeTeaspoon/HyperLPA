@@ -88,7 +88,9 @@ class MainActivity : ComponentActivity() {
                 ),
             )
         }
-        splashScreen.setKeepOnScreenCondition { !viewModel.state.value.settingsLoaded }
+        splashScreen.setKeepOnScreenCondition {
+            !viewModel.state.value.settingsLoaded || !viewModel.startRouteResolved
+        }
         enableEdgeToEdge()
 
         permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
