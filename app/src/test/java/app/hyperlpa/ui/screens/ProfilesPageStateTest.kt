@@ -49,6 +49,32 @@ class ProfilesPageStateTest {
     }
 
     @Test
+    fun refreshingAnEmptyListDoesNotShowTheEmptyState() {
+        val reader = ReaderInfo("reader", "Reader", ReaderKind.OMAPI)
+        val lpa = LpaRepositoryState(
+            readers = listOf(reader),
+            selectedReaderId = reader.id,
+            operation = LpaOperation.Refreshing("Reading profiles"),
+            initialized = true,
+        )
+
+        assertEquals(PageStateKind.CONTENT, profilesPageState(lpa, emptyList()))
+    }
+
+    @Test
+    fun idleEmptyListShowsTheEmptyState() {
+        val reader = ReaderInfo("reader", "Reader", ReaderKind.OMAPI)
+        val lpa = LpaRepositoryState(
+            readers = listOf(reader),
+            selectedReaderId = reader.id,
+            operation = LpaOperation.Idle,
+            initialized = true,
+        )
+
+        assertEquals(PageStateKind.EMPTY, profilesPageState(lpa, emptyList()))
+    }
+
+    @Test
     fun loadedProfilesStayVisibleWhileOptionalArtworkLoads() {
         val reader = ReaderInfo(
             id = "reader",

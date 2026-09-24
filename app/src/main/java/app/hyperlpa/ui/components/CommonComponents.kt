@@ -124,6 +124,8 @@ fun PageStateHost(
     loadingMessage: String? = null,
     emptyTitle: String? = null,
     emptyMessage: String? = null,
+    emptyActionLabel: String? = null,
+    onEmptyAction: (() -> Unit)? = null,
     errorTitle: String? = null,
     errorMessage: String? = null,
     onRetry: (() -> Unit)? = null,
@@ -149,6 +151,8 @@ fun PageStateHost(
                 title = resolvedEmptyTitle,
                 message = resolvedEmptyMessage,
                 modifier = Modifier.fillMaxSize(),
+                actionLabel = emptyActionLabel,
+                onAction = onEmptyAction,
             )
             PageStateKind.ERROR -> ErrorState(
                 title = resolvedErrorTitle,

@@ -627,8 +627,11 @@ internal class RemoteDevices(
         activeRequest.value = id
         mutableView.value = mutableView.value?.let { it.copy(lpa = it.lpa.copy(
             failure = null, completedProfileDownload = null,
-            operation = if (command.action == DeviceAction.DOWNLOAD) LpaOperation.Downloading(app.hyperlpa.domain.model.DownloadStage.PREPARING)
-                else LpaOperation.Refreshing(context.getString(R.string.remote_working)),
+            operation = when {
+                command.action == DeviceAction.DOWNLOAD -> LpaOperation.Downloading(app.hyperlpa.domain.model.DownloadStage.PREPARING)
+                it.lpa.operation is LpaOperation.Connecting -> it.lpa.operation
+                else -> LpaOperation.Refreshing(context.getString(R.string.remote_working))
+            },
         )) }
         try {
             if (!send(device, DeviceMessage("command", requestId = id, command = bound))) {
