@@ -38,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -45,6 +46,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
@@ -54,6 +57,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import app.hyperlpa.data.LpaRepositoryState
@@ -146,6 +150,7 @@ fun ProfilesScreen(
     // Keep both layout positions alive while switching between list and waterfall.
     val listState = rememberLazyListState()
     val gridState = rememberLazyGridState()
+    var headerHeight by remember { mutableIntStateOf(0) }
     // Keep the selected profile in a holder so only the overlay reads its value. A long press
     // must not invalidate the home list while the bottom-sheet entrance animation is running.
     val profileActionsState = remember { mutableStateOf<ProfileInfo?>(null) }
@@ -230,7 +235,11 @@ fun ProfilesScreen(
                 ) {
                     LoadingState(message = loadingMessage)
                 }
-            } else if (state.settings.profileLayout == ProfileLayout.WATERFALL && pageState == PageStateKind.CONTENT) {
+            } else if (
+                state.settings.profileLayout == ProfileLayout.WATERFALL &&
+                pageState == PageStateKind.CONTENT &&
+                profiles.isNotEmpty()
+            ) {
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(280.dp),
                     state = gridState,
@@ -270,80 +279,75 @@ fun ProfilesScreen(
                     }
                 }
             } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .scrollEndHaptic()
-                        .overScrollVertical()
-                        .nestedScroll(scrollBehavior.nestedScrollConnection),
-                    overscrollEffect = null,
-                    contentPadding = PaddingValues(
-                        start = sidePadding,
-                        end = sidePadding,
-                        top = contentPadding.calculateTopPadding(),
-                        bottom = contentPadding.calculateBottomPadding() + 24.dp,
-                    ),
-                ) {
-                    item(key = "header") {
-                        ProfilesHeader(
-                            state = state,
-                            onSearchChange = onSearchChange,
-                            onSelectReader = onSelectReader,
-                            onRefreshReaders = onRefreshReaders,
-                            onOpenEuiccDetails = onOpenEuiccDetails,
-                        )
-                    }
-                    if (pageState == PageStateKind.CONTENT) {
-                        items(profiles, key = ProfileInfo::iccid) { profile ->
-                            ProfileCard(
-                                profile = profile,
-                                artworkBitmap = artworkLoadState.bitmaps[profile.iccid],
-                                state = state,
-                                switchEnabled = !profileSwitchLocked,
-                                onOpen = { onOpenProfile(profile) },
-                                onEnableChange = { enabled -> onEnableChange(profile.iccid, enabled) },
-                                onLongPress = { profileActionsState.value = profile },
-                            )
-                        }
-                    } else {
-                        item(key = "state") {
-                            PageStateHost(
-                                state = pageState,
-                                modifier = Modifier.fillParentMaxSize(),
-                                loadingMessage = loadingMessage,
-                                emptyTitle = when {
-                                    state.lpa.selectedReader == null -> stringResource(R.string.profiles_choose_reader)
-                                    hasNoSearchResults -> stringResource(R.string.profiles_none_found)
-                                    else -> stringResource(R.string.profiles_none_installed)
-                                },
-                                emptyMessage = when {
-                                    state.lpa.selectedReader == null -> stringResource(R.string.profiles_choose_reader_message)
-                                    hasNoSearchResults -> stringResource(R.string.profiles_search_empty_message)
-                                    else -> stringResource(R.string.profiles_none_installed_message)
-                                },
-                                errorTitle = noReaderTitle,
-                                errorMessage = noReaderMessage,
-                                onRetry = onRefreshReaders,
-                            ) {}
-                        }
-                    }
-                    if (
-                        pageState == PageStateKind.EMPTY &&
-                        state.lpa.selectedReader != null &&
-                        state.lpa.operation !is LpaOperation.Connecting &&
-                        !hasNoSearchResults
+                val listTopPadding = contentPadding.calculateTopPadding()
+                val listBottomPadding = contentPadding.calculateBottomPadding() + 24.dp
+                val showDownloadAction = state.lpa.selectedReader != null &&
+                    state.lpa.operation !is LpaOperation.Connecting &&
+                    !hasNoSearchResults
+                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                    val listViewportHeight = maxHeight - listTopPadding - listBottomPadding
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .scrollEndHaptic()
+                            .overScrollVertical()
+                            .nestedScroll(scrollBehavior.nestedScrollConnection),
+                        overscrollEffect = null,
+                        contentPadding = PaddingValues(
+                            start = sidePadding,
+                            end = sidePadding,
+                            top = listTopPadding,
+                            bottom = listBottomPadding,
+                        ),
                     ) {
-                        item(key = "download") {
-                            TextButton(
-                                text = stringResource(R.string.action_download_profile),
-                                onClick = onDownload,
-                                colors = ButtonDefaults.textButtonColorsPrimary(),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp)
-                                    .padding(top = 12.dp),
+                        item(key = "header") {
+                            ProfilesHeader(
+                                state = state,
+                                onSearchChange = onSearchChange,
+                                onSelectReader = onSelectReader,
+                                onRefreshReaders = onRefreshReaders,
+                                onOpenEuiccDetails = onOpenEuiccDetails,
+                                modifier = Modifier.onSizeChanged { headerHeight = it.height },
                             )
+                        }
+                        if (pageState == PageStateKind.CONTENT) {
+                            items(profiles, key = ProfileInfo::iccid) { profile ->
+                                ProfileCard(
+                                    profile = profile,
+                                    artworkBitmap = artworkLoadState.bitmaps[profile.iccid],
+                                    state = state,
+                                    switchEnabled = !profileSwitchLocked,
+                                    onOpen = { onOpenProfile(profile) },
+                                    onEnableChange = { enabled -> onEnableChange(profile.iccid, enabled) },
+                                    onLongPress = { profileActionsState.value = profile },
+                                )
+                            }
+                        }
+                        if (pageState != PageStateKind.CONTENT || profiles.isEmpty()) {
+                            item(key = "state") {
+                                PageStateHost(
+                                    state = pageState,
+                                    modifier = Modifier.fillRemainingHeight(listViewportHeight) { headerHeight },
+                                    loadingMessage = loadingMessage,
+                                    emptyTitle = when {
+                                        state.lpa.selectedReader == null -> stringResource(R.string.profiles_choose_reader)
+                                        hasNoSearchResults -> stringResource(R.string.profiles_none_found)
+                                        else -> stringResource(R.string.profiles_none_installed)
+                                    },
+                                    emptyMessage = when {
+                                        state.lpa.selectedReader == null -> stringResource(R.string.profiles_choose_reader_message)
+                                        hasNoSearchResults -> stringResource(R.string.profiles_search_empty_message)
+                                        else -> stringResource(R.string.profiles_none_installed_message)
+                                    },
+                                    emptyActionLabel = stringResource(R.string.action_download_profile)
+                                        .takeIf { showDownloadAction },
+                                    onEmptyAction = onDownload.takeIf { showDownloadAction },
+                                    errorTitle = noReaderTitle,
+                                    errorMessage = noReaderMessage,
+                                    onRetry = onRefreshReaders,
+                                ) {}
+                            }
                         }
                     }
                 }
@@ -372,8 +376,21 @@ internal fun profilesPageState(
     awaitInitialArtwork && lpa.profiles.isNotEmpty() -> PageStateKind.LOADING
     lpa.readers.isEmpty() -> PageStateKind.ERROR
     lpa.selectedReader == null -> PageStateKind.EMPTY
+    // An empty list is unconfirmed until the refresh finishes; the pull-to-refresh indicator
+    // already shows its progress, so no page state is drawn below the header meanwhile.
+    lpa.operation is LpaOperation.Refreshing && lpa.profiles.isEmpty() -> PageStateKind.CONTENT
     profiles.isEmpty() -> PageStateKind.EMPTY
     else -> PageStateKind.CONTENT
+}
+
+private fun Modifier.fillRemainingHeight(
+    availableHeight: Dp,
+    occupiedHeight: () -> Int,
+): Modifier = layout { measurable, constraints ->
+    val minHeight = (availableHeight.roundToPx() - occupiedHeight())
+        .coerceIn(0, constraints.maxHeight)
+    val placeable = measurable.measure(constraints.copy(minHeight = minHeight))
+    layout(placeable.width, placeable.height) { placeable.place(0, 0) }
 }
 
 @Composable
@@ -513,6 +530,7 @@ private fun ProfilesHeader(
     onSelectReader: (String) -> Unit,
     onRefreshReaders: () -> Unit,
     onOpenEuiccDetails: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val enrichmentLoading = !state.profileEnrichmentReady && state.lpa.profiles.isNotEmpty()
     val enrichmentEid = state.lpa.euiccInfo?.eid
@@ -524,7 +542,7 @@ private fun ProfilesHeader(
             showEnrichmentLoading = true
         }
     }
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(modifier = modifier.fillMaxWidth()) {
         val showEid = state.settings.showEidOnHome && state.lpa.euiccInfo != null
         val cardName = state.currentEuiccName
         if (state.settings.showReaderSelectorOnHome || showEid) {
