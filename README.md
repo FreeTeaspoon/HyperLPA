@@ -92,6 +92,13 @@ available.
 
 For remote device control, deploy the [encrypted relay](relay/README.md), then
 open **Settings → Remote devices** on each phone to register and pair them.
+On the source phone, **Share phone notifications** in Remote devices lets you
+enable Android notification access, choose apps after they first post a notification,
+and explicitly allow individual paired devices to view their history. The phone
+retains up to 150 entries for seven days in Keystore-encrypted local storage;
+viewers request them over the existing encrypted relay and do not save an archive.
+Android can hide sensitive notification contents from ordinary listeners. This
+feature does not read SMS directly or override Android's notification restrictions.
 The phone holding the SIM performs downloads and other card operations. The
 relay forwards encrypted commands and results. A web management UI is planned
 for a later build; this build manages paired devices from Android.

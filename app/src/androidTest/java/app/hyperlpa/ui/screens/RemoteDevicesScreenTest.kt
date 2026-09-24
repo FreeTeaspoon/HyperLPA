@@ -34,7 +34,7 @@ class RemoteDevicesScreenTest {
         val app = ApplicationProvider.getApplicationContext<HyperLpaApplication>()
         compose.setContent {
             HyperLpaTheme(settings = AppSettings()) {
-                RemoteDevicesScreen(app.remoteDevices, onBack = {})
+                RemoteDevicesScreen(app.remoteDevices, onBack = {}, onOpenHistory = {})
             }
         }
         compose.waitUntil(10_000) { app.remoteDevices.ui.value.loaded }

@@ -432,7 +432,15 @@ fun HyperLpaApp(
                 )
             }
             entry<AppRoute.RemoteDevices>(swipeDismiss = swipeBackDirection) {
-                app.hyperlpa.ui.screens.RemoteDevicesScreen(viewModel.remoteDevices, viewModel::navigateBack)
+                app.hyperlpa.ui.screens.RemoteDevicesScreen(
+                    viewModel.remoteDevices, viewModel::navigateBack,
+                    onOpenHistory = { viewModel.navigate(AppRoute.PhoneNotificationHistory(it)) },
+                )
+            }
+            entry<AppRoute.PhoneNotificationHistory>(swipeDismiss = swipeBackDirection) { route ->
+                app.hyperlpa.ui.screens.PhoneNotificationHistoryScreen(
+                    viewModel.remoteDevices, route.deviceId, viewModel::navigateBack,
+                )
             }
             entry<AppRoute.ReaderSettings>(swipeDismiss = swipeBackDirection) {
                 ReaderSettingsScreen(

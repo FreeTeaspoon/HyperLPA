@@ -227,6 +227,7 @@ fun DetailLazyScaffold(
                         .fillMaxSize()
                         .horizontalCutoutPadding(),
                 ) { sidePadding ->
+                    val pageContent = MishkaPageContent { content(sidePadding) }
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxSize()
@@ -239,11 +240,11 @@ fun DetailLazyScaffold(
                         contentPadding = PaddingValues(
                             start = sidePadding,
                             end = sidePadding,
-                            top = padding.calculateTopPadding(),
+                            top = padding.calculateTopPadding() + if (hasBackground) 0.dp else pageContent.topPadding,
                             bottom = padding.calculateBottomPadding() + 24.dp,
                         ),
                     ) {
-                        content(sidePadding)
+                        pageContent.content(this)
                     }
                 }
             }

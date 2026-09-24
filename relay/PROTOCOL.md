@@ -71,6 +71,16 @@ record. `missing` means no record is available and never authorizes retrying a
 mutation. `decision` and `cancel` refer to an active download request. `unpair`
 removes the peer's key. All non-pairing commands require an approved peer.
 
+`phone_notifications_request` asks a source phone for its locally stored Android
+notification history. The source replies with `phone_notifications`, including
+`phoneNotificationsAvailable` and a bounded list, only if sharing is enabled and
+that peer is explicitly allowed. `phone_notifications_changed` prompts an open
+controller to request a fresh snapshot. `phone_notifications_delete` sends an entry
+ID for deletion on the source; it is ignored without that peer's authorization.
+Notification history is never a relay-side archive and is not tied to an eUICC
+reader or EID. Revocation clears viewers when delivered, but cannot erase copies
+exported or saved elsewhere.
+
 A snapshot larger than 600,000 UTF-8 bytes is split into `part` messages with a
 `DevicePart` containing `transfer`, zero-based `index`, `count`, and base64url
 `data`. Parts are independently encrypted. Reassembly is scoped to the authenticated

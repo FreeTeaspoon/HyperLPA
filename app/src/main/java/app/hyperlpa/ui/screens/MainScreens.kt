@@ -1,5 +1,7 @@
 package app.hyperlpa.ui.screens
 
+import app.hyperlpa.ui.components.MishkaPageContent
+import app.hyperlpa.ui.components.PageStart
 import android.graphics.Bitmap
 import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
@@ -1087,9 +1089,9 @@ fun NotificationsScreen(
                     bottom = contentPadding.calculateBottomPadding() + 24.dp,
                 ),
             ) {
-                item { SectionHeading(stringResource(R.string.notifications_pending_section)) }
+                item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.notifications_pending_section)) }
                 if (state.lpa.selectedReader == null) {
-                    item {
+                    item(contentType = PageStart.Viewport) {
                         EmptyState(
                             title = stringResource(R.string.notifications_no_reader),
                             message = stringResource(R.string.notifications_no_reader_message),
@@ -1098,7 +1100,7 @@ fun NotificationsScreen(
                         )
                     }
                 } else if (state.lpa.notifications.isEmpty()) {
-                    item {
+                    item(contentType = PageStart.Viewport) {
                         EmptyState(
                             title = stringResource(R.string.notifications_none_pending),
                             message = stringResource(R.string.notifications_none_pending_message),
@@ -1173,7 +1175,7 @@ fun NotificationHistoryScreen(
         onBack = onBack,
     ) {
         if (state.notificationHistory.isEmpty()) {
-            item {
+            item(contentType = PageStart.Viewport) {
                 EmptyState(
                     title = stringResource(R.string.notification_history_empty),
                     message = stringResource(R.string.notification_history_empty_message),
@@ -1814,7 +1816,7 @@ fun ToolsScreen(
         contentPadding = contentPadding,
         scrollBehavior = scrollBehavior,
     ) {
-        item { SectionHeading(stringResource(R.string.tools_profile_management)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.tools_profile_management)) }
         item {
             GroupedCard {
                 ToolPreference(
@@ -1841,7 +1843,7 @@ fun ToolsScreen(
                 }
             }
         }
-        item { SectionHeading(stringResource(R.string.tools_organisation)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.tools_organisation)) }
         item {
             GroupedCard {
                 ToolPreference(
@@ -1860,7 +1862,7 @@ fun ToolsScreen(
                 }
             }
         }
-        item { SectionHeading(stringResource(R.string.tools_diagnostics)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.tools_diagnostics)) }
         item {
             GroupedCard {
                 ToolPreference(
@@ -1907,7 +1909,7 @@ fun SettingsScreen(
         contentPadding = contentPadding,
         scrollBehavior = scrollBehavior,
     ) {
-        item { SectionHeading(stringResource(R.string.settings_personalisation)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.settings_personalisation)) }
         item {
             GroupedCard {
                 ArrowPreference(
@@ -1922,7 +1924,7 @@ fun SettingsScreen(
                 )
             }
         }
-        item { SectionHeading(stringResource(R.string.settings_lpa_section)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.settings_lpa_section)) }
         item {
             GroupedCard {
                 ArrowPreference(
@@ -1957,7 +1959,7 @@ fun SettingsScreen(
                 )
             }
         }
-        item { SectionHeading(stringResource(R.string.settings_privacy_section)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.settings_privacy_section)) }
         item {
             GroupedCard {
                 ArrowPreference(
@@ -1967,7 +1969,7 @@ fun SettingsScreen(
                 )
             }
         }
-        item { SectionHeading(stringResource(R.string.settings_app_section)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.settings_app_section)) }
         item {
             GroupedCard {
                 ArrowPreference(
@@ -1997,6 +1999,7 @@ private fun PreferencePage(
     scrollBehavior: ScrollBehavior,
     content: LazyListScope.() -> Unit,
 ) {
+    val pageContent = MishkaPageContent(content)
     CenteredContent(modifier = modifier) { sidePadding ->
         LazyColumn(
             modifier = Modifier
@@ -2008,10 +2011,10 @@ private fun PreferencePage(
             contentPadding = PaddingValues(
                 start = sidePadding,
                 end = sidePadding,
-                top = contentPadding.calculateTopPadding(),
+                top = contentPadding.calculateTopPadding() + pageContent.topPadding,
                 bottom = contentPadding.calculateBottomPadding() + 24.dp,
             ),
-            content = content,
+            content = pageContent.content,
         )
     }
 }

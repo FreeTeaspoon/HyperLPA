@@ -1483,6 +1483,7 @@ private fun NavKey?.toPersistedRoute(): String? = when (val route = this as? App
     AppRoute.EuiccDetails -> "euicc"
     AppRoute.ReaderSettings -> "readers"
     AppRoute.RemoteDevices -> "remote-devices"
+    is AppRoute.PhoneNotificationHistory -> "phone-notifications:${route.deviceId}"
     AppRoute.NotificationSettings -> "notifications"
     AppRoute.NotificationHistory -> "notification-history"
     AppRoute.AppearanceSettings -> "appearance"
@@ -1504,6 +1505,9 @@ private fun String?.toAppRoute(): AppRoute? = when {
     startsWith("profile:") -> substringAfter("profile:")
         .takeIf(String::isNotBlank)
         ?.let(AppRoute::ProfileDetails)
+    startsWith("phone-notifications:") -> substringAfter("phone-notifications:")
+        .takeIf { it == "local" || it.matches(Regex("[a-f0-9-]{36}")) }
+        ?.let(AppRoute::PhoneNotificationHistory)
     else -> when (this) {
         "download" -> AppRoute.DownloadProfile
         "batch" -> AppRoute.BatchDownload

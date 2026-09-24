@@ -1,5 +1,6 @@
 package app.hyperlpa.ui.screens
 
+import app.hyperlpa.ui.components.PageStart
 import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -189,7 +190,7 @@ fun AppearanceSettingsScreen(
                     bottom = innerPadding.calculateBottomPadding() + 24.dp,
                 ),
             ) {
-                item { SectionHeading(stringResource(R.string.appearance_color_theme)) }
+                item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.appearance_color_theme)) }
                 item {
                     GroupedCard {
                         OverlayDropdownPreference(
@@ -242,7 +243,7 @@ fun AppearanceSettingsScreen(
                     }
                 }
 
-                item { SectionHeading(stringResource(R.string.appearance_interface_effects)) }
+                item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.appearance_interface_effects)) }
                 item {
                     GroupedCard {
                         SwitchPreference(
@@ -301,7 +302,7 @@ fun AppearanceSettingsScreen(
                     }
                 }
 
-                item { SectionHeading(stringResource(R.string.appearance_bottom_navigation)) }
+                item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.appearance_bottom_navigation)) }
                 item {
                     GroupedCard {
                         SwitchPreference(
@@ -415,7 +416,7 @@ fun ProfileDisplaySettingsScreen(
     val phoneFormatStrategies = PhoneFormatStrategy.entries
 
     DetailLazyScaffold(title = stringResource(R.string.settings_profile_display), onBack = onBack) { _ ->
-        item { SectionHeading(stringResource(R.string.profile_display_layout_section)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.profile_display_layout_section)) }
         item {
             GroupedCard {
                 OverlayDropdownPreference(
@@ -427,7 +428,7 @@ fun ProfileDisplaySettingsScreen(
                 )
             }
         }
-        item { SectionHeading(stringResource(R.string.profile_display_page_section)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.profile_display_page_section)) }
         item {
             GroupedCard {
                 OverlayDropdownPreference(
@@ -456,7 +457,7 @@ fun ProfileDisplaySettingsScreen(
                 )
             }
         }
-        item { SectionHeading(stringResource(R.string.profile_display_home_cards)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.profile_display_home_cards)) }
         item {
             GroupedCard {
                 SwitchPreference(
@@ -515,7 +516,7 @@ fun ProfileDisplaySettingsScreen(
                 )
             }
         }
-        item { SectionHeading(stringResource(R.string.profile_display_home_reader)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.profile_display_home_reader)) }
         item {
             GroupedCard {
                 SwitchPreference(
@@ -626,7 +627,7 @@ fun ReaderSettingsScreen(
         else -> null
     }
     DetailLazyScaffold(title = stringResource(R.string.reader_settings_title), onBack = onBack) { _ ->
-        item { SectionHeading(stringResource(R.string.reader_settings_behaviour)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.reader_settings_behaviour)) }
         item {
             GroupedCard {
                 SwitchPreference(
@@ -650,7 +651,7 @@ fun ReaderSettingsScreen(
             }
         }
 
-        item { SectionHeading(stringResource(R.string.reader_backends_section)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.reader_backends_section)) }
         item {
             GroupedCard {
                 SwitchPreference(
@@ -727,7 +728,7 @@ fun ReaderSettingsScreen(
             }
         }
 
-        item { SectionHeading(stringResource(R.string.reader_diagnostics_section)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.reader_diagnostics_section)) }
         item {
             GroupedCard {
                 ArrowPreference(
@@ -802,7 +803,7 @@ fun ReaderSettingsScreen(
             }
         }
 
-        item { SectionHeading(stringResource(R.string.reader_available_now)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.reader_available_now)) }
         if (state.lpa.readers.isEmpty()) {
             item {
                 GroupedCard {
@@ -1071,7 +1072,7 @@ fun NotificationSettingsScreen(
     viewModel: HyperLpaViewModel,
 ) {
     DetailLazyScaffold(title = stringResource(R.string.notification_settings_title), onBack = onBack) { _ ->
-        item { SectionHeading(stringResource(R.string.notification_settings_check_section)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.notification_settings_check_section)) }
         item {
             GroupedCard {
                 SwitchPreference(
@@ -1101,7 +1102,7 @@ fun NotificationSettingsScreen(
                 )
             }
         }
-        item { SectionHeading(stringResource(R.string.notification_settings_processing)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.notification_settings_processing)) }
         item {
             GroupedCard {
                 SwitchPreference(
@@ -1132,7 +1133,7 @@ fun PrivacySettingsScreen(
     val profileNameRedactionModes = ProfileNameRedactionMode.entries
     var showClearCloudCachesConfirmation by remember { mutableStateOf(false) }
     DetailLazyScaffold(title = stringResource(R.string.privacy_title), onBack = onBack) { _ ->
-        item { SectionHeading(stringResource(R.string.privacy_sensitive_identifiers)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.privacy_sensitive_identifiers)) }
         item {
             GroupedCard {
                 OverlayDropdownPreference(
@@ -1151,7 +1152,7 @@ fun PrivacySettingsScreen(
                 )
             }
         }
-        item { SectionHeading(stringResource(R.string.privacy_profile_names)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.privacy_profile_names)) }
         item {
             GroupedCard {
                 OverlayDropdownPreference(
@@ -1165,7 +1166,7 @@ fun PrivacySettingsScreen(
                 )
             }
         }
-        item { SectionHeading(stringResource(R.string.privacy_nekoko_cloud)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.privacy_nekoko_cloud)) }
         item {
             GroupedCard {
                 SwitchPreference(
@@ -1187,7 +1188,7 @@ fun PrivacySettingsScreen(
                 )
             }
         }
-        item {
+        item(contentType = PageStart.Inset) {
             TipCard(text = stringResource(R.string.privacy_cloud_data_use_summary))
         }
     }
@@ -1222,7 +1223,7 @@ fun AdvancedSettingsScreen(
     var imeiText by remember(settings.imei) { mutableStateOf(settings.imei) }
 
     DetailLazyScaffold(title = stringResource(R.string.advanced_title), onBack = onBack) { _ ->
-        item { SectionHeading(stringResource(R.string.advanced_lpa_protocol)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.advanced_lpa_protocol)) }
         item {
             GroupedCard {
                 ArrowPreference(
@@ -1246,7 +1247,7 @@ fun AdvancedSettingsScreen(
                 )
             }
         }
-        item { SectionHeading(stringResource(R.string.advanced_diagnostics)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.advanced_diagnostics)) }
         item {
             GroupedCard {
                 SwitchPreference(
@@ -1344,7 +1345,7 @@ fun BackupRestoreSettingsScreen(
     }
 
     DetailLazyScaffold(title = stringResource(R.string.backup_title), onBack = onBack) { _ ->
-        item { SectionHeading(stringResource(R.string.backup_section)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.backup_section)) }
         item {
             GroupedCard {
                 ArrowPreference(
@@ -1355,7 +1356,7 @@ fun BackupRestoreSettingsScreen(
                 )
             }
         }
-        item { SectionHeading(stringResource(R.string.backup_restore_section)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.backup_restore_section)) }
         item {
             GroupedCard {
                 ArrowPreference(
@@ -1377,7 +1378,7 @@ fun BackupRestoreSettingsScreen(
                 )
             }
         }
-        item { SectionHeading(stringResource(R.string.backup_privacy_section)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.backup_privacy_section)) }
         item {
             GroupedCard {
                 ArrowPreference(
@@ -1388,7 +1389,7 @@ fun BackupRestoreSettingsScreen(
                 )
             }
         }
-        item { SectionHeading(stringResource(R.string.backup_not_included)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.backup_not_included)) }
         item {
             GroupedCard {
                 ArrowPreference(
@@ -1597,7 +1598,7 @@ fun AidManagerScreen(
     }
 
     DetailLazyScaffold(title = stringResource(R.string.aid_manager_title), onBack = onBack) { _ ->
-        item {
+        item(contentType = PageStart.Inset) {
             TipCard(text = stringResource(R.string.aid_manager_summary))
         }
         item {
