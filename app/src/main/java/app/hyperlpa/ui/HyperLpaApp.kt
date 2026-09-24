@@ -2,6 +2,7 @@ package app.hyperlpa.ui
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.EaseInOut
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -39,6 +40,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -100,6 +102,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
@@ -135,8 +138,11 @@ import top.yukonga.miuix.kmp.nav.core.NavCornerClipMode
 import top.yukonga.miuix.kmp.nav.core.NavDisplay
 import top.yukonga.miuix.kmp.nav.core.NavDisplayEffects
 import top.yukonga.miuix.kmp.nav.core.rememberNavSystemCornerRadius
+import top.yukonga.miuix.kmp.nav.transition.NavMotion
+import top.yukonga.miuix.kmp.nav.transition.NavSettleSpec
 import top.yukonga.miuix.kmp.nav.transition.NavSwipeDirection
 import top.yukonga.miuix.kmp.nav.transition.NavTransitions
+import top.yukonga.miuix.kmp.nav.transition.navGraphicsTransition
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
@@ -176,23 +182,6 @@ fun HyperLpaApp(
         else -> NavSwipeDirection.LeftToRight
     }
 
-    LaunchedEffect(
-        state.settingsLoaded,
-        state.settings.compatibilityWizardCompleted,
-        state.activationCodeDraft,
-        backStack.lastOrNull(),
-    ) {
-        if (shouldOpenCompatibilityWizard(
-                settingsLoaded = state.settingsLoaded,
-                wizardCompleted = state.settings.compatibilityWizardCompleted,
-                activationCodeDraft = state.activationCodeDraft,
-                currentRoute = backStack.lastOrNull() as? AppRoute,
-            )
-        ) {
-            viewModel.navigate(AppRoute.CompatibilityWizard)
-        }
-    }
-
     val snackbarScope = rememberCoroutineScope()
     val showSnackbar: (String, top.yukonga.miuix.kmp.basic.SnackbarDuration) -> Unit = remember(
         snackbarHostState,
@@ -201,6 +190,19 @@ fun HyperLpaApp(
         { message, duration ->
             snackbarScope.launch {
                 snackbarHostState.showSnackbar(message = message, duration = duration)
+            }
+        }
+    }
+
+    LaunchedEffect(viewModel) {
+        snapshotFlow { viewModel.firstRunHandoffPending }.filter { it }.collect {
+            try {
+                // A Compose animation, unlike delay(), follows the system animation scale as the push does.
+                animate(0f, 1f, animationSpec = tween(FirstRunHandoffMillis)) { _, _ -> }
+                viewModel.completeFirstRunHandoff()
+                repeat(3) { withFrameNanos { } }
+            } finally {
+                viewModel.endInstantNavigation()
             }
         }
     }
@@ -223,7 +225,7 @@ fun HyperLpaApp(
                 NavDisplay(
                 backStack = backStack,
                 onBack = viewModel::navigateBack,
-                transition = NavTransitions.MiuixDefault,
+                transition = if (viewModel.instantNavigation) InstantNavTransition else NavTransitions.MiuixDefault,
                 effects = NavDisplayEffects(
                     enableCornerClip = true,
                     cornerClipRadius = navCornerRadius,
@@ -302,9 +304,14 @@ fun HyperLpaApp(
                     initialValue = currentState.value.activationCodeDraft,
                     imei = currentState.value.settings.imei,
                     busy = singleDownloadActive,
+                    readers = currentState.value.lpa.readers,
+                    selectedReaderId = currentState.value.lpa.selectedReaderId,
+                    readerSelectable = currentState.value.lpa.operation is LpaOperation.Idle,
                     onBack = viewModel::navigateBack,
                     onValueChange = viewModel::setActivationCodeDraft,
                     onScanQr = onScanQr,
+                    onSelectReader = viewModel::connectReader,
+                    onFindReaders = { currentOnRefreshReaders.value() },
                     onContinue = viewModel::downloadProfile,
                 )
             }
@@ -434,7 +441,14 @@ fun HyperLpaApp(
             entry<AppRoute.RemoteDevices>(swipeDismiss = swipeBackDirection) {
                 app.hyperlpa.ui.screens.RemoteDevicesScreen(
                     viewModel.remoteDevices, viewModel::navigateBack,
-                    onOpenHistory = { viewModel.navigate(AppRoute.PhoneNotificationHistory(it)) },
+                    onOpenDevice = { viewModel.navigate(AppRoute.PhoneNotificationHistory(it)) },
+                    onOpenPhoneNotifications = { viewModel.navigate(AppRoute.PhoneNotificationSettings) },
+                )
+            }
+            entry<AppRoute.PhoneNotificationSettings>(swipeDismiss = swipeBackDirection) {
+                app.hyperlpa.ui.screens.PhoneNotificationSettingsScreen(
+                    viewModel.remoteDevices, viewModel::navigateBack,
+                    onOpenHistory = { viewModel.navigate(AppRoute.PhoneNotificationHistory("local")) },
                 )
             }
             entry<AppRoute.PhoneNotificationHistory>(swipeDismiss = swipeBackDirection) { route ->
@@ -455,18 +469,25 @@ fun HyperLpaApp(
                     onOpenBluetoothSettings = { currentOnOpenBluetoothSettings.value() },
                 )
             }
-            entry<AppRoute.CompatibilityWizard>(swipeDismiss = NavSwipeDirection.None) {
+            entry<AppRoute.CompatibilityWizard>(swipeDismiss = swipeBackDirection) {
                 CompatibilityWizardScreen(
                     state = currentState.value,
-                    bluetoothReaderState = currentBluetoothReaderState.value,
+                    firstRun = false,
                     onBack = viewModel::dismissCompatibilityWizard,
-                    onDiscoverReaders = { currentOnRefreshReaders.value() },
-                    onRequestBluetoothPermission = {
-                        currentOnRequestBluetoothPermission.value()
-                    },
-                    onOpenBluetoothSettings = { currentOnOpenBluetoothSettings.value() },
-                    onOpenReaderSettings = viewModel::openReaderSettingsFromCompatibilityWizard,
+                    onRefreshReaders = { viewModel.refreshReaders().join() },
                     onContinue = viewModel::dismissCompatibilityWizard,
+                )
+            }
+            entry<AppRoute.FirstRunSetup>(
+                transition = InstantNavTransition,
+                swipeDismiss = NavSwipeDirection.None,
+            ) {
+                CompatibilityWizardScreen(
+                    state = currentState.value,
+                    firstRun = true,
+                    onBack = {},
+                    onRefreshReaders = { viewModel.refreshReaders().join() },
+                    onContinue = viewModel::finishFirstRunSetup,
                 )
             }
             entry<AppRoute.NotificationSettings>(swipeDismiss = swipeBackDirection) {
@@ -918,6 +939,15 @@ private fun MainTabPage(
         }
     }
 }
+
+// Longer than the 500 ms Miuix push, so the shell has settled before first run is removed below it.
+private const val FirstRunHandoffMillis = 600
+
+// No motion, no dim and a zero-length settle, so a stack correction never shows as a transition.
+private val InstantNavTransition = navGraphicsTransition(
+    motion = NavMotion(programmatic = NavSettleSpec.Tween(durationMillis = 0, easing = LinearEasing)),
+    scrim = { 0f },
+) {}
 
 private val HyperLpaUiState.isProfilesLoading: Boolean
     get() = !lpa.initialized ||

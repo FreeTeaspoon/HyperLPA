@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.collect
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
+import top.yukonga.miuix.kmp.basic.PullToRefresh
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTopAppBar
 import top.yukonga.miuix.kmp.blur.layerBackdrop
@@ -55,6 +56,8 @@ fun DetailLazyScaffold(
     background: (@Composable BoxScope.() -> Unit)? = null,
     collapsedTitle: String? = null,
     collapsedBarRevealStart: Dp = 0.dp,
+    isRefreshing: Boolean = false,
+    onRefresh: (() -> Unit)? = null,
     content: LazyListScope.(sidePadding: Dp) -> Unit,
 ) {
     val scrollBehavior = MiuixScrollBehavior()
@@ -222,30 +225,44 @@ fun DetailLazyScaffold(
                         content = background,
                     )
                 }
-                CenteredContent(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .horizontalCutoutPadding(),
-                ) { sidePadding ->
-                    val pageContent = MishkaPageContent { content(sidePadding) }
-                    LazyColumn(
+                val list: @Composable () -> Unit = {
+                    CenteredContent(
                         modifier = Modifier
                             .fillMaxSize()
-                            .scrollEndHaptic()
-                            .overScrollVertical()
-                            .nestedScroll(scrollBehavior.nestedScrollConnection)
-                            .nestedScroll(backgroundScrollConnection),
-                        state = listState,
-                        overscrollEffect = null,
-                        contentPadding = PaddingValues(
-                            start = sidePadding,
-                            end = sidePadding,
-                            top = padding.calculateTopPadding() + if (hasBackground) 0.dp else pageContent.topPadding,
-                            bottom = padding.calculateBottomPadding() + 24.dp,
-                        ),
-                    ) {
-                        pageContent.content(this)
+                            .horizontalCutoutPadding(),
+                    ) { sidePadding ->
+                        val pageContent = MishkaPageContent { content(sidePadding) }
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .scrollEndHaptic()
+                                .overScrollVertical()
+                                .nestedScroll(scrollBehavior.nestedScrollConnection)
+                                .nestedScroll(backgroundScrollConnection),
+                            state = listState,
+                            overscrollEffect = null,
+                            contentPadding = PaddingValues(
+                                start = sidePadding,
+                                end = sidePadding,
+                                top = padding.calculateTopPadding() + if (hasBackground) 0.dp else pageContent.topPadding,
+                                bottom = padding.calculateBottomPadding() + 24.dp,
+                            ),
+                        ) {
+                            pageContent.content(this)
+                        }
                     }
+                }
+                if (onRefresh != null) {
+                    PullToRefresh(
+                        isRefreshing = isRefreshing,
+                        onRefresh = onRefresh,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(top = padding.calculateTopPadding()),
+                        topAppBarScrollBehavior = scrollBehavior,
+                        content = list,
+                    )
+                } else {
+                    list()
                 }
             }
         }

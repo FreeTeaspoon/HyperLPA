@@ -53,6 +53,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
@@ -94,7 +95,10 @@ import app.hyperlpa.domain.model.ProfileState
 import app.hyperlpa.domain.model.ReaderInfo
 import app.hyperlpa.domain.model.ReaderKind
 import app.hyperlpa.domain.model.analyzeIccid
+import app.hyperlpa.domain.model.buildActivationCode
 import app.hyperlpa.domain.model.takeUnicodeCodePoints
+import app.hyperlpa.ui.components.DialogActionRow
+import app.hyperlpa.ui.components.TextInputDialog
 import app.hyperlpa.ui.components.EmptyState
 import app.hyperlpa.ui.components.GroupedCard
 import app.hyperlpa.ui.components.LoadingState
@@ -815,13 +819,21 @@ fun DownloadProfileScreen(
     initialValue: String,
     imei: String,
     busy: Boolean,
+    readers: List<ReaderInfo>,
+    selectedReaderId: String?,
+    readerSelectable: Boolean,
     onBack: () -> Unit,
     onValueChange: (String) -> Unit,
     onScanQr: () -> Unit,
+    onSelectReader: (String) -> Unit,
+    onFindReaders: () -> Unit,
     onContinue: (DownloadRequest) -> Unit,
 ) {
     var localValue by remember(initialValue) { mutableStateOf(initialValue) }
+    // The confirmation code is a credential, so it stays out of saved state.
     var confirmationCode by remember(initialValue) { mutableStateOf("") }
+    var imeiOverride by rememberSaveable { mutableStateOf<String?>(null) }
+    var editingField by remember { mutableStateOf<DownloadField?>(null) }
     var validationAttempted by rememberSaveable { mutableStateOf(false) }
     var imageScanError by rememberSaveable { mutableStateOf<String?>(null) }
     val context = LocalContext.current
@@ -884,15 +896,29 @@ fun DownloadProfileScreen(
             }
         }
     }
-    val parsedRequest = remember(localValue, imei) {
-        runCatching { DownloadRequest.parse(localValue, imei.takeIf(String::isNotBlank)) }
+    val effectiveImei = imeiOverride ?: imei
+    val parsedRequest = remember(localValue, effectiveImei) {
+        runCatching { DownloadRequest.parse(localValue, effectiveImei.takeIf(String::isNotBlank)) }
     }
     val requestResult = remember(parsedRequest, confirmationCode) {
         parsedRequest.map { request ->
-            if (request.confirmationCodeRequired) request.withConfirmationCode(confirmationCode) else request
+            if (request.confirmationCodeRequired || confirmationCode.isNotBlank()) {
+                request.withConfirmationCode(confirmationCode)
+            } else {
+                request
+            }
         }
     }
     val confirmationCodeRequired = parsedRequest.getOrNull()?.confirmationCodeRequired == true
+    fun replaceActivationCode(code: String) {
+        localValue = code
+        onValueChange(code)
+    }
+    fun editedActivationCode(edit: (DownloadRequest) -> DownloadRequest): Result<String> = runCatching {
+        val edited = edit(parsedRequest.getOrNull() ?: DownloadRequest(smdpAddress = ""))
+        buildActivationCode(edited.smdpAddress, edited.matchingId, edited.smdpOid, edited.confirmationCodeRequired)
+            .also(DownloadRequest::parse)
+    }
     DetailLazyScaffold(
         title = stringResource(R.string.action_download_profile),
         onBack = onBack,
@@ -925,19 +951,6 @@ fun DownloadProfileScreen(
                         maxLines = 6,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    if (confirmationCodeRequired) {
-                        Spacer(Modifier.height(10.dp))
-                        TextField(
-                            value = confirmationCode,
-                            onValueChange = { confirmationCode = it.trim().take(128) },
-                            label = stringResource(app.hyperlpa.R.string.activation_confirmation_code),
-                            useLabelAsPlaceholder = true,
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                            visualTransformation = PasswordVisualTransformation(),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
                 }
                 if (confirmationCodeRequired) {
                     TipCard(
@@ -968,40 +981,72 @@ fun DownloadProfileScreen(
         }
         item {
             GroupedCard {
-                val request = requestResult.getOrNull()
-                ValuePreference(
+                val parsed = parsedRequest.getOrNull()
+                ArrowPreference(
                     title = "SM-DP+",
-                    value = request?.smdpAddress ?: stringResource(R.string.activation_waiting_valid),
+                    summary = parsed?.smdpAddress ?: stringResource(R.string.activation_waiting_valid),
+                    enabled = !busy,
+                    onClick = { editingField = DownloadField.SmdpAddress },
                 )
-                ValuePreference(
+                ArrowPreference(
                     title = stringResource(R.string.activation_matching_id),
-                    value = stringResource(
-                        if (request?.matchingId.isNullOrEmpty()) {
+                    summary = stringResource(
+                        if (parsed?.matchingId.isNullOrEmpty()) {
                             R.string.activation_not_included
                         } else {
                             R.string.activation_included
                         },
                     ),
+                    enabled = !busy && parsed != null,
+                    onClick = { editingField = DownloadField.MatchingId },
                 )
-                request?.smdpOid?.takeIf(String::isNotBlank)?.let { smdpOid ->
-                    ValuePreference(
+                parsed?.smdpOid?.takeIf(String::isNotBlank)?.let { smdpOid ->
+                    ArrowPreference(
                         title = "SM-DP+ OID",
-                        value = smdpOid,
+                        summary = smdpOid,
+                        enabled = !busy,
+                        onClick = { editingField = DownloadField.SmdpOid },
                     )
                 }
-                ValuePreference(
+                ArrowPreference(
                     title = stringResource(R.string.activation_confirmation_code),
-                    value = when {
-                        request == null -> stringResource(R.string.activation_not_required)
-                        !request.confirmationCodeRequired -> stringResource(R.string.activation_not_required)
-                        request.confirmationCode.isNullOrBlank() -> stringResource(R.string.activation_required)
-                        else -> stringResource(R.string.activation_entered)
+                    summary = when {
+                        confirmationCode.isNotBlank() -> stringResource(R.string.activation_entered)
+                        confirmationCodeRequired -> stringResource(R.string.activation_required)
+                        else -> stringResource(R.string.activation_not_required)
                     },
+                    summaryColor = if (validationAttempted && confirmationCodeRequired && confirmationCode.isBlank()) {
+                        BasicComponentDefaults.summaryColor(color = MiuixTheme.colorScheme.error)
+                    } else {
+                        BasicComponentDefaults.summaryColor()
+                    },
+                    enabled = !busy && parsed != null,
+                    onClick = { editingField = DownloadField.ConfirmationCode },
                 )
-                ValuePreference(
+                ArrowPreference(
                     title = "IMEI",
-                    value = imei.ifBlank { stringResource(R.string.activation_not_supplied) },
+                    summary = effectiveImei.ifBlank { stringResource(R.string.activation_not_supplied) },
+                    enabled = !busy,
+                    onClick = { editingField = DownloadField.Imei },
                 )
+                if (readers.isEmpty()) {
+                    ArrowPreference(
+                        title = stringResource(R.string.download_install_to),
+                        summary = stringResource(R.string.profiles_find_readers),
+                        enabled = !busy && readerSelectable,
+                        onClick = onFindReaders,
+                    )
+                } else {
+                    val selectedReader = readers.firstOrNull { it.id == selectedReaderId }
+                    OverlayDropdownPreference(
+                        title = stringResource(R.string.download_install_to),
+                        summary = selectedReader?.detail ?: stringResource(R.string.profiles_select_reader),
+                        items = readers.map { it.name },
+                        selectedIndex = readers.indexOf(selectedReader),
+                        enabled = !busy && readerSelectable,
+                        onSelectedIndexChange = { index -> readers.getOrNull(index)?.id?.let(onSelectReader) },
+                    )
+                }
             }
         }
         requestResult.exceptionOrNull()?.takeIf { validationAttempted }?.let { error ->
@@ -1078,7 +1123,95 @@ fun DownloadProfileScreen(
             }
         }
     }
+    val parsed = parsedRequest.getOrNull()
+    val resources = LocalResources.current
+    val closeEditor = { editingField = null }
+    fun errorFor(result: Result<*>): String? =
+        result.exceptionOrNull()?.let { resources.getString(downloadRequestErrorResource(it)) }
+    TextInputDialog(
+        show = editingField == DownloadField.SmdpAddress,
+        title = "SM-DP+",
+        summary = stringResource(R.string.download_smdp_dialog_summary),
+        label = stringResource(R.string.download_smdp_label),
+        initialValue = parsed?.smdpAddress.orEmpty(),
+        maxLength = 253,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+        validate = { value -> errorFor(editedActivationCode { it.copy(smdpAddress = value.trim()) }) },
+        onDismiss = closeEditor,
+        onConfirm = { value ->
+            editedActivationCode { it.copy(smdpAddress = value.trim()) }.onSuccess(::replaceActivationCode)
+            closeEditor()
+        },
+    )
+    TextInputDialog(
+        show = editingField == DownloadField.MatchingId,
+        title = stringResource(R.string.activation_matching_id),
+        summary = stringResource(R.string.download_matching_id_dialog_summary),
+        initialValue = parsed?.matchingId.orEmpty(),
+        maxLength = 1_024,
+        allowBlank = true,
+        validate = { value ->
+            if ('$' in value) {
+                resources.getString(R.string.activation_error_matching_invalid)
+            } else {
+                errorFor(editedActivationCode { it.copy(matchingId = value.trim().ifEmpty { null }) })
+            }
+        },
+        onDismiss = closeEditor,
+        onConfirm = { value ->
+            editedActivationCode { it.copy(matchingId = value.trim().ifEmpty { null }) }.onSuccess(::replaceActivationCode)
+            closeEditor()
+        },
+    )
+    TextInputDialog(
+        show = editingField == DownloadField.SmdpOid,
+        title = "SM-DP+ OID",
+        summary = stringResource(R.string.download_oid_dialog_summary),
+        initialValue = parsed?.smdpOid.orEmpty(),
+        maxLength = 256,
+        allowBlank = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        validate = { value -> errorFor(editedActivationCode { it.copy(smdpOid = value.trim().ifEmpty { null }) }) },
+        onDismiss = closeEditor,
+        onConfirm = { value ->
+            editedActivationCode { it.copy(smdpOid = value.trim().ifEmpty { null }) }.onSuccess(::replaceActivationCode)
+            closeEditor()
+        },
+    )
+    TextInputDialog(
+        show = editingField == DownloadField.ConfirmationCode,
+        title = stringResource(R.string.activation_confirmation_code),
+        summary = stringResource(R.string.activation_confirmation_help),
+        initialValue = confirmationCode,
+        maxLength = 128,
+        allowBlank = !confirmationCodeRequired,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+        visualTransformation = PasswordVisualTransformation(),
+        validate = { value -> errorFor(runCatching { DownloadRequest(smdpAddress = "").withConfirmationCode(value) }) },
+        onDismiss = closeEditor,
+        onConfirm = { value ->
+            confirmationCode = value.trim()
+            closeEditor()
+        },
+    )
+    TextInputDialog(
+        show = editingField == DownloadField.Imei,
+        title = "IMEI",
+        summary = stringResource(R.string.download_imei_dialog_summary),
+        initialValue = effectiveImei,
+        maxLength = 16,
+        allowBlank = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        inputFilter = { it.filter(Char::isDigit) },
+        onDismiss = closeEditor,
+        onConfirm = { value ->
+            imeiOverride = value
+            closeEditor()
+        },
+    )
 }
+
+private enum class DownloadField { SmdpAddress, MatchingId, SmdpOid, ConfirmationCode, Imei }
 
 private data class DecodedQrImage(
     val image: InputImage,
@@ -1146,8 +1279,11 @@ private fun normalizeActivationInput(value: String): String {
 }
 
 @Composable
-private fun localizedDownloadRequestError(error: Throwable): String {
-    val resource = when ((error as? DownloadRequestException)?.reason) {
+private fun localizedDownloadRequestError(error: Throwable): String =
+    stringResource(downloadRequestErrorResource(error))
+
+private fun downloadRequestErrorResource(error: Throwable): Int =
+    when ((error as? DownloadRequestException)?.reason) {
         DownloadRequestError.CONFIRMATION_CODE_TOO_LONG -> R.string.activation_error_confirmation_too_long
         DownloadRequestError.CONFIRMATION_CODE_INVALID -> R.string.activation_error_confirmation_invalid
         DownloadRequestError.SMDP_ADDRESS_REQUIRED -> R.string.activation_error_address_required
@@ -1168,8 +1304,6 @@ private fun localizedDownloadRequestError(error: Throwable): String {
         DownloadRequestError.RSP_PORT_INVALID -> R.string.activation_error_rsp_port
         null -> R.string.activation_error_invalid
     }
-    return stringResource(resource)
-}
 
 @Composable
 fun ProfileDownloadConfirmationScreen(
@@ -2324,14 +2458,6 @@ fun TagsAndRemindersScreen(
                             R.string.reminders_permissions_required
                         },
                     ),
-                    endActions = {
-                        if (!notificationPermissionGranted) {
-                            TextButton(
-                                text = stringResource(R.string.common_enable),
-                                onClick = manageNotificationPermission,
-                            )
-                        }
-                    },
                     onClick = manageNotificationPermission,
                 )
                 ArrowPreference(
@@ -3116,37 +3242,6 @@ private fun LogCard(entry: ActivityLogEntry) {
             Spacer(Modifier.height(12.dp))
             Text(entry.message, style = MiuixTheme.textStyles.body2)
         }
-    }
-}
-
-@Composable
-private fun DialogActionRow(
-    onCancel: () -> Unit,
-    cancelText: String? = null,
-    confirmText: String,
-    destructive: Boolean = false,
-    confirmEnabled: Boolean = true,
-    onConfirm: () -> Unit,
-) {
-    val resolvedCancelText = cancelText ?: stringResource(R.string.common_cancel)
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        TextButton(text = resolvedCancelText, onClick = onCancel, modifier = Modifier.weight(1f))
-        TextButton(
-            text = confirmText,
-            onClick = onConfirm,
-            enabled = confirmEnabled,
-            colors = if (destructive) {
-                ButtonDefaults.textButtonColors(
-                    textColor = MiuixTheme.colorScheme.error,
-                )
-            } else {
-                ButtonDefaults.textButtonColorsPrimary()
-            },
-            modifier = Modifier.weight(1f),
-        )
     }
 }
 

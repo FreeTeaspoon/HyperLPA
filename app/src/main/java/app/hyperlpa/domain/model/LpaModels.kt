@@ -201,6 +201,24 @@ data class DownloadRequest(
     }
 }
 
+/**
+ * Rebuilds text that [DownloadRequest.parse] reads back as the same fields. A null matching ID
+ * with no OID or confirmation flag stays a bare SM-DP+ address (a default SM-DP+ download).
+ */
+internal fun buildActivationCode(
+    smdpAddress: String,
+    matchingId: String?,
+    smdpOid: String?,
+    confirmationCodeRequired: Boolean,
+): String {
+    val oid = smdpOid?.takeIf(String::isNotEmpty)
+    if (matchingId == null && oid == null && !confirmationCodeRequired) return smdpAddress
+    val fields = mutableListOf("1", smdpAddress, matchingId.orEmpty())
+    if (oid != null || confirmationCodeRequired) fields += oid.orEmpty()
+    if (confirmationCodeRequired) fields += "1"
+    return "LPA:" + fields.joinToString("$")
+}
+
 @Serializable
 enum class DownloadRequestError {
     CONFIRMATION_CODE_TOO_LONG,

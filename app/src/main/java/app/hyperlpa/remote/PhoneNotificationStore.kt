@@ -21,6 +21,7 @@ data class PhoneNotificationEntry(
     val text: String,
     val timestamp: Long,
     val notificationKey: String = "",
+    val appLabel: String = "",
 )
 
 @Serializable
@@ -73,13 +74,13 @@ internal class PhoneNotificationStore(context: Context) {
     }
 
     @Synchronized
-    fun record(packageName: String, notificationKey: String, title: String, text: String, timestamp: Long) {
+    fun record(packageName: String, notificationKey: String, title: String, text: String, timestamp: Long, appLabel: String = "") {
         if (title.isBlank() && text.isBlank()) return
         val entries = list().toMutableList()
         val existing = entries.indexOfFirst { it.notificationKey == notificationKey }
         val id = if (existing >= 0) entries.removeAt(existing).id else UUID.randomUUID().toString()
         entries += PhoneNotificationEntry(id, packageName.take(255), title.take(256), text.take(2048),
-            timestamp, notificationKey.take(512))
+            timestamp, notificationKey.take(512), appLabel.take(80))
         write(entries.takeLast(MaxEntries))
     }
 
