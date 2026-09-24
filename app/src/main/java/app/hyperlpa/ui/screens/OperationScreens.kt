@@ -1,5 +1,6 @@
 package app.hyperlpa.ui.screens
 
+import app.hyperlpa.ui.components.PageStart
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -311,7 +312,7 @@ fun ProfileDetailsScreen(
         },
     ) { _ ->
         if (profile == null) {
-            item {
+            item(contentType = PageStart.Viewport) {
                 if (isProfileDetailsLoading(profile, lpa)) {
                     LoadingState(
                         message = profileLoadingMessage,
@@ -338,7 +339,7 @@ fun ProfileDetailsScreen(
                     onOpenReminder = openReminderEditor,
                 )
             }
-            item { SectionHeading(stringResource(R.string.profile_section)) }
+            item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.profile_section)) }
             item {
                 GroupedCard {
                     SwitchPreference(
@@ -394,7 +395,7 @@ fun ProfileDetailsScreen(
                     )
                 }
             }
-            item { SectionHeading(stringResource(R.string.profile_identifiers_section)) }
+            item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.profile_identifiers_section)) }
             item {
                 GroupedCard {
                     ValuePreference(
@@ -420,7 +421,7 @@ fun ProfileDetailsScreen(
                     )
                 }
             }
-            item { SectionHeading(stringResource(R.string.profile_metadata_section)) }
+            item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.profile_metadata_section)) }
             item {
                 GroupedCard {
                     ValuePreference(
@@ -466,7 +467,7 @@ fun ProfileDetailsScreen(
                     }
                 }
             }
-            item { SectionHeading(stringResource(R.string.profile_advanced_section)) }
+            item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.profile_advanced_section)) }
             item {
                 GroupedCard {
                     BasicComponent(
@@ -532,7 +533,7 @@ fun ProfileDetailsScreen(
                 }
             }
             if (!settings.hideProfileDeletion) {
-                item { SectionHeading(stringResource(R.string.profile_danger_zone)) }
+                item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.profile_danger_zone)) }
                 item {
                     GroupedCard {
                         ArrowPreference(
@@ -906,7 +907,7 @@ fun DownloadProfileScreen(
             }
         },
     ) { _ ->
-        item {
+        item(contentType = PageStart.Inset) {
             Column(Modifier.fillMaxWidth()) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
                     Spacer(Modifier.height(12.dp))
@@ -1255,7 +1256,7 @@ fun ProfileDownloadConfirmationScreen(
                     }
             }
         }
-        item { SectionHeading(stringResource(R.string.download_profile_information)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.download_profile_information)) }
         item {
             GroupedCard {
                 ValuePreference(
@@ -1542,7 +1543,7 @@ fun ProfileDownloadResultScreen(
                 )
             }
         }
-        item { SectionHeading(stringResource(R.string.download_storage_section)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.download_storage_section)) }
         item {
             GroupedCard {
                 ValuePreference(
@@ -1663,7 +1664,7 @@ fun BatchDownloadScreen(
     val withinQueueLimit = lines.size <= MaxProvisioningQueueItems
 
     DetailLazyScaffold(title = stringResource(R.string.batch_download_title), onBack = onBack) { _ ->
-        item {
+        item(contentType = PageStart.Inset) {
             TipCard(text = stringResource(R.string.batch_download_instructions))
         }
         item {
@@ -1715,7 +1716,7 @@ fun BatchDownloadScreen(
             }
         }
         if (state.items.isNotEmpty()) {
-            item {
+            item(contentType = PageStart.Heading) {
                 SectionHeading(
                     stringResource(
                         if (state.restored) R.string.batch_saved_queue else R.string.batch_queue,
@@ -1874,7 +1875,7 @@ fun EuiccDetailsScreen(
     var cardNameDraft by remember(info?.eid, cardName) { mutableStateOf(cardName.orEmpty()) }
     DetailLazyScaffold(title = stringResource(R.string.euicc_information_title), onBack = onBack) { _ ->
         if (info == null) {
-            item {
+            item(contentType = PageStart.Viewport) {
                 EmptyState(
                     title = stringResource(R.string.euicc_not_connected),
                     message = stringResource(R.string.euicc_not_connected_message),
@@ -1883,7 +1884,7 @@ fun EuiccDetailsScreen(
                 )
             }
         } else {
-            item { SectionHeading(stringResource(R.string.euicc_identity)) }
+            item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.euicc_identity)) }
             item {
                 GroupedCard {
                     ArrowPreference(
@@ -1916,7 +1917,7 @@ fun EuiccDetailsScreen(
                     )
                 }
             }
-            item { SectionHeading(stringResource(R.string.euicc_connection)) }
+            item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.euicc_connection)) }
             item {
                 GroupedCard {
                     ValuePreference(
@@ -1937,7 +1938,7 @@ fun EuiccDetailsScreen(
                     )
                 }
             }
-            item { SectionHeading(stringResource(R.string.euicc_profiles_storage)) }
+            item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.euicc_profiles_storage)) }
             item {
                 GroupedCard {
                     ValuePreference(
@@ -1965,7 +1966,7 @@ fun EuiccDetailsScreen(
                     )
                 }
             }
-            item { SectionHeading(stringResource(R.string.euicc_specifications)) }
+            item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.euicc_specifications)) }
             item {
                 GroupedCard {
                     ValuePreference(title = "SGP.22", value = info.sgp22Version.ifBlank { stringResource(R.string.common_unavailable) })
@@ -1983,7 +1984,7 @@ fun EuiccDetailsScreen(
                     )
                 }
             }
-            item { SectionHeading(stringResource(R.string.euicc_capabilities)) }
+            item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.euicc_capabilities)) }
             item {
                 GroupedCard {
                     ValuePreference(
@@ -1996,7 +1997,7 @@ fun EuiccDetailsScreen(
                     )
                 }
             }
-            item { SectionHeading(stringResource(R.string.euicc_provisioning)) }
+            item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.euicc_provisioning)) }
             item {
                 GroupedCard {
                     ArrowPreference(
@@ -2024,7 +2025,7 @@ fun EuiccDetailsScreen(
                 }
             }
             if (discoveredSmdpAddresses.isNotEmpty()) {
-                item { SectionHeading(stringResource(R.string.euicc_discovered_profiles)) }
+                item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.euicc_discovered_profiles)) }
                 item {
                     GroupedCard {
                         discoveredSmdpAddresses.forEach { address ->
@@ -2037,7 +2038,7 @@ fun EuiccDetailsScreen(
                     }
                 }
             }
-            item { SectionHeading(stringResource(R.string.profile_advanced_section)) }
+            item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.profile_advanced_section)) }
             item {
                 GroupedCard {
                     BasicComponent(
@@ -2092,7 +2093,7 @@ fun EuiccDetailsScreen(
                 }
             }
             if (!settings.hideEuiccMemoryReset) {
-                item { SectionHeading(stringResource(R.string.euicc_maintenance)) }
+                item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.euicc_maintenance)) }
                 item {
                     GroupedCard {
                         ArrowPreference(
@@ -2283,7 +2284,7 @@ fun TagsAndRemindersScreen(
     }
 
     DetailLazyScaffold(title = stringResource(R.string.tags_reminders_title), onBack = onBack) { _ ->
-        item { SectionHeading(stringResource(R.string.tags_reminders_general)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.tags_reminders_general)) }
         item {
             GroupedCard {
                 ArrowPreference(
@@ -2311,7 +2312,7 @@ fun TagsAndRemindersScreen(
                 )
             }
         }
-        item { SectionHeading(stringResource(R.string.reminders_notifications)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.reminders_notifications)) }
         item {
             GroupedCard {
                 ArrowPreference(
@@ -2385,7 +2386,7 @@ fun TagManagerScreen(
 
     DetailLazyScaffold(title = stringResource(R.string.profile_tags_title), onBack = onBack) { _ ->
         if (profiles.isEmpty()) {
-            item {
+            item(contentType = PageStart.Viewport) {
                 EmptyState(
                     stringResource(R.string.tags_no_profiles),
                     stringResource(R.string.tags_no_profiles_message),
@@ -2401,10 +2402,10 @@ fun TagManagerScreen(
                     label = stringResource(R.string.tags_search),
                     useLabelAsPlaceholder = true,
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 6.dp),
                 )
             }
-            item { SectionHeading(stringResource(R.string.tags_active)) }
+            item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.tags_active)) }
             item {
                 GroupedCard {
                     if (allTags.isEmpty()) {
@@ -2434,9 +2435,9 @@ fun TagManagerScreen(
                     }
                 }
             }
-            item { SectionHeading(stringResource(R.string.tags_profiles_section)) }
+            item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.tags_profiles_section)) }
             if (filteredProfiles.isEmpty()) {
-                item {
+                item(contentType = PageStart.Viewport) {
                     EmptyState(
                         title = stringResource(R.string.tags_none_found),
                         message = stringResource(R.string.tags_none_found_message),
@@ -2500,7 +2501,7 @@ fun ScheduledRemindersScreen(
     val pastDue = scheduled.filterNot { it.reminderAt?.isAfter(now) == true }
     DetailLazyScaffold(title = stringResource(R.string.reminders_scheduled_title), onBack = onBack) { _ ->
         if (scheduled.isEmpty()) {
-            item {
+            item(contentType = PageStart.Viewport) {
                 EmptyState(
                     title = stringResource(R.string.reminders_none),
                     message = stringResource(R.string.reminders_none_message),
@@ -2510,7 +2511,7 @@ fun ScheduledRemindersScreen(
             }
         } else {
             if (upcoming.isNotEmpty()) {
-                item { SectionHeading(stringResource(R.string.reminders_upcoming)) }
+                item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.reminders_upcoming)) }
                 item {
                     GroupedCard {
                         upcoming.forEach { profile ->
@@ -2520,7 +2521,7 @@ fun ScheduledRemindersScreen(
                 }
             }
             if (pastDue.isNotEmpty()) {
-                item { SectionHeading(stringResource(R.string.reminders_past_due)) }
+                item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.reminders_past_due)) }
                 item {
                     GroupedCard {
                         pastDue.forEach { profile ->
@@ -2561,7 +2562,7 @@ fun StatisticsScreen(
     val tagged = profiles.count { it.tags.isNotEmpty() }
     val estimatedBytes = profiles.mapNotNull(ProfileInfo::estimatedBytes).sum()
     DetailLazyScaffold(title = stringResource(R.string.statistics_title), onBack = onBack) { _ ->
-        item { SectionHeading(stringResource(R.string.tags_profiles_section)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.tags_profiles_section)) }
         item {
             GroupedCard {
                 StatRow(stringResource(R.string.statistics_total_profiles), profiles.size.toString())
@@ -2578,7 +2579,7 @@ fun StatisticsScreen(
                 )
             }
         }
-        item { SectionHeading(stringResource(R.string.statistics_euicc_activity)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.statistics_euicc_activity)) }
         item {
             GroupedCard {
                 StatRow(stringResource(R.string.statistics_pending_notifications), notifications.size.toString())
@@ -2643,7 +2644,7 @@ fun LogsScreen(
             }
         },
     ) { _ ->
-        item {
+        item(contentType = PageStart.Inset) {
             TipCard {
                 Text(
                     text = stringResource(R.string.logs_support_included),
@@ -2658,7 +2659,7 @@ fun LogsScreen(
                 )
             }
         }
-        item { SectionHeading(stringResource(R.string.logs_filter)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.logs_filter)) }
         item {
             GroupedCard {
                 OverlayDropdownPreference(
@@ -2676,7 +2677,7 @@ fun LogsScreen(
             }
         }
         if (visibleLogs.isEmpty()) {
-            item {
+            item(contentType = PageStart.Viewport) {
                 EmptyState(
                     stringResource(R.string.logs_empty),
                     stringResource(R.string.logs_empty_message),
@@ -2685,7 +2686,7 @@ fun LogsScreen(
                 )
             }
         } else {
-            item { SectionHeading(stringResource(R.string.logs_recent)) }
+            item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.logs_recent)) }
             visibleLogs.forEach { (sourceIndex, entry) ->
                 item(key = sourceIndex) {
                     LogCard(entry)

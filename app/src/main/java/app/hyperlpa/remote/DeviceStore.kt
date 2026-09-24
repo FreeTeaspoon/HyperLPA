@@ -33,6 +33,10 @@ internal data class StoredDevices(
     val operations: List<DeviceOperationRecord> = emptyList(),
     val pending: List<PendingDeviceRequest> = emptyList(),
     val refreshRequired: Set<String> = emptySet(),
+    val sharePhoneNotifications: Boolean = false,
+    val notificationApps: Set<String> = emptySet(),
+    val allowedNotificationApps: Set<String> = emptySet(),
+    val notificationPeers: Set<String> = emptySet(),
 )
 
 /** One atomic, Keystore-encrypted journal. Pair secrets never enter app settings or backups. */

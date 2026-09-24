@@ -67,6 +67,14 @@ reminders, custom/provider icons, notification processing/deletion/resend/histor
 deletion, SM-DP+ changes, SM-DS discovery, and confirmed eUICC memory reset.
 The existing batch-download coordinator uses the selected remote reader as well.
 App-wide preferences, backups, and Android permissions remain per phone.
+Phone notification sharing is separate from eUICC notifications. On the source
+phone, grant notification access, enable sharing, choose apps and authorize each
+paired viewer in **Settings → Remote devices**. The source keeps up to 150 entries
+for seven days in an encrypted file outside backup storage. Viewers receive
+encrypted, temporary snapshots and can request deletion on the source. The relay
+only holds unacknowledged ciphertext for up to two minutes. Android may redact
+sensitive notifications before the listener sees them. There is no cloud archive
+or offline browser history in this version.
 
 The target must be online and have a usable local reader. This feature does not
 give the ordinary APK protected telephony privileges or bypass a card's signing

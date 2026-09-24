@@ -26,6 +26,7 @@ sealed interface AppRoute : NavKey {
     data object EuiccDetails : AppRoute
     data object ReaderSettings : AppRoute
     data object RemoteDevices : AppRoute
+    data class PhoneNotificationHistory(val deviceId: String) : AppRoute
     data object CompatibilityWizard : AppRoute
     data object NotificationSettings : AppRoute
     data object NotificationHistory : AppRoute

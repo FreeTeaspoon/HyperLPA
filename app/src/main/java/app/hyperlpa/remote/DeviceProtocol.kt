@@ -126,6 +126,9 @@ internal data class DeviceMessage(
     val revision: Long = 0,
     val downloadResult: app.hyperlpa.domain.model.ProfileDownloadResult? = null,
     val part: DevicePart? = null,
+    val phoneNotifications: List<PhoneNotificationEntry> = emptyList(),
+    val phoneNotificationsAvailable: Boolean = false,
+    val notificationId: String = "",
 )
 
 @Serializable

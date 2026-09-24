@@ -7,6 +7,28 @@ import org.junit.Test
 import java.time.Instant
 
 class DeviceProtocolTest {
+    @Test fun `notification sharing defaults to denied when reading an older device journal`() {
+        val stored = DeviceJson.decodeFromString(StoredDevices.serializer(), "{}")
+        assertFalse(stored.sharePhoneNotifications)
+        assertTrue(stored.allowedNotificationApps.isEmpty())
+        assertTrue(stored.notificationPeers.isEmpty())
+    }
+
+    @Test fun `notification history stays inside encrypted peer payload`() {
+        val secret = DeviceCrypto.secret()
+        val message = DeviceMessage("phone_notifications", phoneNotificationsAvailable = true,
+            phoneNotifications = listOf(PhoneNotificationEntry(newDeviceId(), "org.example.sms", "New message", "Private text", 1_700_000_000_000L)))
+        val sender = newDeviceId()
+        val recipient = newDeviceId()
+        val pair = newDeviceId()
+        val serialized = DeviceJson.encodeToString(DeviceMessage.serializer(), message)
+        val encrypted = DeviceCrypto.encrypt(secret, sender, recipient, pair, serialized, 1_700_000_000_000L)
+        assertFalse(encrypted.body.contains("Private text"))
+        val restored = DeviceJson.decodeFromString(DeviceMessage.serializer(),
+            DeviceCrypto.decrypt(secret, encrypted, recipient, 1_700_000_000_000L))
+        assertEquals(message, restored)
+    }
+
     @Test fun `download preview and progress survive a wire round trip`() {
         val request = DownloadRequest("smdp.example", "matching", confirmationCode = "confirmation")
         val profile = ProfileInfo("123", ProfileState.DISABLED, "Travel", "", "Carrier", "A000", ProfileClass.OPERATIONAL, reminderAt = Instant.ofEpochMilli(1000))

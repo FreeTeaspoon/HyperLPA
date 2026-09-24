@@ -1,5 +1,6 @@
 package app.hyperlpa.ui.screens
 
+import app.hyperlpa.ui.components.PageStart
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -91,7 +92,7 @@ fun CompatibilityWizardScreen(
         title = stringResource(R.string.compatibility_title),
         onBack = onBack,
     ) { _ ->
-        item {
+        item(contentType = PageStart.Inset) {
             TipCard {
                 Text(
                     text = stringResource(R.string.compatibility_intro),
@@ -107,7 +108,7 @@ fun CompatibilityWizardScreen(
             }
         }
 
-        item { SectionHeading(stringResource(R.string.compatibility_status_section)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.compatibility_status_section)) }
         item {
             GroupedCard {
                 BasicComponent(
@@ -140,7 +141,7 @@ fun CompatibilityWizardScreen(
             }
         }
 
-        item { SectionHeading(stringResource(R.string.compatibility_actions_section)) }
+        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.compatibility_actions_section)) }
         item {
             GroupedCard {
                 BasicComponent(

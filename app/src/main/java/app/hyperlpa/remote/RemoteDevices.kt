@@ -45,6 +45,17 @@ data class RemoteDevicesUiState(
     val invitation: String? = null,
     val error: String? = null,
     val pendingOperations: Int = 0,
+    val sharePhoneNotifications: Boolean = false,
+    val notificationApps: Set<String> = emptySet(),
+    val allowedNotificationApps: Set<String> = emptySet(),
+    val notificationPeers: Set<String> = emptySet(),
+)
+
+data class PhoneNotificationView(
+    val deviceId: String = "",
+    val entries: List<PhoneNotificationEntry> = emptyList(),
+    val available: Boolean = false,
+    val loading: Boolean = false,
 )
 
 internal class RemoteDevices(
@@ -60,6 +71,11 @@ internal class RemoteDevices(
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val store = DeviceStore(context)
+    private val phoneNotifications = PhoneNotificationStore(context)
+    private val mutablePhoneView = MutableStateFlow(PhoneNotificationView())
+    val phoneView = mutablePhoneView.asStateFlow()
+    private val mutableLocalNotifications = MutableStateFlow<List<PhoneNotificationEntry>>(emptyList())
+    val localNotifications = mutableLocalNotifications.asStateFlow()
     private val configLock = Any()
     private val actionMutex = Mutex()
     @Volatile private var config = StoredDevices()
@@ -101,6 +117,8 @@ internal class RemoteDevices(
             try {
                 config = store.read().let { stored -> stored.copy(name = stored.name.ifBlank { Build.MODEL.take(80) }) }
                 initialized = true
+                runCatching { phoneNotifications.list() }
+                    .onSuccess { mutableLocalNotifications.value = it }
                 publishUi()
                 // In-flight operations from an earlier process are never executed again.
                 update { saved -> saved.copy(operations = saved.operations.map { record ->
@@ -150,7 +168,9 @@ internal class RemoteDevices(
             peers = saved.peers.map { RemotePeerUi(it.id, it.name, it.approved, it.incoming,
                 connected && now - (livePeers[it.id] ?: 0) < 60_000) },
             invitation = saved.invitation?.takeIf { it.expires > now }?.let(DeviceCrypto::invitationCode),
-            pendingOperations = saved.pending.size) }
+            pendingOperations = saved.pending.size, sharePhoneNotifications = saved.sharePhoneNotifications,
+            notificationApps = saved.notificationApps, allowedNotificationApps = saved.allowedNotificationApps,
+            notificationPeers = saved.notificationPeers) }
     }
 
     private fun action(block: suspend () -> Unit) {
@@ -186,6 +206,87 @@ internal class RemoteDevices(
         check(config.relay.isNotBlank()) { context.getString(R.string.remote_configure_first) }
         update { it.copy(enabled = enabled) }
         withContext(Dispatchers.Main) { serviceControl(enabled) }
+    }
+
+    fun setPhoneNotificationSharing(enabled: Boolean) = action {
+        update { it.copy(sharePhoneNotifications = enabled) }
+        if (enabled) publishPhoneNotifications()
+        else if (connected) config.peers.filter { it.approved && it.id in config.notificationPeers }.forEach {
+            send(it, DeviceMessage("phone_notifications"))
+        }
+    }
+
+    fun setNotificationApp(packageName: String, enabled: Boolean) = action {
+        check(packageName in config.notificationApps)
+        update { it.copy(allowedNotificationApps = if (enabled) it.allowedNotificationApps + packageName
+            else it.allowedNotificationApps - packageName) }
+        if (!enabled) {
+            phoneNotifications.list().filter { it.packageName == packageName }.forEach { phoneNotifications.delete(it.id) }
+            publishPhoneNotifications()
+        }
+    }
+
+    fun setNotificationPeer(id: String, enabled: Boolean) = action {
+        check(peer(id)?.approved == true)
+        update { it.copy(notificationPeers = if (enabled) it.notificationPeers + id else it.notificationPeers - id) }
+        send(requireNotNull(peer(id)), if (enabled && config.sharePhoneNotifications)
+            DeviceMessage("phone_notifications_changed") else DeviceMessage("phone_notifications"))
+    }
+
+    fun recordPhoneNotification(packageName: String, notificationKey: String, title: String, text: String, timestamp: Long) {
+        scope.launch {
+            ready.await()
+            if (!initialized || !config.sharePhoneNotifications || packageName == context.packageName ||
+                packageName.length !in 1..255 || notificationKey.length !in 1..512) return@launch
+            if (packageName !in config.notificationApps) synchronized(configLock) {
+                if (packageName !in config.notificationApps) update {
+                    it.copy(notificationApps = (it.notificationApps + packageName).take(200).toSet())
+                }
+            }
+            val recorded = synchronized(configLock) {
+                if (!config.sharePhoneNotifications || packageName !in config.allowedNotificationApps ||
+                    (title.isBlank() && text.isBlank())) false
+                else runCatching {
+                    phoneNotifications.record(packageName, notificationKey, title, text, timestamp)
+                }.isSuccess
+            }
+            if (recorded) publishPhoneNotifications()
+        }
+    }
+
+    fun refreshPhoneNotifications(id: String) {
+        val device = peer(id)?.takeIf { it.approved } ?: return
+        mutablePhoneView.value = PhoneNotificationView(deviceId = id, loading = true)
+        if (!connected || !send(device, DeviceMessage("phone_notifications_request"))) {
+            mutablePhoneView.value = mutablePhoneView.value.copy(loading = false)
+        } else scope.launch {
+            delay(12_000)
+            mutablePhoneView.update { if (it.deviceId == id && it.loading) it.copy(loading = false) else it }
+        }
+    }
+
+    fun closePhoneNotifications(deviceId: String) {
+        mutablePhoneView.update { if (it.deviceId == deviceId) PhoneNotificationView() else it }
+    }
+
+    fun deletePhoneNotification(id: String, deviceId: String) {
+        if (deviceId == "local" || deviceId == config.id) {
+            action { phoneNotifications.delete(id); publishPhoneNotifications() }
+        } else {
+            peer(deviceId)?.takeIf { it.approved && connected }?.let { send(it, DeviceMessage("phone_notifications_delete", notificationId = id)) }
+        }
+    }
+
+    fun clearPhoneNotifications() = action { phoneNotifications.clear(); publishPhoneNotifications() }
+
+    private fun publishPhoneNotifications() {
+        val entries = runCatching { phoneNotifications.list() }.getOrElse {
+            mutableUi.update { state -> state.copy(error = context.getString(R.string.remote_storage_unavailable)) }
+            return
+        }
+        mutableLocalNotifications.value = entries
+        if (connected && config.sharePhoneNotifications) config.peers.filter { it.approved && it.id in config.notificationPeers }
+            .forEach { send(it, DeviceMessage("phone_notifications_changed")) }
     }
 
     fun startRuntime() = action {
@@ -239,7 +340,9 @@ internal class RemoteDevices(
                 done = true, outcome = unknownOutcome()))
         }
         update { it.copy(peers = it.peers.filterNot { p -> p.id == id }, pending = it.pending.filterNot { p -> p.peer == id },
-            refreshRequired = it.refreshRequired.filterNot { key -> key.startsWith("$id/") }.toSet()) }
+            refreshRequired = it.refreshRequired.filterNot { key -> key.startsWith("$id/") }.toSet(),
+            notificationPeers = it.notificationPeers - id) }
+        if (mutablePhoneView.value.deviceId == id) mutablePhoneView.value = PhoneNotificationView()
         livePeers.remove(id)
         mutableReaders.value = mutableReaders.value.filterNot { it.deviceId == id }
         if (mutableView.value?.lpa?.selectedReader?.deviceId == id) mutableView.value = null
@@ -251,6 +354,9 @@ internal class RemoteDevices(
         stopRuntime()
         withContext(Dispatchers.Main) { serviceControl(false) }
         update { StoredDevices(name = config.name) }
+        phoneNotifications.clear()
+        mutableLocalNotifications.value = emptyList()
+        mutablePhoneView.value = PhoneNotificationView()
         mutableReaders.value = emptyList()
         mutableView.value = null
     }
@@ -258,6 +364,7 @@ internal class RemoteDevices(
     private fun peer(id: String): PairedDevice? = config.peers.firstOrNull { it.id == id }
     private fun onConnection(value: Boolean) {
         connected = value
+        if (!value) mutablePhoneView.update { it.copy(entries = emptyList(), available = false, loading = false) }
         publishUi()
         updateAvailability()
         if (value) scope.launch {
@@ -333,7 +440,26 @@ internal class RemoteDevices(
                             send(existing, DeviceMessage("hello_reply", name = config.name))
                             if (mutableReaders.value.none { it.deviceId == existing.id }) requestCatalog(existing)
                         }
-                        "hello_reply" -> Unit
+                        "hello_reply" -> if (mutablePhoneView.value.deviceId == existing.id) refreshPhoneNotifications(existing.id)
+                        "phone_notifications_request" -> send(existing, DeviceMessage("phone_notifications",
+                            phoneNotifications = if (config.sharePhoneNotifications && existing.id in config.notificationPeers)
+                                phoneNotifications.list().map { it.copy(notificationKey = "") } else emptyList(),
+                            phoneNotificationsAvailable = config.sharePhoneNotifications && existing.id in config.notificationPeers))
+                        "phone_notifications_changed" -> if (mutablePhoneView.value.deviceId == existing.id)
+                            refreshPhoneNotifications(existing.id)
+                        "phone_notifications" -> if (mutablePhoneView.value.deviceId == existing.id) {
+                            mutablePhoneView.value = PhoneNotificationView(existing.id,
+                                if (message.phoneNotificationsAvailable) message.phoneNotifications.take(150).filter {
+                                    it.id.length == 36 && it.packageName.length in 1..255 &&
+                                        it.title.length <= 256 && it.text.length <= 2048 &&
+                                        (it.title.isNotBlank() || it.text.isNotBlank())
+                                } else emptyList(), message.phoneNotificationsAvailable)
+                        }
+                        "phone_notifications_delete" -> if (config.sharePhoneNotifications && existing.id in config.notificationPeers &&
+                            message.notificationId.length == 36) {
+                            phoneNotifications.delete(message.notificationId)
+                            publishPhoneNotifications()
+                        }
                         "command" -> agent.accept(existing, message, envelope.expires)
                         "status" -> agent.status(existing, message.requestId)
                         "decision" -> agent.decision(existing.id, message.requestId, message.confirmed)
