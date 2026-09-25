@@ -5,6 +5,9 @@ import app.hyperlpa.ui.components.PageStart
 import android.graphics.Bitmap
 import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -77,6 +80,7 @@ import app.hyperlpa.ui.BluetoothReaderAvailability
 import app.hyperlpa.ui.BluetoothReaderUiState
 import app.hyperlpa.ui.adaptive.CenteredContent
 import app.hyperlpa.ui.components.EmptyState
+import app.hyperlpa.ui.components.ErrorState
 import app.hyperlpa.ui.components.GroupedCard
 import app.hyperlpa.ui.components.LoadingState
 import app.hyperlpa.ui.components.PageStateHost
@@ -112,11 +116,13 @@ import top.yukonga.miuix.kmp.icon.extended.Alarm
 import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.icon.extended.Download
 import top.yukonga.miuix.kmp.icon.extended.File
+import top.yukonga.miuix.kmp.icon.extended.Messages
 import top.yukonga.miuix.kmp.icon.extended.GridView
 import top.yukonga.miuix.kmp.icon.extended.Info
 import top.yukonga.miuix.kmp.icon.extended.Layers
 import top.yukonga.miuix.kmp.icon.extended.Notes
 import top.yukonga.miuix.kmp.icon.extended.Search
+import top.yukonga.miuix.kmp.icon.extended.SearchDevice
 import top.yukonga.miuix.kmp.icon.extended.Tune
 import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
@@ -145,6 +151,7 @@ fun ProfilesScreen(
     onSetPinned: (String, Boolean) -> Unit,
     onRename: (String, String) -> Unit,
     onDownload: () -> Unit,
+    refreshPending: Boolean = false,
     onRefresh: () -> Unit,
 ) {
     // Keep both layout positions alive while switching between list and waterfall.
@@ -219,77 +226,48 @@ fun ProfilesScreen(
     // Keep the first presentation synchronized with artwork, then apply later artwork updates
     // in place without replacing the already-visible profile list with a loading state.
     val pageState = profilesPageState(state.lpa, profiles, awaitInitialArtwork)
+    val isRefreshing = refreshPending || state.lpa.operation is LpaOperation.Refreshing
+    var hideEmptyDuringPull by remember { mutableStateOf(false) }
+    var headerPresented by remember { mutableStateOf(false) }
+    LaunchedEffect(pageState) {
+        if (pageState != PageStateKind.LOADING) headerPresented = true
+    }
+    // A reader switch keeps the reader selector and shows its progress below it.
+    val keepHeaderWhileLoading = headerPresented &&
+        pageState == PageStateKind.LOADING &&
+        state.lpa.readers.isNotEmpty() &&
+        (state.lpa.operation is LpaOperation.Connecting || awaitInitialArtwork)
+    val showDownloadAction = state.lpa.selectedReader != null &&
+        state.lpa.operation !is LpaOperation.Connecting && !hasNoSearchResults
 
-    PullToRefresh(
-        isRefreshing = state.lpa.operation is LpaOperation.Refreshing,
-        onRefresh = onRefresh,
-        modifier = modifier,
-        contentPadding = PaddingValues(
-            top = contentPadding.calculateTopPadding() + RefreshHeaderTopGap,
-            bottom = contentPadding.calculateBottomPadding(),
-        ),
-        topAppBarScrollBehavior = scrollBehavior,
-    ) {
-        CenteredContent { sidePadding ->
-            if (pageState == PageStateKind.LOADING) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    LoadingState(message = loadingMessage)
-                }
-            } else if (
-                state.settings.profileLayout == ProfileLayout.WATERFALL &&
-                pageState == PageStateKind.CONTENT &&
-                profiles.isNotEmpty()
-            ) {
-                LazyVerticalGrid(
-                    columns = GridCells.Adaptive(280.dp),
-                    state = gridState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .scrollEndHaptic()
-                        .overScrollVertical()
-                        .nestedScroll(scrollBehavior.nestedScrollConnection),
-                    overscrollEffect = null,
-                    contentPadding = PaddingValues(
-                        start = sidePadding,
-                        end = sidePadding,
-                        top = contentPadding.calculateTopPadding() + ProfilesFirstCardGap,
-                        bottom = contentPadding.calculateBottomPadding() + 24.dp,
-                    ),
-                    horizontalArrangement = Arrangement.spacedBy(0.dp),
-                ) {
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        ProfilesHeader(
-                            state = state,
-                            onSearchChange = onSearchChange,
-                            onSelectReader = onSelectReader,
-                            onOpenEuiccDetails = onOpenEuiccDetails,
-                        )
+    Box(modifier = modifier.fillMaxSize()) {
+        PullToRefresh(
+            isRefreshing = isRefreshing,
+            onRefresh = onRefresh,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                top = contentPadding.calculateTopPadding() + RefreshHeaderTopGap,
+                bottom = contentPadding.calculateBottomPadding(),
+            ),
+            topAppBarScrollBehavior = scrollBehavior,
+            onPullProgress = { hideEmptyDuringPull = it > 0.01f },
+        ) {
+            CenteredContent { sidePadding ->
+                if (pageState == PageStateKind.LOADING && !keepHeaderWhileLoading) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        LoadingState(message = loadingMessage)
                     }
-                    items(profiles, key = ProfileInfo::iccid) { profile ->
-                        ProfileCard(
-                            profile = profile,
-                            artworkBitmap = artworkLoadState.bitmaps[profile.iccid],
-                            state = state,
-                            switchEnabled = !profileSwitchLocked,
-                            onOpen = { onOpenProfile(profile) },
-                            onEnableChange = { enabled -> onEnableChange(profile.iccid, enabled) },
-                            onLongPress = { profileActionsState.value = profile },
-                        )
-                    }
-                }
-            } else {
-                val listTopPadding = contentPadding.calculateTopPadding() + ProfilesFirstCardGap
-                val listBottomPadding = contentPadding.calculateBottomPadding() + 24.dp
-                val showDownloadAction = state.lpa.selectedReader != null &&
-                    state.lpa.operation !is LpaOperation.Connecting &&
-                    !hasNoSearchResults
-                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                    val listViewportHeight = maxHeight - listTopPadding - listBottomPadding
-                    LazyColumn(
-                        state = listState,
+                } else if (
+                    state.settings.profileLayout == ProfileLayout.WATERFALL &&
+                    pageState == PageStateKind.CONTENT &&
+                    profiles.isNotEmpty()
+                ) {
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(280.dp),
+                        state = gridState,
                         modifier = Modifier
                             .fillMaxSize()
                             .scrollEndHaptic()
@@ -299,58 +277,148 @@ fun ProfilesScreen(
                         contentPadding = PaddingValues(
                             start = sidePadding,
                             end = sidePadding,
-                            top = listTopPadding,
-                            bottom = listBottomPadding,
+                            top = contentPadding.calculateTopPadding() + ProfilesFirstCardGap,
+                            bottom = contentPadding.calculateBottomPadding() + 24.dp,
                         ),
+                        horizontalArrangement = Arrangement.spacedBy(0.dp),
                     ) {
-                        item(key = "header") {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
                             ProfilesHeader(
                                 state = state,
                                 onSearchChange = onSearchChange,
                                 onSelectReader = onSelectReader,
                                 onOpenEuiccDetails = onOpenEuiccDetails,
-                                modifier = Modifier.onSizeChanged { headerHeight = it.height },
                             )
                         }
-                        if (pageState == PageStateKind.CONTENT) {
-                            items(profiles, key = ProfileInfo::iccid) { profile ->
-                                ProfileCard(
-                                    profile = profile,
-                                    artworkBitmap = artworkLoadState.bitmaps[profile.iccid],
+                        items(profiles, key = ProfileInfo::iccid) { profile ->
+                            ProfileCard(
+                                profile = profile,
+                                artworkBitmap = artworkLoadState.bitmaps[profile.iccid],
+                                state = state,
+                                switchEnabled = !profileSwitchLocked,
+                                onOpen = { onOpenProfile(profile) },
+                                onEnableChange = { enabled -> onEnableChange(profile.iccid, enabled) },
+                                onLongPress = { profileActionsState.value = profile },
+                            )
+                        }
+                    }
+                } else {
+                    val listTopPadding = contentPadding.calculateTopPadding() + ProfilesFirstCardGap
+                    val listBottomPadding = contentPadding.calculateBottomPadding() + 24.dp
+                    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                        val listViewportHeight = maxHeight - listTopPadding - listBottomPadding
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .scrollEndHaptic()
+                                .overScrollVertical()
+                                .nestedScroll(scrollBehavior.nestedScrollConnection),
+                            overscrollEffect = null,
+                            contentPadding = PaddingValues(
+                                start = sidePadding,
+                                end = sidePadding,
+                                top = listTopPadding,
+                                bottom = listBottomPadding,
+                            ),
+                        ) {
+                            item(key = "header") {
+                                ProfilesHeader(
                                     state = state,
-                                    switchEnabled = !profileSwitchLocked,
-                                    onOpen = { onOpenProfile(profile) },
-                                    onEnableChange = { enabled -> onEnableChange(profile.iccid, enabled) },
-                                    onLongPress = { profileActionsState.value = profile },
+                                    onSearchChange = onSearchChange,
+                                    onSelectReader = onSelectReader,
+                                    onOpenEuiccDetails = onOpenEuiccDetails,
+                                    modifier = Modifier.onSizeChanged { headerHeight = it.height },
                                 )
                             }
-                        }
-                        if (pageState != PageStateKind.CONTENT || profiles.isEmpty()) {
-                            item(key = "state") {
-                                PageStateHost(
-                                    state = pageState,
-                                    modifier = Modifier.fillRemainingHeight(listViewportHeight) { headerHeight },
-                                    loadingMessage = loadingMessage,
-                                    emptyTitle = when {
-                                        state.lpa.selectedReader == null -> stringResource(R.string.profiles_choose_reader)
-                                        hasNoSearchResults -> stringResource(R.string.profiles_none_found)
-                                        else -> stringResource(R.string.profiles_none_installed)
-                                    },
-                                    emptyMessage = when {
-                                        state.lpa.selectedReader == null -> stringResource(R.string.profiles_choose_reader_message)
-                                        hasNoSearchResults -> stringResource(R.string.profiles_search_empty_message)
-                                        else -> stringResource(R.string.profiles_none_installed_message)
-                                    },
-                                    emptyActionLabel = stringResource(R.string.action_download_profile)
-                                        .takeIf { showDownloadAction },
-                                    onEmptyAction = onDownload.takeIf { showDownloadAction },
-                                    errorTitle = noReaderTitle,
-                                    errorMessage = noReaderMessage,
-                                    onRetry = onRefreshReaders,
-                                ) {}
+                            if (pageState == PageStateKind.CONTENT) {
+                                items(profiles, key = ProfileInfo::iccid) { profile ->
+                                    ProfileCard(
+                                        profile = profile,
+                                        artworkBitmap = artworkLoadState.bitmaps[profile.iccid],
+                                        state = state,
+                                        switchEnabled = !profileSwitchLocked,
+                                        onOpen = { onOpenProfile(profile) },
+                                        onEnableChange = { enabled -> onEnableChange(profile.iccid, enabled) },
+                                        onLongPress = { profileActionsState.value = profile },
+                                    )
+                                }
+                            }
+                            if (pageState == PageStateKind.LOADING) {
+                                item(key = "state") {
+                                    PageStateHost(
+                                        state = pageState,
+                                        modifier = Modifier.fillRemainingHeight(listViewportHeight) { headerHeight },
+                                        loadingMessage = loadingMessage,
+                                        emptyTitle = when {
+                                            state.lpa.selectedReader == null -> stringResource(R.string.profiles_choose_reader)
+                                            hasNoSearchResults -> stringResource(R.string.profiles_none_found)
+                                            else -> stringResource(R.string.profiles_none_installed)
+                                        },
+                                        emptyMessage = when {
+                                            state.lpa.selectedReader == null -> stringResource(R.string.profiles_choose_reader_message)
+                                            hasNoSearchResults -> stringResource(R.string.profiles_search_empty_message)
+                                            else -> stringResource(R.string.profiles_none_installed_message)
+                                        },
+                                        emptyActionLabel = stringResource(R.string.action_download_profile)
+                                            .takeIf { showDownloadAction },
+                                        onEmptyAction = onDownload.takeIf { showDownloadAction },
+                                        errorTitle = noReaderTitle,
+                                        errorMessage = noReaderMessage,
+                                        onRetry = onRefreshReaders,
+                                    ) {}
+                                }
                             }
                         }
                     }
+                }
+            }
+        }
+        if (pageState == PageStateKind.EMPTY || pageState == PageStateKind.ERROR) {
+            AnimatedVisibility(
+                visible = !isRefreshing && !hideEmptyDuringPull,
+                modifier = Modifier.fillMaxSize(),
+                enter = fadeIn(animationSpec = tween(150)),
+                exit = fadeOut(animationSpec = tween(120)),
+            ) {
+                if (pageState == PageStateKind.EMPTY) {
+                    EmptyState(
+                        title = when {
+                            state.lpa.selectedReader == null -> stringResource(R.string.profiles_choose_reader)
+                            hasNoSearchResults -> stringResource(R.string.profiles_none_found)
+                            else -> stringResource(R.string.profiles_none_installed)
+                        },
+                        message = when {
+                            state.lpa.selectedReader == null -> stringResource(R.string.profiles_choose_reader_message)
+                            hasNoSearchResults -> stringResource(R.string.profiles_search_empty_message)
+                            else -> stringResource(R.string.profiles_none_installed_message)
+                        },
+                        icon = when {
+                            state.lpa.selectedReader == null -> MiuixIcons.SearchDevice
+                            hasNoSearchResults -> MiuixIcons.Search
+                            else -> MiuixIcons.Layers
+                        },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(
+                                top = contentPadding.calculateTopPadding(),
+                                bottom = contentPadding.calculateBottomPadding(),
+                            ),
+                        actionLabel = stringResource(R.string.action_download_profile).takeIf { showDownloadAction },
+                        onAction = onDownload.takeIf { showDownloadAction },
+                    )
+                } else if (pageState == PageStateKind.ERROR) {
+                    ErrorState(
+                        title = noReaderTitle,
+                        message = noReaderMessage,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(
+                                top = contentPadding.calculateTopPadding(),
+                                bottom = contentPadding.calculateBottomPadding(),
+                            ),
+                        onRetry = onRefreshReaders,
+                    )
                 }
             }
         }
@@ -537,13 +605,16 @@ private fun ProfilesHeader(
         if (showReaderSelector || showEid) {
             GroupedCard {
                 if (showReaderSelector) {
-                    val selectedIndex = state.lpa.readers.indexOfFirst {
-                        it.id == state.lpa.selectedReaderId
-                    }
+                    // A reader without a cached card is unselected until it opens; name it meanwhile.
+                    val shownReader = state.lpa.selectedReader
+                        ?: (state.lpa.operation as? LpaOperation.Connecting)?.let { connecting ->
+                            state.lpa.readers.firstOrNull { it.name == connecting.readerName }
+                        }
+                    val selectedIndex = state.lpa.readers.indexOfFirst { it.id == shownReader?.id }
                     OverlayDropdownPreference(
                         title = stringResource(R.string.profiles_active_reader),
                         enabled = state.lpa.operation is LpaOperation.Idle,
-                        summary = state.lpa.selectedReader?.detail
+                        summary = shownReader?.detail
                             ?: stringResource(R.string.profiles_select_reader),
                         items = state.lpa.readers.map { it.name },
                         selectedIndex = selectedIndex,
@@ -1057,6 +1128,7 @@ fun NotificationsScreen(
     scrollBehavior: ScrollBehavior,
     onProcess: (Long) -> Unit,
     onDelete: (Long) -> Unit,
+    refreshPending: Boolean = false,
     onRefresh: () -> Unit,
 ) {
     val profileFallbackName = stringResource(R.string.profile_default_name)
@@ -1073,69 +1145,84 @@ fun NotificationsScreen(
         selectedNotification = notification
         showNotificationActions = true
     }
+    val isRefreshing = refreshPending || state.lpa.operation is LpaOperation.Refreshing
+    var hideEmptyDuringPull by remember { mutableStateOf(false) }
 
-    PullToRefresh(
-        isRefreshing = state.lpa.operation is LpaOperation.Refreshing,
-        onRefresh = onRefresh,
-        modifier = modifier,
-        contentPadding = PaddingValues(
-            top = contentPadding.calculateTopPadding() + RefreshHeaderTopGap,
-            bottom = contentPadding.calculateBottomPadding(),
-        ),
-        topAppBarScrollBehavior = scrollBehavior,
-    ) {
-        val pageContent = MishkaPageContent {
-            if (state.lpa.selectedReader == null) {
-                item(contentType = PageStart.Viewport) {
-                    EmptyState(
-                        title = stringResource(R.string.notifications_no_reader),
-                        message = stringResource(R.string.notifications_no_reader_message),
-                        modifier = Modifier.fillParentMaxSize(),
-                    )
-                }
-            } else if (state.lpa.notifications.isEmpty()) {
-                item(contentType = PageStart.Viewport) {
-                    EmptyState(
-                        title = stringResource(R.string.notifications_none_pending),
-                        message = stringResource(R.string.notifications_none_pending_message),
-                        modifier = Modifier.fillParentMaxSize(),
-                    )
-                }
-            } else {
-                items(state.lpa.notifications, key = LpaNotification::sequenceNumber) { notification ->
-                    val profile = profilesByIccid[notification.iccid]
-                    NotificationCard(
-                        notification = notification,
-                        profileName = profile?.let {
-                            formatProfileDisplayName(
-                                it,
-                                state.settings.phoneFormatStrategy,
-                                profileFallbackName,
-                                state.settings.profileNameRedaction,
-                            ).fullText
-                        },
-                        providerName = profile?.providerName?.takeIf(String::isNotBlank),
-                        onClick = { openActions(notification) },
-                    )
+    Box(modifier = modifier.fillMaxSize()) {
+        PullToRefresh(
+            isRefreshing = isRefreshing,
+            onRefresh = onRefresh,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                top = contentPadding.calculateTopPadding() + RefreshHeaderTopGap,
+                bottom = contentPadding.calculateBottomPadding(),
+            ),
+            topAppBarScrollBehavior = scrollBehavior,
+            onPullProgress = { hideEmptyDuringPull = it > 0.01f },
+        ) {
+            val pageContent = MishkaPageContent {
+                if (state.lpa.selectedReader != null && state.lpa.notifications.isNotEmpty()) {
+                    items(state.lpa.notifications, key = LpaNotification::sequenceNumber) { notification ->
+                        val profile = profilesByIccid[notification.iccid]
+                        NotificationCard(
+                            notification = notification,
+                            profileName = profile?.let {
+                                formatProfileDisplayName(
+                                    it,
+                                    state.settings.phoneFormatStrategy,
+                                    profileFallbackName,
+                                    state.settings.profileNameRedaction,
+                                ).fullText
+                            },
+                            providerName = profile?.providerName?.takeIf(String::isNotBlank),
+                            onClick = { openActions(notification) },
+                        )
+                    }
                 }
             }
+            CenteredContent { sidePadding ->
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .scrollEndHaptic()
+                        .overScrollVertical()
+                        .nestedScroll(scrollBehavior.nestedScrollConnection),
+                    overscrollEffect = null,
+                    contentPadding = PaddingValues(
+                        start = sidePadding,
+                        end = sidePadding,
+                        top = contentPadding.calculateTopPadding() + pageContent.topPadding,
+                        bottom = contentPadding.calculateBottomPadding() + 24.dp,
+                    ),
+                    content = pageContent.content,
+                )
+            }
         }
-        CenteredContent { sidePadding ->
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .scrollEndHaptic()
-                    .overScrollVertical()
-                    .nestedScroll(scrollBehavior.nestedScrollConnection),
-                overscrollEffect = null,
-                contentPadding = PaddingValues(
-                    start = sidePadding,
-                    end = sidePadding,
-                    top = contentPadding.calculateTopPadding() + pageContent.topPadding,
-                    bottom = contentPadding.calculateBottomPadding() + 24.dp,
-                ),
-                content = pageContent.content,
-            )
+        if (state.lpa.selectedReader == null || state.lpa.notifications.isEmpty()) {
+            AnimatedVisibility(
+                visible = !isRefreshing && !hideEmptyDuringPull,
+                modifier = Modifier.fillMaxSize(),
+                enter = fadeIn(animationSpec = tween(150)),
+                exit = fadeOut(animationSpec = tween(120)),
+            ) {
+                EmptyState(
+                    title = stringResource(
+                        if (state.lpa.selectedReader == null) R.string.notifications_no_reader
+                        else R.string.notifications_none_pending,
+                    ),
+                    message = stringResource(
+                        if (state.lpa.selectedReader == null) R.string.notifications_no_reader_message
+                        else R.string.notifications_none_pending_message,
+                    ),
+                    icon = if (state.lpa.selectedReader == null) MiuixIcons.SearchDevice else MiuixIcons.Messages,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(
+                            top = contentPadding.calculateTopPadding(),
+                            bottom = contentPadding.calculateBottomPadding(),
+                        ),
+                )
+            }
         }
     }
 
@@ -1268,16 +1355,16 @@ fun NotificationHistoryScreen(
     DetailLazyScaffold(
         title = stringResource(R.string.notification_history_title),
         onBack = onBack,
+        emptyOverlay = if (state.notificationHistory.isEmpty()) ({
+            EmptyState(
+                title = stringResource(R.string.notification_history_empty),
+                message = stringResource(R.string.notification_history_empty_message),
+                icon = MiuixIcons.File,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }) else null,
     ) {
-        if (state.notificationHistory.isEmpty()) {
-            item(contentType = PageStart.Viewport) {
-                EmptyState(
-                    title = stringResource(R.string.notification_history_empty),
-                    message = stringResource(R.string.notification_history_empty_message),
-                    modifier = Modifier.fillParentMaxSize(),
-                )
-            }
-        } else {
+        if (state.notificationHistory.isNotEmpty()) {
             items(historyItems, key = { it.first }) { (_, entry) ->
                 NotificationHistoryCard(
                     entry = entry,

@@ -129,9 +129,11 @@ class RemoteDevicesIntegrationTest {
             first.devices.startRuntime()
             assertTrue(rename.await() is OperationOutcome.Success)
             assertEquals(before + 1, second.host.calls.get())
-            assertTrue(first.devices.execute(DeviceCommand(DeviceAction.RENAME, iccid = Iccid, text = "Must refresh")) is OperationOutcome.Unverified)
-            assertTrue(first.devices.execute(DeviceCommand(DeviceAction.REFRESH)) is OperationOutcome.Success)
-            assertEquals("Recovered", first.devices.view.value?.lpa?.profiles?.single()?.nickname)
+            // The recovered result carried no card state, so the card is read before the next change.
+            assertTrue(first.devices.execute(DeviceCommand(DeviceAction.RENAME, iccid = Iccid, text = "Verified")) is OperationOutcome.Success)
+            assertEquals(before + 2, second.host.calls.get())
+            assertTrue(second.host.refreshes.get() > 0)
+            assertEquals("Verified", first.devices.view.value?.lpa?.profiles?.single()?.nickname)
 
             first.devices.forget(first.devices.ui.value.peers.single().id)
             await("revoked on both devices") { first.devices.ui.value.peers.isEmpty() && second.devices.ui.value.peers.isEmpty() }
@@ -178,6 +180,7 @@ class RemoteDevicesIntegrationTest {
 
     private class CardHost(val devices: RemoteDevices, val scope: CoroutineScope) : DeviceHost {
         val calls = AtomicInteger()
+        val refreshes = AtomicInteger()
         @Volatile var suppressNextResult = false
         private var profile = ProfileInfo(Iccid, ProfileState.DISABLED, "Test", "Test", "Test carrier", "", ProfileClass.TESTING)
         private var decision: CompletableDeferred<Boolean>? = null
@@ -218,7 +221,8 @@ class RemoteDevicesIntegrationTest {
                 val result = DeviceMessage("result", requestId = message.requestId, snapshot = snapshot(command.readerId),
                     outcome = OperationOutcome.Success, done = true, revision = 2, downloadResult = downloadResult)
                 devices.saveRecord(record.copy(result = result.copy(snapshot = null)))
-                calls.incrementAndGet()
+                // Only changes count: this phone may also re-read the card on its own.
+                if (command.action == DeviceAction.REFRESH) refreshes.incrementAndGet() else calls.incrementAndGet()
                 if (suppressNextResult) suppressNextResult = false else devices.send(peer, result)
             }
         }

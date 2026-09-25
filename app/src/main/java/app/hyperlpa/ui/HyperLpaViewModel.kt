@@ -228,6 +228,10 @@ class HyperLpaViewModel(
         private set
     var instantNavigation by mutableStateOf(false)
         private set
+    // Pull-to-refresh settles as finished unless it sees the refresh in the gesture's own frame,
+    // which the repository cannot guarantee once the refresh waits for a lock or a paired device.
+    var profileRefreshPending by mutableStateOf(false)
+        private set
     var startRouteResolved = false
         private set
     private val selectedTab = MutableStateFlow(AppTab.PROFILES)
@@ -651,7 +655,12 @@ class HyperLpaViewModel(
         }
     }
     fun disconnectReader() = launch { repository.disconnectSession() }
-    fun refreshProfiles() = readerAction(repository::refresh)
+    fun refreshProfiles() {
+        profileRefreshPending = true
+        readerAction(onRejected = { profileRefreshPending = false }) {
+            try { repository.refresh() } finally { profileRefreshPending = false }
+        }
+    }
     fun setProfileEnabled(iccid: String, enabled: Boolean) {
         val profiles = state.value.profiles
         if (requiresLastEnabledProfileConfirmation(profiles, iccid, enabled)) {

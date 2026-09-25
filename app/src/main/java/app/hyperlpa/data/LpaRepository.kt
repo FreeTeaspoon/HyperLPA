@@ -514,18 +514,32 @@ class LpaRepository(
     suspend fun connect(readerId: String): OperationOutcome {
         val devices = deviceController.value
         if (devices?.readers?.value?.any { it.id == readerId } == true) return devices.select(readerId)
-        if (devices != null && !devices.deselect()) return OperationOutcome.Failed(OperationFailure(
-            appContext.getString(R.string.remote_title), appContext.getString(R.string.remote_operation_running)))
         cancelDeferredCardFollowUp()
         return operationMutex.withLock {
             val endpoint = endpointById[readerId]
                 ?: throw IllegalArgumentException(appContext.getString(R.string.failure_reader_unavailable))
+            // Present this reader before releasing a remote one, so the page never falls back to
+            // the local reader that was selected before it.
+            var presentedReconnect: Boolean? = null
+            if (devices?.isSelected == true && !withContext(ioDispatcher) {
+                    devices.deselect {
+                        presentedReconnect = presentConnectionTarget(endpoint)
+                        mutableState.value = mutableState.value.copy(
+                            operation = LpaOperation.Connecting(endpoint.info.name),
+                            failure = null,
+                        )
+                    }
+                }
+            ) return@withLock remoteOperationRunning()
             selectedReaderTargetId = readerId
             withOperation(LpaOperation.Connecting(endpoint.info.name)) {
-                connectInternal(endpoint)
+                connectInternal(endpoint, presentedReconnect = presentedReconnect)
             }
         }
     }
+
+    private fun remoteOperationRunning() = OperationOutcome.Failed(OperationFailure(
+        appContext.getString(R.string.remote_title), appContext.getString(R.string.remote_operation_running)))
 
     suspend fun refresh(): OperationOutcome =
         remoteOrLocal(DeviceCommand(DeviceAction.REFRESH)) { refreshLocal() }
@@ -1347,28 +1361,39 @@ class LpaRepository(
 
     suspend fun disconnectSession(): OperationOutcome {
         val devices = deviceController.value
-        if (devices?.isSelected == true) return if (devices.deselect()) OperationOutcome.Success else
-            OperationOutcome.Failed(OperationFailure(appContext.getString(R.string.remote_title), appContext.getString(R.string.remote_operation_running)))
+        if (devices?.isSelected == true) {
+            cancelDeferredCardFollowUp()
+            // Disconnecting a remote reader leaves no reader selected, not the local reader that
+            // was selected before it.
+            return operationMutex.withLock {
+                val released = withContext(ioDispatcher) { devices.deselect(::clearSelectedReaderLocked) }
+                if (released) OperationOutcome.Success else remoteOperationRunning()
+            }
+        }
         cancelProfileDownload()
         cancelDeferredCardFollowUp()
         return operationMutex.withLock {
             withOperation(
                 LpaOperation.Refreshing(appContext.getString(R.string.operation_disconnecting_reader)),
             ) {
-                selectedReaderTargetId = null
-                closeSession()
-                mutableState.value = mutableState.value.copy(
-                    selectedReaderId = null,
-                    profiles = emptyList(),
-                    notifications = emptyList(),
-                    euiccInfo = null,
-                    pendingProfileDownload = null,
-                    completedProfileDownload = null,
-                    discoveredSmdpAddresses = emptyList(),
-                    readerSnapshotPendingRefresh = false,
-                )
+                clearSelectedReaderLocked()
             }
         }
+    }
+
+    private fun clearSelectedReaderLocked() {
+        selectedReaderTargetId = null
+        closeSession()
+        mutableState.value = mutableState.value.copy(
+            selectedReaderId = null,
+            profiles = emptyList(),
+            notifications = emptyList(),
+            euiccInfo = null,
+            pendingProfileDownload = null,
+            completedProfileDownload = null,
+            discoveredSmdpAddresses = emptyList(),
+            readerSnapshotPendingRefresh = false,
+        )
     }
 
     private fun disconnectReadersForStateReplacementLocked() {
@@ -1426,35 +1451,9 @@ class LpaRepository(
     private suspend fun connectInternal(
         endpoint: ReaderEndpoint,
         refreshScope: SessionRefreshScope = SessionRefreshScope.FULL,
+        presentedReconnect: Boolean? = null,
     ) = withContext(ioDispatcher) {
-        val stateBeforeConnection = mutableState.value
-        val reconnectingSelectedReader = stateBeforeConnection.selectedReaderId == endpoint.info.id
-        if (
-            stateBeforeConnection.selectedReaderId != null &&
-            stateBeforeConnection.euiccInfo != null &&
-            !stateBeforeConnection.readerSnapshotPendingRefresh
-        ) {
-            cacheReaderSnapshot(stateBeforeConnection.selectedReaderId, stateBeforeConnection)
-        }
-        val cachedTargetSnapshot = readerSnapshots[endpoint.info.id]
-        closeSession()
-        if (cachedTargetSnapshot != null) {
-            // A target-bound snapshot can be shown safely while its new session is opened. It
-            // never combines the previous reader ID with another card's profiles or EID.
-            mutableState.value = mutableState.value.withReaderSnapshot(
-                readerId = endpoint.info.id,
-                snapshot = cachedTargetSnapshot,
-            )
-        } else if (!reconnectingSelectedReader) {
-            mutableState.value = mutableState.value.copy(
-                selectedReaderId = null,
-                profiles = emptyList(),
-                notifications = emptyList(),
-                euiccInfo = null,
-                discoveredSmdpAddresses = emptyList(),
-                readerSnapshotPendingRefresh = false,
-            )
-        }
+        val reconnectingSelectedReader = presentedReconnect ?: presentConnectionTarget(endpoint)
         log(LogLevel.INFO, "Reader", "Connecting to ${endpoint.info.name}")
         var opened: LpaSession? = null
         try {
@@ -1499,6 +1498,42 @@ class LpaRepository(
             }
             throw error
         }
+    }
+
+    /**
+     * Closes the current session and shows [endpoint]'s cached card, or no card, while its session
+     * opens. Returns whether [endpoint] was already the selected reader.
+     */
+    private fun presentConnectionTarget(endpoint: ReaderEndpoint): Boolean {
+        val stateBeforeConnection = mutableState.value
+        val reconnectingSelectedReader = stateBeforeConnection.selectedReaderId == endpoint.info.id
+        if (
+            stateBeforeConnection.selectedReaderId != null &&
+            stateBeforeConnection.euiccInfo != null &&
+            !stateBeforeConnection.readerSnapshotPendingRefresh
+        ) {
+            cacheReaderSnapshot(stateBeforeConnection.selectedReaderId, stateBeforeConnection)
+        }
+        val cachedTargetSnapshot = readerSnapshots[endpoint.info.id]
+        closeSession()
+        if (cachedTargetSnapshot != null) {
+            // A target-bound snapshot can be shown safely while its new session is opened. It
+            // never combines the previous reader ID with another card's profiles or EID.
+            mutableState.value = mutableState.value.withReaderSnapshot(
+                readerId = endpoint.info.id,
+                snapshot = cachedTargetSnapshot,
+            )
+        } else if (!reconnectingSelectedReader) {
+            mutableState.value = mutableState.value.copy(
+                selectedReaderId = null,
+                profiles = emptyList(),
+                notifications = emptyList(),
+                euiccInfo = null,
+                discoveredSmdpAddresses = emptyList(),
+                readerSnapshotPendingRefresh = false,
+            )
+        }
+        return reconnectingSelectedReader
     }
 
     private fun cacheReaderSnapshot(readerId: String, state: LpaRepositoryState) {
