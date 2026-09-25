@@ -79,14 +79,13 @@
     <string name="common_state_description">%1$s. %2$s</string>
     <string name="common_clear">Clear</string>
     <string name="common_remove">Remove</string>
-    <string name="common_send">Send</string>
     <string name="common_none">None</string>
     <string name="common_cancel">Cancel</string>
     <string name="common_ok">OK</string>
-    <string name="common_confirm">Confirm</string>
     <string name="common_save">Save</string>
     <string name="common_restore_defaults">Restore defaults</string>
     <string name="common_connected">Connected</string>
+    <string name="common_off">Off</string>
     <string name="common_granted">Granted</string>
     <string name="common_not_granted">Not granted</string>
     <string name="common_unavailable">Unavailable</string>
@@ -102,7 +101,6 @@
     <string name="profiles_search_empty_message">Try a different search.</string>
     <string name="profiles_none_installed_message">Download an activation code to install your first eSIM profile.</string>
     <string name="profiles_find_readers">Find readers</string>
-    <string name="profiles_find_readers_summary">Scan NBridge, OMAPI and USB CCID sources</string>
     <string name="profiles_active_reader">Active reader</string>
     <string name="profiles_select_reader">Select a reader</string>
     <string name="profiles_connecting_reader">Connecting to %1$s…</string>
@@ -136,19 +134,21 @@
     <string name="size_mebibytes_decimal">%1$.1f MiB</string>
 
     <!-- Notification queue and durable history -->
-    <string name="notifications_pending_section">Pending on eUICC</string>
     <string name="notifications_no_reader">No reader connected</string>
     <string name="notifications_no_reader_message">Connect a reader on the Profiles page to load notifications.</string>
     <string name="notifications_none_pending">No pending notifications</string>
     <string name="notifications_none_pending_message">Profile management notifications are already up to date.</string>
-    <string name="notifications_pending_status">Pending</string>
+    <string name="notifications_options_title">Notification options</string>
+    <string name="notifications_option_send">Send now</string>
+    <string name="notifications_option_send_summary">Report this change to the provider and remove it from the eUICC</string>
+    <string name="notifications_option_details_summary">See the profile, address and sequence number</string>
+    <string name="notifications_option_delete">Delete</string>
+    <string name="notifications_option_delete_summary">Remove it from the eUICC without telling the provider</string>
+    <string name="notifications_delete_title">Delete notification?</string>
+    <string name="notifications_delete_summary">The provider will not be told about this change. Some providers need it to finish moving or removing a profile.</string>
     <string name="notification_history_title">Notification history</string>
     <string name="notification_history_empty">No notification history</string>
     <string name="notification_history_empty_message">Send and removal outcomes will be saved here with profile details, EIDs, ICCIDs, and safe notification origins.</string>
-    <plurals name="notification_history_saved_count">
-        <item quantity="one">%1$d saved outcome</item>
-        <item quantity="other">%1$d saved outcomes</item>
-    </plurals>
     <string name="notification_history_action_send">Send</string>
     <string name="notification_history_action_delete">Remove</string>
     <string name="notification_history_status_succeeded">Succeeded</string>
@@ -203,8 +203,6 @@
     <string name="tools_statistics">Statistics</string>
     <string name="tools_statistics_summary">Profile and notification overview</string>
     <string name="tools_diagnostics">Diagnostics</string>
-    <string name="tools_reader_diagnostics">Reader diagnostics</string>
-    <string name="tools_reader_diagnostics_summary">Reader types and current availability</string>
     <string name="tools_isdr_aids">ISD-R AIDs</string>
     <string name="tools_isdr_aids_summary">Manage compatibility AID candidates</string>
     <string name="tools_activity_logs">Activity logs</string>
@@ -223,7 +221,6 @@
     <string name="settings_compatibility_setup_summary">Check which readers can reach an eUICC</string>
     <string name="settings_notification_processing">Notification processing</string>
     <string name="settings_notification_processing_summary">Automatic send and removal policies</string>
-    <string name="settings_tags_reminders_summary">Tags, reminder permissions and scheduled alerts</string>
     <string name="settings_advanced_lpa">Advanced LPA settings</string>
     <string name="settings_advanced_lpa_summary">MSS, IMEI, AIDs and developer diagnostics</string>
     <string name="settings_privacy_section">Privacy</string>
@@ -232,8 +229,6 @@
     <string name="settings_app_section">App</string>
     <string name="settings_backup_restore">Backup &amp; restore</string>
     <string name="settings_backup_restore_summary">Back up settings, profile data and custom icons</string>
-    <string name="settings_logs">Logs</string>
-    <string name="settings_logs_summary">Recent app and LPA activity</string>
     <string name="settings_about">About HyperLPA</string>
     <string name="settings_about_summary">Version, licenses and implementation notes</string>
 
@@ -336,11 +331,6 @@
     <string name="reader_settings_behaviour">Behaviour</string>
     <string name="reader_connect_automatically">Connect automatically</string>
     <string name="reader_connect_automatically_summary">Reconnect the last available reader when the app starts</string>
-    <string name="reader_discover_now">Discover readers now</string>
-    <string name="reader_discover_now_summary">Refresh all enabled local, Bluetooth and remote reader backends</string>
-    <string name="reader_discover_permission_required_summary">Grant Nearby devices permission, then discover readers</string>
-    <string name="reader_discover_location_required_summary">Refresh other readers and grant Location permission for Bluetooth discovery</string>
-    <string name="reader_discover_bluetooth_off_summary">Turn on Bluetooth, then discover paired readers</string>
     <string name="reader_disconnect">Disconnect reader</string>
     <string name="reader_disconnect_summary">Close the active APDU session and release its hardware</string>
     <string name="reader_backends_section">Reader backends</string>
@@ -358,6 +348,8 @@
     <string name="reader_bluetooth_location_required_summary">Location permission is required for Bluetooth discovery on this Android version</string>
     <string name="reader_bluetooth_off_summary">Bluetooth is off; turn it on before discovering paired readers</string>
     <string name="reader_remote_title">Remote readers</string>
+    <string name="reader_remote_enable">Use remote readers</string>
+    <string name="reader_remote_credentials">Credentials</string>
     <string name="reader_remote_summary">Use explicitly configured network APDU endpoints</string>
     <string name="reader_remote_addresses">Remote reader addresses</string>
     <string name="reader_remote_credential_stored">Bearer credential stored securely</string>
@@ -380,7 +372,7 @@
     <string name="reader_diagnostics_copied">Redacted diagnostics copied</string>
     <string name="reader_available_now">Available now</string>
     <string name="reader_no_readers_found">No readers found</string>
-    <string name="reader_no_readers_found_summary">Check permissions, connect a reader, then discover again</string>
+    <string name="reader_no_readers_found_summary">Check permissions, connect a reader, then pull down to search again</string>
     <string name="reader_bluetooth_permission_required_title">Bluetooth permission required</string>
     <string name="reader_bluetooth_permission_required_message">Grant Nearby devices permission to discover paired Bluetooth readers</string>
     <string name="reader_bluetooth_location_required_message">Grant Location permission to discover paired Bluetooth readers on this Android version</string>
@@ -468,6 +460,7 @@
     <string name="privacy_profile_size">Profile size predictions</string>
     <string name="privacy_profile_size_summary">Use NekokoLPA reference data when a measured size is unavailable</string>
     <string name="privacy_clear_cloud_caches">Clear</string>
+    <string name="privacy_clear_cloud_caches_title">Clear cloud caches</string>
     <string name="privacy_clear_cloud_caches_summary">Remove downloaded operator artwork and profile-size reference data</string>
     <string name="privacy_clear_cloud_caches_dialog_title">Clear cloud caches?</string>
     <string name="privacy_clear_cloud_caches_dialog_summary">Downloaded operator artwork and profile-size reference data will be removed. They can be downloaded again when needed.</string>
@@ -495,22 +488,17 @@
     <string name="advanced_hide_memory_reset_summary">Remove the reset action from eUICC information</string>
     <string name="advanced_mss_dialog_title">Maximum segment size</string>
     <string name="advanced_mss_dialog_summary">Enter a value from 32 to 255 bytes.</string>
+    <string name="advanced_mss_out_of_range">Must be between 32 and 255</string>
     <string name="advanced_imei_dialog_summary">Optional. HyperLPA stores it locally and supplies it only during profile downloads.</string>
     <string name="backup_title">Backup &amp; restore</string>
-    <string name="backup_section">Backup</string>
     <string name="backup_create">Create backup</string>
     <string name="backup_create_summary">Create a password-encrypted backup of settings and saved profile data</string>
-    <string name="backup_restore_section">Restore</string>
     <string name="backup_restore">Restore backup</string>
     <string name="backup_restore_summary">Replace local settings and saved profile data from a HyperLPA backup</string>
     <string name="backup_reset_settings">Reset settings</string>
     <string name="backup_reset_settings_summary">Restore every app setting to its default value</string>
-    <string name="backup_privacy_section">Privacy</string>
-    <string name="backup_keep_secure">Keep backups secure</string>
     <string name="backup_keep_secure_summary">Backups use AES-GCM encryption and can contain ICCIDs, EID, IMEI, remote reader addresses and custom images. The password cannot be recovered.</string>
-    <string name="backup_not_included">Not included</string>
-    <string name="backup_esim_profiles">eSIM profiles</string>
-    <string name="backup_esim_profiles_summary">Installed profiles remain on the eUICC and are not copied into the backup</string>
+    <string name="backup_esim_profiles_summary">Installed profiles remain on the eUICC and are not copied into the backup.</string>
     <string name="backup_protect_title">Protect this backup</string>
     <string name="backup_protect_summary">Choose at least 10 characters. You will need this password to restore the backup.</string>
     <string name="backup_password">Backup password</string>
@@ -729,7 +717,6 @@
     <string name="activation_error_rsp_port">The RSP server port is invalid.</string>
 
     <!-- Profile download confirmation, result, and batch queue -->
-    <string name="download_profile_information">Profile information</string>
     <string name="download_available_storage">Available storage</string>
     <string name="download_storage_free">%1$s free</string>
     <string name="download_estimated_size">Estimated download size</string>
@@ -745,10 +732,10 @@
     <string name="download_success_title">Installation successful</string>
     <string name="download_success_profile_fallback">The profile</string>
     <string name="download_success_summary">%1$s was installed on your eUICC.</string>
-    <string name="download_storage_section">Storage</string>
     <string name="download_storage_used">Used by this profile</string>
     <string name="download_storage_free_title">Free storage</string>
     <string name="download_enable_profile">Enable profile</string>
+    <string name="download_enable_profile_summary">Switch to this profile and go back to Profiles</string>
     <string name="common_done">Done</string>
     <string name="batch_download_title">Batch download</string>
     <string name="batch_download_instructions">Enter one activation code per line. For a code that requires confirmation, use “LPA:… | confirmation-code”. Downloads run in order.</string>
@@ -783,6 +770,8 @@
         <item quantity="other">Retry %1$d failed downloads</item>
     </plurals>
     <string name="batch_clear_saved">Clear saved queue</string>
+    <string name="batch_clear_title">Clear saved queue?</string>
+    <string name="batch_clear_summary">The saved codes and their results will be removed. Profiles that were already installed stay on the eUICC.</string>
 
     <!-- eUICC information and maintenance -->
     <string name="euicc_information_title">eUICC information</string>
@@ -946,7 +935,6 @@
     <string name="logs_export_report">Export support report</string>
     <string name="logs_exported">Support report exported</string>
     <string name="logs_export_failed">Could not export support report</string>
-    <string name="logs_filter">Filter</string>
     <string name="logs_all_levels">All levels</string>
     <string name="logs_level">Log level</string>
     <plurals name="logs_visible_entries">
@@ -955,7 +943,6 @@
     </plurals>
     <string name="logs_empty">No log entries</string>
     <string name="logs_empty_message">LPA activity and errors will appear here.</string>
-    <string name="logs_recent">Recent</string>
     <string name="log_level_debug">Debug</string>
     <string name="log_level_info">Info</string>
     <string name="log_level_warning">Warning</string>
@@ -964,12 +951,12 @@
     <string name="profile_phone_clipboard_label">Phone number</string>
     <string name="profile_phone_copied">Phone number copied</string>
     <string name="tags_editor_summary">Tags stay on this device and make profiles easier to find and organise.</string>
-    <string name="tags_none_assigned">No tags assigned to this profile</string>
-    <string name="tags_text_tag">Text tag</string>
-    <string name="tags_input_label">Text tag (e.g. Work, Travel)</string>
+    <string name="tags_input_label">Tag names, such as Work, Travel</string>
     <string name="tags_add">Add tag</string>
-    <string name="tags_existing">Existing tags</string>
-    <string name="tags_add_to_profile">Add to this profile</string>
+    <string name="tags_add_summary">Create a new tag for this profile</string>
+    <string name="tags_add_dialog_summary">Separate several tags with commas. Each tag can be up to 32 characters.</string>
+    <string name="tags_limit_reached">A profile can have up to 16 tags</string>
+    <string name="common_add">Add</string>
     <!-- Reader descriptions -->
     <string name="reader_nbridge_detail">NBridge secure-element provider</string>
     <string name="reader_omapi_card_detected">Android OMAPI · card detected</string>
