@@ -1,0 +1,15 @@
+{
+  "secret": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "plaintext": "{\"kind\":\"hello\",\"name\":\"Browser ↔ Android\"}",
+  "envelope": {
+    "v": 1,
+    "id": "00000000-0000-4000-8000-000000000001",
+    "from": "00000000-0000-4000-8000-000000000002",
+    "to": "00000000-0000-4000-8000-000000000003",
+    "pair": "00000000-0000-4000-8000-000000000004",
+    "issued": 1000000,
+    "expires": 1120000,
+    "nonce": "AAECAwQFBgcICQoL",
+    "body": "-EKbGLXwFMbHq9SEZQBliMDmN0_7G4AX7wd8AWW_08eoEOzOKxaFMosNxLamWFBGMsA8ykJD8U5P8rXmsg"
+  }
+}

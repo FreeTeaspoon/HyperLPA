@@ -3,6 +3,13 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "cloudflare": {
+    "bindings": {
+      "ENROLLMENT_KEY": {
+        "description": "Generate a private key with `openssl rand -hex 32`. Save it in your password manager and enter the same key on every phone."
+      }
+    }
+  },
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
