@@ -464,7 +464,7 @@ fun ProfileDetailsScreen(
                             value = listOfNotNull(
                                 profile.mcc?.let { stringResource(R.string.profile_mcc, it) },
                                 profile.mnc?.let { stringResource(R.string.profile_mnc, it) },
-                            ).joinToString(" · "),
+                            ).joinToString(", "),
                         )
                     }
                     profile.estimatedBytes?.takeIf { it > 0 }?.let { bytes ->

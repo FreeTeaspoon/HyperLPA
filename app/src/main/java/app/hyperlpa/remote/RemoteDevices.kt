@@ -510,7 +510,9 @@ internal class RemoteDevices(
                             if (message.name.length in 1..80 && message.name != existing.name) {
                                 update { saved -> saved.copy(peers = saved.peers.map { if (it.id == existing.id) it.copy(name = message.name) else it }) }
                                 mutableReaders.value = mutableReaders.value.map {
-                                    if (it.deviceId == existing.id) it.copy(name = message.name + " · " + it.name.substringAfter(" · ")) else it
+                                    if (it.deviceId == existing.id) {
+                                        it.copy(name = it.name.removeSuffix(" on ${existing.name}") + " on " + message.name)
+                                    } else it
                                 }
                             }
                             send(existing, DeviceMessage("hello_reply", name = config.name))
@@ -664,7 +666,7 @@ internal class RemoteDevices(
     }
 
     private fun remoteReader(device: PairedDevice, reader: ReaderInfo) = reader.copy(
-        id = "device:${device.id}:${reader.id}", name = "${device.name} · ${reader.name}",
+        id = "device:${device.id}:${reader.id}", name = "${reader.name} on ${device.name}",
         kind = ReaderKind.REMOTE, deviceId = device.id, sourceReaderId = reader.id,
     )
 
