@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import vector from "../../app/src/test/resources/device-protocol-vector.json";
+import vector from "./device-protocol-vector.json";
 
 it("WebCrypto decrypts the same HKDF/AES-GCM vector as Android", async () => {
   const decode = (s: string) => Uint8Array.from(atob(s.replaceAll("-", "+").replaceAll("_", "/")), c => c.charCodeAt(0));

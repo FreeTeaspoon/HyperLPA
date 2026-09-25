@@ -1,23 +1,40 @@
-# HyperLPA encrypted relay
+# HyperLPA relay
 
-This Cloudflare Worker and SQLite Durable Object connect paired HyperLPA Android
-devices across networks. Both phones make outbound HTTPS and WebSocket connections.
-No port forwarding, public phone address, VPN, Docker host, or Supabase project is
-needed. You control the Cloudflare account and the relay's enrollment key.
+Connect two HyperLPA phones across networks and use the eUICC reader on one from
+the other. The relay runs in your Cloudflare account. Both phones connect out over
+HTTPS and WebSocket, so there is no server to maintain or port to forward.
 
-The relay forwards encrypted app commands. The phone attached to the eUICC runs
-the existing LPA engine, including profile downloads and their SM-DP+ connections.
-The controlling phone receives profiles, metadata, progress, confirmation screens,
-and results. SIM1 and SIM2 appear in the existing active-reader dropdown as
-`Device name · SIM1` and `Device name · SIM2`.
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/FreeTeaspoon/HyperLPA/tree/main/relay)
 
-## Deploy
+The relay forwards encrypted commands and results. The phone with the eUICC does
+the card work, including profile downloads. On the controlling phone, its readers
+appear in **Active reader** as `Device name · SIM1` and `Device name · SIM2`.
 
-Use Node.js 22 or later and an account with Workers and SQLite Durable Objects
-enabled. Review your account's [Workers limits](https://developers.cloudflare.com/workers/platform/limits/)
-and [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/).
-The Worker uses [WebSocket hibernation](https://developers.cloudflare.com/durable-objects/best-practices/websockets/).
-Device heartbeats and operations still generate requests and storage writes.
+## Before you start
+
+- Install [HyperLPA](https://github.com/FreeTeaspoon/HyperLPA/releases) on both phones. The phone with the eUICC needs a reader that already works locally.
+- Have a Cloudflare account that can use Workers and SQLite Durable Objects. Check the [Workers limits](https://developers.cloudflare.com/workers/platform/limits/) and [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/). The relay uses [WebSocket hibernation](https://developers.cloudflare.com/durable-objects/best-practices/websockets/), but heartbeats and operations still use requests and storage.
+- Make a unique enrollment key and save it in your password manager. `openssl rand -hex 32` generates one with 32 random bytes. You will enter the same key on both phones.
+
+## Deploy to Cloudflare
+
+1. Select **Deploy to Cloudflare** above and sign in to Cloudflare and GitHub. Cloudflare creates a copy of the `relay` directory in your GitHub account, provisions the Durable Object, and deploys the Worker. Review the Worker name and account before deploying.
+2. When asked for `ENROLLMENT_KEY`, enter the key you saved. Cloudflare stores it as a Worker secret. The field must not be left blank.
+3. Copy the deployed HTTPS `workers.dev` address. Open `<your address>/health` and check for `{"protocol":1}`.
+
+Use the relay address as an origin such as `https://hyperlpa-relay.example.workers.dev`.
+Do not include `/health`, a trailing path, a query, or credentials. A custom Worker
+domain works too. Each deployment is one private device group, with room for up to
+64 registered devices and 32 pairings per phone.
+
+Cloudflare's deploy flow creates a separate GitHub repository for the relay and
+connects it to Workers Builds for future deployments. [Cloudflare explains the
+deploy button and its Git integration](https://developers.cloudflare.com/workers/platform/deploy-buttons/).
+
+### Deploy from the command line
+
+Use this route if you want to deploy from your own checkout. It needs Node.js 22
+or later. From the HyperLPA repository root:
 
 ```sh
 cd relay
@@ -29,23 +46,14 @@ npx wrangler deploy
 npx wrangler secret put ENROLLMENT_KEY
 ```
 
-Generate a random enrollment key of at least 32 bytes and keep it in a password
-manager. Paste it when `wrangler secret put` prompts. Registration stays disabled
-until this secret exists. Alternatively, deploy code and the secret together using
-Wrangler's `--secrets-file` option with a protected, untracked JSON file.
-See Cloudflare's [secret configuration](https://developers.cloudflare.com/workers/configuration/secrets/).
-Never add the enrollment key to `wrangler.jsonc`, an APK, Git, or public logs.
+Paste your saved key when Wrangler prompts. Registration remains disabled until
+the secret exists. Wrangler prints the Worker address; check its `/health` endpoint
+as above. You can also deploy code and the secret together using Wrangler's
+[`--secrets-file` option](https://developers.cloudflare.com/workers/configuration/secrets/)
+with a protected, untracked file. Never put the enrollment key in `wrangler.jsonc`,
+an APK, Git, or public logs.
 
-Wrangler prints an HTTPS `workers.dev` origin. A custom Worker domain also works.
-Verify `GET /health` returns `{"protocol":1}`. Keep the relay address as an origin,
-without a path, query, or credentials. Each deployment is one private device group,
-with a maximum of 64 registered devices and 32 pairings per phone.
-
-For development, put a disposable `ENROLLMENT_KEY` in an ignored `.dev.vars` file
-and run `npm run dev`. The Android client always requires HTTPS with a trusted
-certificate. It deliberately has no cleartext or certificate-bypass development mode.
-
-## Connect phones
+## Pair your phones
 
 1. Install HyperLPA on each phone. Verify its reader works locally and grant that
    reader's required Android permissions.
@@ -61,20 +69,23 @@ certificate. It deliberately has no cleartext or certificate-bypass development 
 6. Return to Profiles and select `Device name · SIM1` or `Device name · SIM2` in
    **Active reader**. Use the existing profile and notification screens.
 
-Supported remote actions include refresh, download with preview/confirmation and
-progress, enable/disable, rename/delete profiles, eUICC names, tags, pinning,
-reminders, custom/provider icons, notification processing/deletion/resend/history
-deletion, SM-DP+ changes, SM-DS discovery, and confirmed eUICC memory reset.
-The existing batch-download coordinator uses the selected remote reader as well.
-App-wide preferences, backups, and Android permissions remain per phone.
-Phone notification sharing is separate from eUICC notifications. On the source
-phone, grant notification access, enable sharing, choose apps and authorize each
-paired viewer in **Settings → Remote devices**. The source keeps up to 150 entries
-for seven days in an encrypted file outside backup storage. Viewers receive
-encrypted, temporary snapshots and can request deletion on the source. The relay
-only holds unacknowledged ciphertext for up to two minutes. Android may redact
-sensitive notifications before the listener sees them. There is no cloud archive
-or offline browser history in this version.
+## What you can do
+
+The remote reader supports the same profile workflow as a local reader: refresh,
+download with preview and progress, enable or disable, rename, and delete. You can
+also manage eUICC names, tags, pinning, reminders, artwork, eUICC notifications,
+SM-DP+ settings, SM-DS discovery, and confirmed memory reset. Batch downloads use
+the selected remote reader. App settings, backups, and Android permissions stay
+on each phone.
+
+Phone notification sharing is a separate option. On the source phone, grant
+notification access, turn on sharing, choose apps, and approve each paired viewer
+in **Settings → Remote devices**. The source keeps up to 150 entries for seven days
+in encrypted local storage. Viewers receive temporary encrypted snapshots and can
+ask the source to delete entries. Android may redact sensitive notifications.
+There is no cloud archive or offline browser history.
+
+## Keep the connection available
 
 The target must be online and have a usable local reader. This feature does not
 give the ordinary APK protected telephony privileges or bypass a card's signing
@@ -83,14 +94,14 @@ autostart and unrestricted battery use for unattended access. Reopen the app aft
 force-stop. A profile switch can interrupt the target's mobile data; Wi-Fi or a
 second data SIM helps keep the connection available during that operation.
 
-Remote access is opt-in. Disabling it stops the connection and cancels an outstanding
-download preview. A card operation already accepted can finish. Removing a peer
-revokes future commands and discards its pairing key. If the other phone is offline,
-remove the pairing there too before pairing again. Removing the relay unregisters
-this phone and discards its local relay configuration; it requires outstanding
-operations to be resolved first.
+Remote access is opt-in. Turning it off stops the connection and cancels an
+outstanding download preview. A card operation already accepted can finish.
+Removing a peer revokes future commands and discards its pairing key. If the
+other phone is offline, remove the pairing there too before pairing again.
+Removing the relay unregisters this phone and discards its local relay settings;
+resolve outstanding operations first.
 
-## Encryption and operation recovery
+## Privacy and operation recovery
 
 - Every pair has a random 256-bit secret transferred in the pairing code. The
   enrollment key only admits phones to the relay; it cannot decrypt profile data.
@@ -128,20 +139,19 @@ It does not revoke existing relay tokens or device pairings. To retire a phone,
 remove its pairings on its peers and unregister it when possible. There is no
 public relay administration or multi-user account system in this build.
 
-## Protocol and future web UI
+## For developers
 
-[PROTOCOL.md](PROTOCOL.md) describes the portable HTTPS/WebSocket contract.
-Android contains no Cloudflare SDK or account identifier. Another relay can
-implement that contract; this build includes the Cloudflare backend only.
+[PROTOCOL.md](PROTOCOL.md) describes the HTTPS/WebSocket contract. Android has no
+Cloudflare SDK or account identifier. Another backend can implement the contract;
+this repository ships the Cloudflare backend. There is no browser controller in
+this release.
 
-A browser management UI is planned, **not included in this build**. It should be a
-separate paired controller, use WebCrypto-compatible HKDF/AES-GCM, retain keys on
-the client, and reuse the same typed commands, reader/EID binding, confirmations,
-and status recovery. Browser origin restrictions, CSP, safe key persistence, and
-enrollment UX must be implemented before shipping it. Do not move decryption or
-carrier downloads into the relay to add a web interface.
+For local relay development, copy `.dev.vars.example` to the ignored `.dev.vars`,
+replace the empty `ENROLLMENT_KEY` with a disposable key, and run `npm run dev`.
+The Android client requires HTTPS with a trusted certificate, including in
+development.
 
-## Tests
+### Tests
 
 `npm test` runs the relay in Cloudflare's local Durable Object runtime, including
 authentication, single-use ticket races, spoofing, replay/acknowledgement, inbox
