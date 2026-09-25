@@ -908,6 +908,7 @@ private fun MainTabPage(
                     onSetPinned = viewModel::setProfilePinned,
                     onRename = viewModel::renameProfile,
                     onDownload = { viewModel.navigate(AppRoute.DownloadProfile) },
+                    refreshPending = viewModel.profileRefreshPending,
                     onRefresh = viewModel::refreshProfiles,
                 )
                 AppTab.NOTIFICATIONS -> NotificationsScreen(
@@ -917,6 +918,7 @@ private fun MainTabPage(
                     scrollBehavior = scrollBehavior,
                     onProcess = viewModel::processNotification,
                     onDelete = viewModel::deleteNotification,
+                    refreshPending = viewModel.profileRefreshPending,
                     onRefresh = viewModel::refreshProfiles,
                 )
                 AppTab.TOOLS -> ToolsScreen(

@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.captionBar
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
@@ -153,9 +154,12 @@ import top.yukonga.miuix.kmp.icon.extended.Delete
 import top.yukonga.miuix.kmp.icon.extended.ExpandLess
 import top.yukonga.miuix.kmp.icon.extended.ExpandMore
 import top.yukonga.miuix.kmp.icon.extended.Info
+import top.yukonga.miuix.kmp.icon.extended.Layers
+import top.yukonga.miuix.kmp.icon.extended.Notes
 import top.yukonga.miuix.kmp.icon.extended.Refresh
 import top.yukonga.miuix.kmp.icon.extended.Scan
 import top.yukonga.miuix.kmp.icon.extended.Search
+import top.yukonga.miuix.kmp.icon.extended.SearchDevice
 import top.yukonga.miuix.kmp.icon.extended.UploadCloud
 import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
@@ -307,23 +311,23 @@ fun ProfileDetailsScreen(
         background = if (profile == null) null else {
             { ProfileGradientBackdrop(bitmap = artworkBitmap) }
         },
+        emptyOverlay = if (profile == null && !isProfileDetailsLoading(profile, lpa)) ({
+            EmptyState(
+                title = stringResource(R.string.profile_unavailable_title),
+                message = stringResource(R.string.profile_unavailable_message),
+                icon = MiuixIcons.Layers,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }) else null,
     ) { _ ->
-        if (profile == null) {
+        if (profile == null && isProfileDetailsLoading(profile, lpa)) {
             item(contentType = PageStart.Viewport) {
-                if (isProfileDetailsLoading(profile, lpa)) {
-                    LoadingState(
-                        message = profileLoadingMessage,
-                        modifier = Modifier.fillParentMaxSize(),
-                    )
-                } else {
-                    EmptyState(
-                        title = stringResource(R.string.profile_unavailable_title),
-                        message = stringResource(R.string.profile_unavailable_message),
-                        modifier = Modifier.fillParentMaxSize(),
-                    )
-                }
+                LoadingState(
+                    message = profileLoadingMessage,
+                    modifier = Modifier.fillParentMaxSize(),
+                )
             }
-        } else {
+        } else if (profile != null) {
             item {
                 ProfileHero(
                     profile = profile,
@@ -1895,16 +1899,19 @@ fun EuiccDetailsScreen(
     var showDefaultSmdpEditor by remember { mutableStateOf(false) }
     var showSmdsEditor by remember { mutableStateOf(false) }
     var showCardNameEditor by remember { mutableStateOf(false) }
-    DetailLazyScaffold(title = stringResource(R.string.euicc_information_title), onBack = onBack) { _ ->
-        if (info == null) {
-            item(contentType = PageStart.Viewport) {
-                EmptyState(
-                    title = stringResource(R.string.euicc_not_connected),
-                    message = stringResource(R.string.euicc_not_connected_message),
-                    modifier = Modifier.fillParentMaxSize(),
-                )
-            }
-        } else {
+    DetailLazyScaffold(
+        title = stringResource(R.string.euicc_information_title),
+        onBack = onBack,
+        emptyOverlay = if (info == null) ({
+            EmptyState(
+                title = stringResource(R.string.euicc_not_connected),
+                message = stringResource(R.string.euicc_not_connected_message),
+                icon = MiuixIcons.SearchDevice,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }) else null,
+    ) { _ ->
+        if (info != null) {
             item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.euicc_identity)) }
             item {
                 GroupedCard {
@@ -2366,16 +2373,19 @@ fun TagManagerScreen(
         ).any { it.contains(searchQuery, ignoreCase = true) }
     }
 
-    DetailLazyScaffold(title = stringResource(R.string.profile_tags_title), onBack = onBack) { _ ->
-        if (profiles.isEmpty()) {
-            item(contentType = PageStart.Viewport) {
-                EmptyState(
-                    stringResource(R.string.tags_no_profiles),
-                    stringResource(R.string.tags_no_profiles_message),
-                    modifier = Modifier.fillParentMaxSize(),
-                )
-            }
-        } else {
+    DetailLazyScaffold(
+        title = stringResource(R.string.profile_tags_title),
+        onBack = onBack,
+        emptyOverlay = if (profiles.isEmpty()) ({
+            EmptyState(
+                stringResource(R.string.tags_no_profiles),
+                stringResource(R.string.tags_no_profiles_message),
+                icon = MiuixIcons.Layers,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }) else null,
+    ) { _ ->
+        if (profiles.isNotEmpty()) {
             item {
                 TextField(
                     value = searchQuery,
@@ -2420,6 +2430,7 @@ fun TagManagerScreen(
                     EmptyState(
                         title = stringResource(R.string.tags_none_found),
                         message = stringResource(R.string.tags_none_found_message),
+                        icon = MiuixIcons.Search,
                         modifier = Modifier.fillParentMaxSize(),
                     )
                 }
@@ -2473,16 +2484,19 @@ fun ScheduledRemindersScreen(
     val now = Instant.now()
     val upcoming = scheduled.filter { it.reminderAt?.isAfter(now) == true }
     val pastDue = scheduled.filterNot { it.reminderAt?.isAfter(now) == true }
-    DetailLazyScaffold(title = stringResource(R.string.reminders_scheduled_title), onBack = onBack) { _ ->
-        if (scheduled.isEmpty()) {
-            item(contentType = PageStart.Viewport) {
-                EmptyState(
-                    title = stringResource(R.string.reminders_none),
-                    message = stringResource(R.string.reminders_none_message),
-                    modifier = Modifier.fillParentMaxSize(),
-                )
-            }
-        } else {
+    DetailLazyScaffold(
+        title = stringResource(R.string.reminders_scheduled_title),
+        onBack = onBack,
+        emptyOverlay = if (scheduled.isEmpty()) ({
+            EmptyState(
+                title = stringResource(R.string.reminders_none),
+                message = stringResource(R.string.reminders_none_message),
+                icon = MiuixIcons.Alarm,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }) else null,
+    ) { _ ->
+        if (scheduled.isNotEmpty()) {
             if (upcoming.isNotEmpty()) {
                 item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.reminders_upcoming)) }
                 item {
@@ -2649,6 +2663,7 @@ fun LogsScreen(
                 EmptyState(
                     stringResource(R.string.logs_empty),
                     stringResource(R.string.logs_empty_message),
+                    icon = MiuixIcons.Notes,
                     modifier = Modifier.fillParentMaxSize(),
                 )
             }

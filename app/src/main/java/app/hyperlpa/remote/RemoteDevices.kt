@@ -10,6 +10,7 @@ import app.hyperlpa.data.ReaderAffinity
 import app.hyperlpa.data.history.NotificationHistoryStore
 import app.hyperlpa.data.metadata.ProfileMetadataStore
 import app.hyperlpa.data.settings.AppSettingsStore
+import app.hyperlpa.domain.model.DownloadStage
 import app.hyperlpa.domain.model.LpaOperation
 import app.hyperlpa.domain.model.OperationFailure
 import app.hyperlpa.domain.model.OperationOutcome
@@ -19,6 +20,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -110,6 +112,11 @@ internal class RemoteDevices(
     private val requestMutex = Mutex()
     private val catalogRequests = ConcurrentHashMap<String, String>()
     private val activeRequest = MutableStateFlow<String?>(null)
+    // Last confirmed card per reader, so reselecting one shows its profiles while it refreshes.
+    private val readerSnapshots = object : LinkedHashMap<String, DeviceSnapshot>(8, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, DeviceSnapshot>) = size > 8
+    }
+    @Volatile private var verification: Job? = null
     private val connection: RelayConnection = RelayConnection(scope, ::onConnection,
         { envelope -> scope.launch { receive(envelope) } },
         { _, _ -> mutableUi.value = mutableUi.value.copy(error = context.getString(R.string.remote_delivery_failed)) })
@@ -380,6 +387,7 @@ internal class RemoteDevices(
             notificationPeers = it.notificationPeers - id) }
         if (mutablePhoneView.value.deviceId == id) mutablePhoneView.value = PhoneNotificationView()
         livePeers.remove(id)
+        synchronized(readerSnapshots) { readerSnapshots.keys.removeAll { it.startsWith("device:$id:") } }
         mutableReaders.value = mutableReaders.value.filterNot { it.deviceId == id }
         if (mutableView.value?.lpa?.selectedReader?.deviceId == id) mutableView.value = null
     }
@@ -394,6 +402,7 @@ internal class RemoteDevices(
         mutableLocalNotifications.value = emptyList()
         mutablePhoneView.value = PhoneNotificationView()
         mutableReaders.value = emptyList()
+        synchronized(readerSnapshots) { readerSnapshots.clear() }
         mutableView.value = null
     }
 
@@ -406,6 +415,10 @@ internal class RemoteDevices(
         if (value) scope.launch {
             config.peers.forEach { device ->
                 send(device, DeviceMessage(if (device.approved) "hello" else if (device.incoming) "pair_pending" else "pair", name = config.name))
+            }
+            // A result lost with the old connection is recovered now, not at the next periodic check.
+            config.pending.forEach { pending ->
+                peer(pending.peer)?.let { send(it, DeviceMessage("status", requestId = pending.id)) }
             }
             discover()
         }
@@ -553,39 +566,48 @@ internal class RemoteDevices(
         if (requestResults[message.requestId]?.isCompleted == true) return
         if ((requestRevisions[message.requestId] ?: -1) > message.revision && !message.done) return
         requestRevisions[message.requestId] = message.revision
+        val awaited = requestResults.containsKey(message.requestId)
         val target = mutableView.value?.lpa?.selectedReader
-        if (target?.deviceId == device.id && (pending == null || pending.readerId == target.sourceReaderId)) {
-            message.snapshot?.let { snapshot ->
-                if (snapshot.lpa.selectedReaderId == target.sourceReaderId &&
-                    (pending?.eid.isNullOrBlank() || snapshot.lpa.euiccInfo?.eid == pending?.eid)) {
-                    mutableView.value = materialize(snapshot).let { materialized -> materialized.copy(lpa = materialized.lpa.copy(
-                        readers = mutableReaders.value, selectedReaderId = target.id, initialized = true,
-                    )) }
-                }
-            }
-            if (message.done) {
-                mutableView.value = mutableView.value?.let { current -> current.copy(lpa = current.lpa.copy(
-                    operation = LpaOperation.Idle,
-                    readerSnapshotPendingRefresh = message.outcome is OperationOutcome.Unverified ||
-                        message.snapshot == null || current.lpa.readerSnapshotPendingRefresh,
-                    pendingProfileDownload = null,
-                    completedProfileDownload = message.downloadResult ?: current.lpa.completedProfileDownload,
-                    failure = when (val outcome = message.outcome) {
-                        is OperationOutcome.Failed -> outcome.failure
-                        is OperationOutcome.Unverified -> outcome.failure
-                        else -> null
-                    },
-                )) }
-            }
+        val applies = target != null && target.deviceId == device.id && (pending == null || pending.readerId == target.sourceReaderId)
+        val snapshot = message.snapshot?.takeIf { snapshot ->
+            applies && snapshot.lpa.selectedReaderId == target?.sourceReaderId &&
+                (pending?.eid.isNullOrBlank() || snapshot.lpa.euiccInfo?.eid == pending?.eid)
+        }?.let(::materialize)
+        val stale = snapshot == null || message.outcome is OperationOutcome.Unverified
+        if (applies) mutableView.update { current ->
+            if (current == null || current.lpa.selectedReaderId != target?.id) return@update current
+            // This phone owns the displayed operation, failure and download result. The host's
+            // copies describe its own session, and adopting them made the progress UI jump.
+            val next = snapshot?.let { fresh -> fresh.copy(lpa = fresh.lpa.copy(
+                readers = mutableReaders.value, selectedReaderId = target?.id, initialized = true,
+                operation = current.lpa.operation.let { own ->
+                    if (own is LpaOperation.Downloading && fresh.lpa.operation is LpaOperation.Downloading) fresh.lpa.operation else own
+                },
+                failure = current.lpa.failure,
+                completedProfileDownload = current.lpa.completedProfileDownload,
+                readerSnapshotPendingRefresh = current.lpa.readerSnapshotPendingRefresh,
+            )) } ?: current
+            if (!message.done) next else next.copy(lpa = next.lpa.copy(
+                pendingProfileDownload = null,
+                completedProfileDownload = message.downloadResult ?: next.lpa.completedProfileDownload,
+                // An awaited request publishes this together with the end of its operation.
+                readerSnapshotPendingRefresh = when {
+                    stale -> true
+                    awaited -> next.lpa.readerSnapshotPendingRefresh
+                    else -> next.lpa.readerSnapshotPendingRefresh && next.lpa.operation !is LpaOperation.Idle
+                },
+            ))
         }
         if (message.done) {
+            val key = pending?.let { "${it.peer}/${it.readerId}" }
+            val unconfirmed = key != null && (message.outcome is OperationOutcome.Unverified ||
+                message.outcome is OperationOutcome.Success && snapshot == null)
             update { saved -> saved.copy(
                 pending = saved.pending.filterNot { p -> p.id == message.requestId && p.peer == device.id },
-                refreshRequired = if (pending != null && (message.outcome is OperationOutcome.Unverified ||
-                    message.outcome is OperationOutcome.Success && message.snapshot == null))
-                    saved.refreshRequired + "${pending.peer}/${pending.readerId}" else saved.refreshRequired,
+                refreshRequired = if (unconfirmed) saved.refreshRequired + requireNotNull(key) else saved.refreshRequired,
             ) }
-            requestResults[message.requestId]?.complete(message)
+            requestResults[message.requestId]?.complete(if (snapshot == null) message.copy(snapshot = null) else message)
+            if (unconfirmed) scheduleVerification()
         }
     }
 
@@ -606,7 +628,7 @@ internal class RemoteDevices(
             val bytes = DeviceCrypto.decode(encoded)
             if (DeviceCrypto.fingerprint(DeviceCrypto.encode(bytes)) != key) return@mapNotNull null
             val file = File(directory, key)
-            if (!file.exists()) file.writeBytes(bytes)
+            if (!file.exists()) file.writeBytes(bytes) else file.setLastModified(System.currentTimeMillis())
             key to android.net.Uri.fromFile(file).toString()
         }.toMap()
         // Never treat a remote file/content URI as a URI on this phone.
@@ -619,20 +641,46 @@ internal class RemoteDevices(
         kind = ReaderKind.REMOTE, deviceId = device.id, sourceReaderId = reader.id,
     )
 
-    suspend fun select(id: String): OperationOutcome {
-        if (!requestMutex.tryLock()) return failure(R.string.remote_operation_running)
+    suspend fun select(id: String): OperationOutcome = withContext(Dispatchers.IO) {
+        if (!requestMutex.tryLock()) return@withContext failure(R.string.remote_operation_running)
         try {
-            val reader = mutableReaders.value.firstOrNull { it.id == id } ?: return failure(R.string.remote_reader_unavailable)
-            mutableView.value = DeviceSnapshot(lpa = LpaRepositoryState(readers = mutableReaders.value,
-                selectedReaderId = id, initialized = true, operation = LpaOperation.Connecting(reader.name)))
-            return executeLocked(DeviceCommand(DeviceAction.REFRESH))
+            val reader = mutableReaders.value.firstOrNull { it.id == id }
+                ?: return@withContext failure(R.string.remote_reader_unavailable)
+            rememberView(mutableView.value)
+            val cached = synchronized(readerSnapshots) { readerSnapshots[id] }
+            mutableView.value = (cached ?: DeviceSnapshot()).let { shown -> shown.copy(lpa = shown.lpa.copy(
+                readers = mutableReaders.value, selectedReaderId = id, initialized = true,
+                operation = LpaOperation.Connecting(reader.name), failure = null,
+                pendingProfileDownload = null, completedProfileDownload = null,
+                readerSnapshotPendingRefresh = cached != null,
+            )) }
+            val outcome = executeLocked(DeviceCommand(DeviceAction.REFRESH))
+            if (outcome !is OperationOutcome.Success) mutableView.update { current ->
+                // Like a local reader that fails to open, never leave the cached card on screen.
+                if (current?.lpa?.selectedReaderId != id || !current.lpa.readerSnapshotPendingRefresh) current
+                else DeviceSnapshot(lpa = LpaRepositoryState(readers = mutableReaders.value, selectedReaderId = id,
+                    initialized = true, failure = current.lpa.failure))
+            }
+            outcome
         } finally { requestMutex.unlock() }
     }
 
-    fun deselect(): Boolean {
+    /** Releases the remote reader. [beforeRelease] runs first, while this reader is still shown. */
+    fun deselect(beforeRelease: () -> Unit = {}): Boolean {
         if (!requestMutex.tryLock()) return false
-        try { mutableView.value = null; return true }
-        finally { requestMutex.unlock() }
+        try {
+            rememberView(mutableView.value)
+            beforeRelease()
+            mutableView.value = null
+            return true
+        } finally { requestMutex.unlock() }
+    }
+
+    private fun rememberView(view: DeviceSnapshot?) {
+        val lpa = view?.lpa ?: return
+        val id = lpa.selectedReaderId ?: return
+        if (lpa.euiccInfo == null || lpa.readerSnapshotPendingRefresh || lpa.operation !is LpaOperation.Idle) return
+        synchronized(readerSnapshots) { readerSnapshots[id] = view.copy(lpa = lpa.copy(failure = null, logs = emptyList())) }
     }
 
     fun affinity(): ReaderAffinity? = mutableView.value?.lpa?.let { state ->
@@ -641,42 +689,72 @@ internal class RemoteDevices(
         ReaderAffinity(id, eid)
     }
 
-    suspend fun execute(command: DeviceCommand, expectedAffinity: ReaderAffinity? = affinity()): OperationOutcome {
-        return requestMutex.withLock {
-            if (expectedAffinity != affinity()) return@withLock failure(R.string.remote_card_changed)
-            executeLocked(command)
+    suspend fun execute(command: DeviceCommand, expectedAffinity: ReaderAffinity? = affinity()): OperationOutcome =
+        withContext(Dispatchers.IO) {
+            requestMutex.withLock {
+                if (expectedAffinity != affinity()) return@withLock failure(R.string.remote_card_changed)
+                executeLocked(command)
+            }
         }
+
+    /** Runs [command] on the selected reader, showing the same operation a local reader would. */
+    private suspend fun executeLocked(command: DeviceCommand, reportFailure: Boolean = true): OperationOutcome {
+        val operation = operationFor(command)
+        // Publish the operation before any journal write, so the UI reacts in the same frame.
+        mutableView.update { current -> current?.copy(lpa = current.lpa.copy(
+            operation = if (current.lpa.operation is LpaOperation.Connecting) current.lpa.operation else operation,
+            failure = if (reportFailure) null else current.lpa.failure,
+            completedProfileDownload = current.lpa.completedProfileDownload.takeIf { command.action != DeviceAction.DOWNLOAD },
+        )) }
+        val (outcome, response) = try { request(command) } catch (error: CancellationException) {
+            mutableView.update { current -> current?.copy(lpa = current.lpa.copy(operation = LpaOperation.Idle)) }
+            throw error
+        }
+        val confirmed = response?.snapshot != null && outcome !is OperationOutcome.Unverified
+        mutableView.update { current -> current?.copy(lpa = current.lpa.copy(
+            operation = LpaOperation.Idle,
+            readerSnapshotPendingRefresh = when {
+                confirmed -> false
+                response != null -> true
+                else -> current.lpa.readerSnapshotPendingRefresh
+            },
+            failure = if (reportFailure) outcome.failureOrNull() else current.lpa.failure,
+        )) }
+        if (confirmed) rememberView(mutableView.value)
+        return outcome
     }
 
-    private suspend fun executeLocked(command: DeviceCommand): OperationOutcome {
-        val selected = mutableView.value?.lpa?.selectedReader ?: return failure(R.string.remote_reader_unavailable)
-        val device = peer(selected.deviceId.orEmpty())?.takeIf { it.approved } ?: return failure(R.string.remote_reader_unavailable)
-        if (!connected) return publishFailure(failure(R.string.remote_device_offline))
-        if (config.pending.any { it.peer == device.id }) return publishFailure(unknownOutcome())
+    /** Sends [command] once and waits for its final result, which is null if it never arrived. */
+    private suspend fun request(command: DeviceCommand): Pair<OperationOutcome, DeviceMessage?> {
+        val selected = mutableView.value?.lpa?.selectedReader ?: return failure(R.string.remote_reader_unavailable) to null
+        val device = peer(selected.deviceId.orEmpty())?.takeIf { it.approved } ?: return failure(R.string.remote_reader_unavailable) to null
+        if (!connected) return failure(R.string.remote_device_offline) to null
+        if (!awaitPendingResults(device)) return failure(R.string.remote_operation_running) to null
         val targetKey = "${device.id}/${selected.sourceReaderId}"
-        if (command.action != DeviceAction.REFRESH && targetKey in config.refreshRequired)
-            return publishFailure(unknownOutcome())
-        val bound = command.copy(readerId = selected.sourceReaderId.orEmpty(), eid = mutableView.value?.lpa?.euiccInfo?.eid ?: selected.eid.orEmpty())
+        if (command.action != DeviceAction.REFRESH && targetKey in config.refreshRequired) {
+            // An earlier change on this card has no confirmed result. Read the card first, as a
+            // local reader requires before another change.
+            val eid = mutableView.value?.lpa?.euiccInfo?.eid
+            val (refreshed, _) = request(DeviceCommand(DeviceAction.REFRESH))
+            if (refreshed !is OperationOutcome.Success) return refreshed to null
+            if (targetKey in config.refreshRequired) return unknownOutcome() to null
+            if (mutableView.value?.lpa?.euiccInfo?.eid != eid) return failure(R.string.remote_card_changed) to null
+        }
+        // A refresh reads whichever card is present, as a local refresh does.
+        val bound = command.copy(readerId = selected.sourceReaderId.orEmpty(), eid = if (command.action == DeviceAction.REFRESH) ""
+            else mutableView.value?.lpa?.euiccInfo?.eid ?: selected.eid.orEmpty())
         val id = newDeviceId()
         val result = CompletableDeferred<DeviceMessage>()
         try {
             update { it.copy(pending = it.pending + PendingDeviceRequest(device.id, id, bound.readerId, bound.eid, System.currentTimeMillis())) }
-        } catch (_: Exception) { return publishFailure(failure(R.string.remote_storage_unavailable)) }
+        } catch (_: Exception) { return failure(R.string.remote_storage_unavailable) to null }
         requestPeers[id] = device.id
         requestResults[id] = result
         activeRequest.value = id
-        mutableView.value = mutableView.value?.let { it.copy(lpa = it.lpa.copy(
-            failure = null, completedProfileDownload = null,
-            operation = when {
-                command.action == DeviceAction.DOWNLOAD -> LpaOperation.Downloading(app.hyperlpa.domain.model.DownloadStage.PREPARING)
-                it.lpa.operation is LpaOperation.Connecting -> it.lpa.operation
-                else -> LpaOperation.Refreshing(context.getString(R.string.remote_working))
-            },
-        )) }
         try {
             if (!send(device, DeviceMessage("command", requestId = id, command = bound))) {
-                update { it.copy(pending = it.pending.filterNot { p -> p.id == id }) }
-                return publishFailure(failure(R.string.remote_delivery_failed))
+                runCatching { update { it.copy(pending = it.pending.filterNot { p -> p.id == id }) } }
+                return failure(R.string.remote_delivery_failed) to null
             }
             val response = withTimeoutOrNull(if (command.action == DeviceAction.DOWNLOAD) 1_800_000L else 180_000L) {
                 while (!result.isCompleted) {
@@ -685,12 +763,12 @@ internal class RemoteDevices(
                     send(device, DeviceMessage("status", requestId = id))
                 }
                 result.await()
+            } ?: return unknownOutcome() to null
+            val outcome = response.outcome ?: unknownOutcome()
+            if (command.action == DeviceAction.REFRESH && outcome is OperationOutcome.Success && response.snapshot != null) {
+                runCatching { update { it.copy(refreshRequired = it.refreshRequired - targetKey) } }
             }
-            val outcome = response?.outcome ?: publishFailure(unknownOutcome())
-            if (command.action == DeviceAction.REFRESH && outcome is OperationOutcome.Success && response?.snapshot != null) {
-                update { it.copy(refreshRequired = it.refreshRequired - targetKey) }
-            }
-            return outcome
+            return outcome to response
         } finally {
             activeRequest.value = null
             requestPeers.remove(id)
@@ -699,18 +777,54 @@ internal class RemoteDevices(
         }
     }
 
+    /** Gives an earlier request's result, for example one lost with a connection, a moment to arrive. */
+    private suspend fun awaitPendingResults(device: PairedDevice): Boolean {
+        val waiting = config.pending.filter { it.peer == device.id }
+        if (waiting.isEmpty()) return true
+        waiting.forEach { send(device, DeviceMessage("status", requestId = it.id)) }
+        return withTimeoutOrNull(4_000) { while (config.pending.any { it.peer == device.id }) delay(100) } != null
+    }
+
+    /** Re-reads the selected card after a change whose final state did not arrive with its result. */
+    private fun scheduleVerification() {
+        if (verification?.isActive == true) return
+        verification = scope.launch {
+            delay(1_000)
+            requestMutex.withLock {
+                val selected = mutableView.value?.lpa?.selectedReader ?: return@withLock
+                if (!connected || "${selected.deviceId}/${selected.sourceReaderId}" !in config.refreshRequired) return@withLock
+                executeLocked(DeviceCommand(DeviceAction.REFRESH), reportFailure = false)
+            }
+        }
+    }
+
+    private fun operationFor(command: DeviceCommand): LpaOperation = when (command.action) {
+        DeviceAction.REFRESH -> LpaOperation.Refreshing(context.getString(R.string.operation_reading_profiles))
+        DeviceAction.SWITCH -> LpaOperation.Switching(command.iccid, command.enabled)
+        DeviceAction.DELETE -> LpaOperation.Deleting(command.iccid)
+        DeviceAction.RENAME -> LpaOperation.Renaming(command.iccid)
+        DeviceAction.DOWNLOAD -> LpaOperation.Downloading(DownloadStage.PREPARING)
+        DeviceAction.PROCESS_NOTIFICATION, DeviceAction.DELETE_NOTIFICATION -> LpaOperation.ProcessingNotification(command.number ?: 0)
+        DeviceAction.RESEND_NOTIFICATION -> LpaOperation.ProcessingNotification(command.history?.sequenceNumber ?: 0)
+        DeviceAction.RESET -> LpaOperation.Resetting(context.getString(R.string.operation_resetting_memory))
+        DeviceAction.SET_SMDP -> LpaOperation.Refreshing(context.getString(R.string.operation_updating_default_smdp))
+        DeviceAction.DISCOVER -> LpaOperation.Refreshing(context.getString(R.string.operation_discovering_profiles))
+        // Profile metadata edits are instant for a local reader and show no card operation.
+        else -> LpaOperation.Idle
+    }
+
     fun decideDownload(confirmed: Boolean) {
         val id = activeRequest.value ?: return
         val device = requestPeers[id]?.let(::peer) ?: return
         scope.launch { send(device, DeviceMessage(if (confirmed) "decision" else "cancel", requestId = id, confirmed = confirmed)) }
     }
 
-    fun clearFailure() { mutableView.value = mutableView.value?.let { it.copy(lpa = it.lpa.copy(failure = null)) } }
-    fun clearDownloadResult() { mutableView.value = mutableView.value?.let { it.copy(lpa = it.lpa.copy(completedProfileDownload = null)) } }
-    private fun publishFailure(outcome: OperationOutcome): OperationOutcome {
-        mutableView.value = mutableView.value?.let { it.copy(lpa = it.lpa.copy(operation = LpaOperation.Idle,
-            failure = when (outcome) { is OperationOutcome.Failed -> outcome.failure; is OperationOutcome.Unverified -> outcome.failure; else -> null })) }
-        return outcome
+    fun clearFailure() { mutableView.update { it?.copy(lpa = it.lpa.copy(failure = null)) } }
+    fun clearDownloadResult() { mutableView.update { it?.copy(lpa = it.lpa.copy(completedProfileDownload = null)) } }
+    private fun OperationOutcome.failureOrNull() = when (this) {
+        is OperationOutcome.Failed -> failure
+        is OperationOutcome.Unverified -> failure
+        else -> null
     }
     private fun failure(message: Int) = OperationOutcome.Failed(OperationFailure(context.getString(R.string.remote_title), context.getString(message)))
     private fun unknownOutcome() = OperationOutcome.Unverified(OperationFailure(context.getString(R.string.remote_title), context.getString(R.string.remote_outcome_unknown)))

@@ -4,7 +4,9 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -12,19 +14,20 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -40,7 +43,7 @@ import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.extended.Info
+import top.yukonga.miuix.kmp.icon.extended.Notes
 import top.yukonga.miuix.kmp.icon.extended.Refresh
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.PressFeedbackType
@@ -233,19 +236,69 @@ fun EmptyState(
     title: String,
     message: String,
     modifier: Modifier = Modifier,
+    icon: ImageVector = MiuixIcons.Notes,
+    showMessage: Boolean = false,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
 ) {
-    MessageState(
-        title = title,
-        message = message,
-        modifier = modifier,
-        icon = MiuixIcons.Info,
-        iconTint = if (LocalDarkTheme.current) Color.White else Color.Black,
-        showMessage = false,
-        actionLabel = actionLabel,
-        onAction = onAction,
+    val muted = MiuixTheme.colorScheme.onSurfaceVariantSummary
+    val stateDescription = if (message.isBlank()) title else stringResource(
+        app.hyperlpa.R.string.common_state_description,
+        title,
+        message,
     )
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 28.dp)
+            .semantics(mergeDescendants = true) { contentDescription = stateDescription },
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Column(
+            modifier = Modifier.offset(y = (-36).dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(muted.copy(alpha = if (LocalDarkTheme.current) 0.28f else 0.23f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(27.dp),
+                    tint = MiuixTheme.colorScheme.surface,
+                )
+            }
+            Spacer(Modifier.height(18.dp))
+            Text(
+                text = title,
+                fontSize = 15.sp,
+                color = muted,
+                textAlign = TextAlign.Center,
+            )
+            if (showMessage && message.isNotBlank()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = message,
+                    fontSize = 13.sp,
+                    color = muted,
+                    textAlign = TextAlign.Center,
+                )
+            }
+            if (actionLabel != null && onAction != null) {
+                Spacer(Modifier.height(16.dp))
+                TextButton(
+                    text = actionLabel,
+                    onClick = onAction,
+                    colors = ButtonDefaults.textButtonColorsPrimary(),
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -255,71 +308,13 @@ fun ErrorState(
     modifier: Modifier = Modifier,
     onRetry: (() -> Unit)? = null,
 ) {
-    MessageState(
+    EmptyState(
         title = title,
         message = message,
         modifier = modifier,
         icon = MiuixIcons.Refresh,
-        iconTint = MiuixTheme.colorScheme.primary,
         showMessage = true,
         actionLabel = if (onRetry == null) null else stringResource(app.hyperlpa.R.string.common_try_again),
         onAction = onRetry,
     )
-}
-
-@Composable
-private fun MessageState(
-    title: String,
-    message: String,
-    icon: ImageVector,
-    iconTint: Color,
-    showMessage: Boolean,
-    modifier: Modifier,
-    actionLabel: String?,
-    onAction: (() -> Unit)?,
-) {
-    val stateDescription = stringResource(
-        app.hyperlpa.R.string.common_state_description,
-        title,
-        message,
-    )
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 28.dp, vertical = 48.dp)
-            .semantics(mergeDescendants = true) { contentDescription = stateDescription },
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            modifier = Modifier.size(30.dp),
-            tint = iconTint,
-        )
-        Spacer(Modifier.height(18.dp))
-        Text(
-            text = title,
-            style = MiuixTheme.textStyles.title2,
-            fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center,
-        )
-        if (showMessage) {
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = message,
-                style = MiuixTheme.textStyles.body1,
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                textAlign = TextAlign.Center,
-            )
-        }
-        if (actionLabel != null && onAction != null) {
-            Spacer(Modifier.height(18.dp))
-            TextButton(
-                text = actionLabel,
-                onClick = onAction,
-                colors = ButtonDefaults.textButtonColorsPrimary(),
-            )
-        }
-    }
 }

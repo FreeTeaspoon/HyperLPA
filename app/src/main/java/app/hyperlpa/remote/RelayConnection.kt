@@ -3,6 +3,7 @@ package app.hyperlpa.remote
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -33,6 +34,28 @@ internal class RelayConnection(
     private var job: Job? = null
     @Volatile private var generation = 0L
     private val queuedBytes = java.util.concurrent.atomic.AtomicLong()
+    // A single consumer preserves send order: a final result must never overtake the progress
+    // update queued before it.
+    private val outbox = Channel<OutgoingFrame>(Channel.UNLIMITED)
+
+    private class OutgoingFrame(val socket: WebSocket, val text: String, val deadline: Long)
+
+    init {
+        scope.launch {
+            for (frame in outbox) {
+                try {
+                    while (socket === frame.socket && System.currentTimeMillis() < frame.deadline) {
+                        val queued = synchronized(frame.socket) {
+                            if (frame.socket.queueSize() > 2_000_000) false
+                            else { frame.socket.send(frame.text); true }
+                        }
+                        if (queued) break
+                        delay(25)
+                    }
+                } finally { queuedBytes.addAndGet(-frame.text.length.toLong()) }
+            }
+        }
+    }
 
     fun register(config: StoredDevices, enrollmentKey: String) {
         val body = DeviceJson.encodeToString(mapOf("id" to config.id, "token" to config.token))
@@ -110,19 +133,9 @@ internal class RelayConnection(
             queuedBytes.addAndGet(-frame.length.toLong())
             return false
         }
-        scope.launch {
-            try {
-                withTimeout(30_000) {
-                    while (socket === target) {
-                        val queued = synchronized(target) {
-                            if (target.queueSize() > 2_000_000) false
-                            else { target.send(frame); true }
-                        }
-                        if (queued) break
-                        delay(25)
-                    }
-                }
-            } finally { queuedBytes.addAndGet(-frame.length.toLong()) }
+        if (outbox.trySend(OutgoingFrame(target, frame, System.currentTimeMillis() + 30_000)).isFailure) {
+            queuedBytes.addAndGet(-frame.length.toLong())
+            return false
         }
         return true
     }

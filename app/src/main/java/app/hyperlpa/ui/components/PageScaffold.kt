@@ -1,5 +1,9 @@
 package app.hyperlpa.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
@@ -14,9 +18,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -58,6 +65,7 @@ fun DetailLazyScaffold(
     collapsedBarRevealStart: Dp = 0.dp,
     isRefreshing: Boolean = false,
     onRefresh: (() -> Unit)? = null,
+    emptyOverlay: (@Composable () -> Unit)? = null,
     content: LazyListScope.(sidePadding: Dp) -> Unit,
 ) {
     val scrollBehavior = MiuixScrollBehavior()
@@ -65,6 +73,7 @@ fun DetailLazyScaffold(
     val hasBackground = background != null
     val backdrop = rememberAppBackdrop()
     val backgroundScrollOffset = remember { mutableFloatStateOf(0f) }
+    var hideEmptyDuringPull by remember { mutableStateOf(false) }
     val barRevealStart = with(LocalDensity.current) { collapsedBarRevealStart.toPx() }
     val barRevealDistance = with(LocalDensity.current) { 56.dp.toPx() }
     val collapsedBarProgress by remember(barRevealStart, barRevealDistance, hasBackground) {
@@ -259,10 +268,31 @@ fun DetailLazyScaffold(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(top = padding.calculateTopPadding() + RefreshHeaderTopGap),
                         topAppBarScrollBehavior = scrollBehavior,
+                        onPullProgress = { hideEmptyDuringPull = it > 0.01f },
                         content = list,
                     )
                 } else {
                     list()
+                }
+                if (emptyOverlay != null) {
+                    AnimatedVisibility(
+                        visible = onRefresh == null || (!isRefreshing && !hideEmptyDuringPull),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(
+                                top = padding.calculateTopPadding(),
+                                bottom = padding.calculateBottomPadding(),
+                            ),
+                        enter = fadeIn(animationSpec = tween(150)),
+                        exit = fadeOut(animationSpec = tween(120)),
+                    ) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            emptyOverlay()
+                        }
+                    }
                 }
             }
         }

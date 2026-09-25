@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicLong
 
@@ -50,32 +51,22 @@ internal class DeviceAgent(
     @Volatile private var activePeer: String? = null
     @Volatile private var activeId: String? = null
     @Volatile private var latest: DeviceMessage? = null
+    @Volatile private var catalog: Pair<Long, DeviceSnapshot>? = null
+    // Journal records omit snapshots; keep the last few so a status reply can still carry one.
+    private val recentResults = object : LinkedHashMap<String, DeviceMessage>(4, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, DeviceMessage>) = size > 4
+    }
     private var previewTimeout: Job? = null
     private val cancelRequested = java.util.concurrent.atomic.AtomicBoolean(false)
-    override val busy: Boolean get() = activeId != null
+    private val queued = java.util.concurrent.atomic.AtomicInteger(0)
+    override val busy: Boolean get() = activeId != null || queued.get() > 0
     override fun isBusyWith(peer: String): Boolean = activePeer == peer
 
     override fun accept(peer: PairedDevice, message: DeviceMessage, expires: Long) {
         val command = message.command ?: return
         if (!message.requestId.matches(Regex("[a-f0-9-]{36}"))) return
         if (command.action == DeviceAction.READERS) {
-            scope.launch {
-                if (!operationLock.tryLock()) {
-                    devices.send(peer, failed(message.requestId, R.string.remote_operation_running))
-                    return@launch
-                }
-                val snapshot = try { runCatching {
-                    local.withDeviceHostingSession {
-                        repository.updateSettings(settings.settings.first())
-                        repository.discoverReaders(autoConnect = false, includeRemoteReaders = true)
-                        DeviceSnapshot(lpa = app.hyperlpa.data.LpaRepositoryState(
-                            readers = repository.state.value.readers, initialized = true,
-                        ))
-                    }
-                }.getOrNull() } finally { operationLock.unlock() }
-                devices.send(peer, DeviceMessage("result", requestId = message.requestId, snapshot = snapshot,
-                    outcome = OperationOutcome.Success, done = true))
-            }
+            scope.launch { devices.send(peer, catalog(message.requestId)) }
             return
         }
         val fingerprint = DeviceCrypto.fingerprint(DeviceJson.encodeToString(DeviceCommand.serializer(), command))
@@ -85,117 +76,170 @@ internal class DeviceAgent(
             else devices.send(peer, failed(message.requestId, R.string.remote_request_conflict))
             return
         }
-        if (!operationLock.tryLock()) { devices.send(peer, failed(message.requestId, R.string.remote_operation_running)); return }
         val record = DeviceOperationRecord(peer.id, message.requestId, fingerprint, System.currentTimeMillis(), command.readerId, command.eid)
         try {
             devices.saveRecord(record)
         } catch (_: Exception) {
-            operationLock.unlock()
             devices.send(peer, failed(message.requestId, R.string.remote_storage_unavailable))
             return
         }
-        activePeer = peer.id
-        activeId = message.requestId
-        cancelRequested.set(false)
-        latest = DeviceMessage("result", requestId = message.requestId)
-        devices.send(peer, requireNotNull(latest))
+        devices.send(peer, DeviceMessage("result", requestId = message.requestId))
+        queued.incrementAndGet()
         scope.launch {
-            val wakeLock = context.getSystemService(android.os.PowerManager::class.java)
-                .newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "HyperLPA:remote-operation")
-            var progress: Job? = null
-            var cancellation: Job? = null
-            val revision = AtomicLong(0)
-            var executionStarted = false
-            var committedResult: DeviceMessage? = null
-            try {
-                wakeLock.acquire(30 * 60 * 1000L)
-                var finalSnapshot: DeviceSnapshot? = null
-                val outcome = local.withDeviceHostingSession {
-                    try {
-                        check(System.currentTimeMillis() < expires) { context.getString(R.string.remote_command_expired) }
-                        validate(command)
-                        repository.updateSettings(settings.settings.first())
-                        repository.discoverReaders(autoConnect = false, includeRemoteReaders = true)
-                        val reader = repository.state.value.readers.firstOrNull { it.id == command.readerId && it.deviceId == null }
-                            ?: error(context.getString(R.string.remote_reader_unavailable))
-                        val connection = repository.connect(reader.id)
-                        if (connection !is OperationOutcome.Success) return@withDeviceHostingSession connection
-                        val actualEid = repository.state.value.euiccInfo?.eid
-                        check(actualEid != null && (command.eid.isBlank() && command.action == DeviceAction.REFRESH || actualEid == command.eid)) {
-                            context.getString(R.string.remote_card_changed)
-                        }
-                        progress = scope.launch {
-                            repository.state.collect { state ->
-                                // Keep the preview and installation progress tied to this operation.
-                                val snapshot = snapshot(includeArtwork = false)
-                                val update = DeviceMessage("result", requestId = message.requestId,
-                                    snapshot = snapshot, revision = revision.incrementAndGet())
-                                latest = update
-                                devices.send(peer, update)
-                                if (state.pendingProfileDownload != null && previewTimeout == null) {
-                                    previewTimeout = scope.launch { delay(120_000); repository.cancelProfileDownload() }
-                                }
-                                delay(500)
+            // A controller sends its next command as soon as the previous result arrives, while
+            // this phone may still be finishing that operation. Queue behind it instead of failing.
+            val acquired = try {
+                withTimeoutOrNull((expires - System.currentTimeMillis()).coerceAtLeast(0)) {
+                    operationLock.lock()
+                } != null
+            } finally { queued.decrementAndGet() }
+            if (!acquired) {
+                val result = failed(message.requestId, R.string.remote_operation_running)
+                runCatching { devices.saveRecord(record.copy(result = result)) }
+                devices.send(peer, result)
+                return@launch
+            }
+            run(peer, message.requestId, command, record, expires)
+        }
+    }
+
+    private suspend fun catalog(requestId: String): DeviceMessage {
+        fun reply(snapshot: DeviceSnapshot?) = DeviceMessage("result", requestId = requestId, snapshot = snapshot,
+            outcome = OperationOutcome.Success, done = true)
+        fun fresh() = catalog?.takeIf { System.currentTimeMillis() - it.first < CatalogLifetimeMillis }?.second
+        fresh()?.let { return reply(it) }
+        if (withTimeoutOrNull(CatalogWaitMillis) { operationLock.lock() } == null) {
+            return catalog?.second?.let(::reply) ?: failed(requestId, R.string.remote_operation_running)
+        }
+        try {
+            fresh()?.let { return reply(it) }
+            val snapshot = runCatching {
+                local.withDeviceHostingSession {
+                    repository.updateSettings(settings.settings.first())
+                    repository.discoverReaders(autoConnect = false, includeRemoteReaders = true)
+                    rememberCatalog()
+                }
+            }.getOrNull()
+            return reply(snapshot)
+        } finally { operationLock.unlock() }
+    }
+
+    private fun rememberCatalog(): DeviceSnapshot = DeviceSnapshot(lpa = app.hyperlpa.data.LpaRepositoryState(
+        readers = repository.state.value.readers, initialized = true,
+    )).also { catalog = System.currentTimeMillis() to it }
+
+    /** Runs one accepted command. The caller has acquired [operationLock]; it is released here. */
+    private suspend fun run(peer: PairedDevice, requestId: String, command: DeviceCommand, record: DeviceOperationRecord, expires: Long) {
+        activePeer = peer.id
+        activeId = requestId
+        cancelRequested.set(false)
+        latest = DeviceMessage("result", requestId = requestId)
+        val wakeLock = context.getSystemService(android.os.PowerManager::class.java)
+            .newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "HyperLPA:remote-operation")
+        var progress: Job? = null
+        var cancellation: Job? = null
+        val revision = AtomicLong(0)
+        var executionStarted = false
+        var committedResult: DeviceMessage? = null
+        try {
+            wakeLock.acquire(30 * 60 * 1000L)
+            val outcome = local.withDeviceHostingSession {
+                try {
+                    check(System.currentTimeMillis() < expires) { context.getString(R.string.remote_command_expired) }
+                    validate(command)
+                    repository.updateSettings(settings.settings.first())
+                    repository.discoverReaders(autoConnect = false, includeRemoteReaders = true)
+                    rememberCatalog()
+                    val reader = repository.state.value.readers.firstOrNull { it.id == command.readerId && it.deviceId == null }
+                        ?: error(context.getString(R.string.remote_reader_unavailable))
+                    val connection = repository.connect(reader.id)
+                    if (connection !is OperationOutcome.Success) return@withDeviceHostingSession connection
+                    val actualEid = repository.state.value.euiccInfo?.eid
+                    check(actualEid != null && (command.eid.isBlank() && command.action == DeviceAction.REFRESH || actualEid == command.eid)) {
+                        context.getString(R.string.remote_card_changed)
+                    }
+                    progress = scope.launch {
+                        repository.state.collect { state ->
+                            // Keep the preview and installation progress tied to this operation.
+                            val snapshot = snapshot(includeArtwork = false)
+                            val update = DeviceMessage("result", requestId = requestId,
+                                snapshot = snapshot, revision = revision.incrementAndGet())
+                            latest = update
+                            devices.send(peer, update)
+                            if (state.pendingProfileDownload != null && previewTimeout == null) {
+                                previewTimeout = scope.launch { delay(120_000); repository.cancelProfileDownload() }
                             }
-                        }
-                        check(!cancelRequested.get()) { context.getString(R.string.remote_download_cancelled) }
-                        if (command.action == DeviceAction.DOWNLOAD) cancellation = scope.launch {
-                            while (true) {
-                                if (cancelRequested.get()) repository.cancelProfileDownload()
-                                delay(100)
-                            }
-                        }
-                        executionStarted = true
-                        val result = execute(command)
-                        progress.cancelAndJoin()
-                        val completed = DeviceMessage("result", requestId = message.requestId,
-                            outcome = result, done = true, revision = revision.incrementAndGet(),
-                            downloadResult = repository.state.value.completedProfileDownload)
-                        devices.saveRecord(record.copy(result = completed))
-                        committedResult = completed
-                        finalSnapshot = snapshot()
-                        result
-                    } finally {
-                        withContext(NonCancellable) {
-                            progress?.cancelAndJoin()
-                            repository.disconnectSession()
+                            delay(500)
                         }
                     }
+                    check(!cancelRequested.get()) { context.getString(R.string.remote_download_cancelled) }
+                    if (command.action == DeviceAction.DOWNLOAD) cancellation = scope.launch {
+                        while (true) {
+                            if (cancelRequested.get()) repository.cancelProfileDownload()
+                            delay(100)
+                        }
+                    }
+                    executionStarted = true
+                    val result = execute(command)
+                    progress?.cancelAndJoin()
+                    val completed = DeviceMessage("result", requestId = requestId,
+                        outcome = result, done = true, revision = revision.incrementAndGet(),
+                        downloadResult = repository.state.value.completedProfileDownload)
+                    // Commit before reporting success. A repeated command can only retrieve this result.
+                    devices.saveRecord(record.copy(result = completed))
+                    committedResult = completed
+                    // Report now rather than after this phone reopens its own reader.
+                    val reported = completed.copy(snapshot = runCatching { snapshot() }.getOrNull())
+                    synchronized(recentResults) { recentResults["${peer.id}/$requestId"] = reported }
+                    latest = reported
+                    devices.send(peer, reported)
+                    result
+                } finally {
+                    withContext(NonCancellable) {
+                        progress?.cancelAndJoin()
+                        repository.disconnectSession()
+                    }
                 }
-                val snapshot = finalSnapshot
-                val result = DeviceMessage("result", requestId = message.requestId, snapshot = snapshot,
-                    outcome = outcome, done = true, revision = revision.incrementAndGet(),
-                    downloadResult = snapshot?.lpa?.completedProfileDownload)
-                // Commit before reporting success. A repeated command can only retrieve this result.
-                if (committedResult == null) devices.saveRecord(record.copy(result = result.copy(snapshot = null)))
+            }
+            if (committedResult == null) {
+                val result = DeviceMessage("result", requestId = requestId, outcome = outcome, done = true,
+                    revision = revision.incrementAndGet())
+                devices.saveRecord(record.copy(result = result))
                 latest = result
                 devices.send(peer, result)
-            } catch (error: Exception) {
-                progress?.cancel()
-                cancellation?.cancel()
-                val result = committedResult ?: if (executionStarted || error is CancellationException) DeviceMessage("result", requestId = message.requestId,
+            }
+        } catch (error: Exception) {
+            progress?.cancel()
+            cancellation?.cancel()
+            val committed = committedResult
+            if (committed != null) {
+                devices.send(peer, latest?.takeIf { it.done } ?: committed)
+            } else {
+                val result = if (executionStarted || error is CancellationException) DeviceMessage("result", requestId = requestId,
                     outcome = OperationOutcome.Unverified(OperationFailure(context.getString(R.string.remote_title), context.getString(R.string.remote_outcome_unknown))), done = true)
-                else DeviceMessage("result", requestId = message.requestId,
+                else DeviceMessage("result", requestId = requestId,
                     outcome = OperationOutcome.Failed(OperationFailure(context.getString(R.string.remote_title),
                         error.message?.take(200) ?: context.getString(R.string.remote_action_failed))), done = true)
-                if (committedResult == null) runCatching { devices.saveRecord(record.copy(result = result)) }
+                runCatching { devices.saveRecord(record.copy(result = result)) }
                 devices.send(peer, result)
-            } finally {
-                if (wakeLock.isHeld) wakeLock.release()
-                progress?.cancel()
-                cancellation?.cancel()
-                previewTimeout?.cancel(); previewTimeout = null
-                activeId = null; activePeer = null; latest = null
-                operationLock.unlock()
             }
+        } finally {
+            if (wakeLock.isHeld) wakeLock.release()
+            progress?.cancel()
+            cancellation?.cancel()
+            previewTimeout?.cancel(); previewTimeout = null
+            activeId = null; activePeer = null; latest = null
+            operationLock.unlock()
         }
     }
 
     override fun status(peer: PairedDevice, id: String) {
+        val current = latest?.takeIf { activePeer == peer.id && activeId == id }
         val record = devices.record(peer.id, id)
         when {
-            record?.result != null -> devices.send(peer, record.result)
-            activePeer == peer.id && activeId == id -> latest?.let { devices.send(peer, it) }
+            current != null -> devices.send(peer, current)
+            record?.result != null -> devices.send(peer,
+                synchronized(recentResults) { recentResults["${peer.id}/$id"] } ?: record.result)
             record == null -> devices.send(peer, DeviceMessage("missing", requestId = id))
         }
     }
@@ -328,3 +372,6 @@ internal class DeviceAgent(
     private fun failed(id: String, message: Int) = DeviceMessage("result", requestId = id, done = true,
         outcome = OperationOutcome.Failed(OperationFailure(context.getString(R.string.remote_title), context.getString(message))))
 }
+
+private const val CatalogLifetimeMillis = 10_000L
+private const val CatalogWaitMillis = 20_000L

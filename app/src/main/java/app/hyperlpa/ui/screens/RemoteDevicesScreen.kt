@@ -14,6 +14,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -87,6 +88,7 @@ import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Copy
 import top.yukonga.miuix.kmp.icon.extended.Delete
 import top.yukonga.miuix.kmp.icon.extended.More
+import top.yukonga.miuix.kmp.icon.extended.Messages
 import top.yukonga.miuix.kmp.menu.OverlayIconDropdownMenu
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
@@ -567,6 +569,14 @@ internal fun PhoneNotificationHistoryScreen(devices: RemoteDevices, deviceId: St
         },
         isRefreshing = view?.refreshing == true,
         onRefresh = if (local) null else ({ devices.refreshPhoneNotifications(deviceId, userInitiated = true) }),
+        emptyOverlay = if (!firstLoad && available && entries.isEmpty()) ({
+            EmptyState(
+                title = stringResource(R.string.phone_notifications_empty),
+                message = "",
+                icon = MiuixIcons.Messages,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }) else null,
     ) { _ ->
         when {
             firstLoad -> item(contentType = PageStart.Viewport) {
@@ -575,10 +585,7 @@ internal fun PhoneNotificationHistoryScreen(devices: RemoteDevices, deviceId: St
             !available -> item(contentType = PageStart.Inset) {
                 TipCard(stringResource(R.string.phone_notifications_unavailable))
             }
-            entries.isEmpty() -> item(contentType = PageStart.Viewport) {
-                EmptyState(title = stringResource(R.string.phone_notifications_empty), message = "",
-                    modifier = Modifier.fillParentMaxSize())
-            }
+            entries.isEmpty() -> Unit
             else -> items(entries.asReversed(), key = { it.id }) { entry ->
                 PhoneNotificationRow(entry, Modifier.animateItem(), onCopyCode = copyCode)
             }
