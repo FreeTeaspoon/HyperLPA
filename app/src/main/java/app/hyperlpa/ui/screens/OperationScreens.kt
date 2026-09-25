@@ -1913,6 +1913,12 @@ fun EuiccDetailsScreen(
                         summary = cardName ?: stringResource(R.string.euicc_card_name_not_set),
                         onClick = { showCardNameEditor = true },
                     )
+                    if (info.productName.isNotBlank()) {
+                        ValuePreference(
+                            title = stringResource(R.string.euicc_product),
+                            value = info.productName,
+                        )
+                    }
                     ValuePreference(
                         title = stringResource(R.string.euicc_eid),
                         value = redactIdentifier(info.eid, settings.eidRedaction),

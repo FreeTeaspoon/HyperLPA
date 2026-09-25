@@ -31,6 +31,21 @@ internal class LpaSession(
     private val apduInterface: ApduInterface,
 ) : AutoCloseable {
     private var cachedEuiccInfo2 = initialEuiccInfo2
+    private var vendorProductNameProbed = false
+    private var cachedVendorProductName: String? = null
+
+    /** Probes vendor applets once per session so later refreshes do not open extra channels. */
+    fun readVendorProductName(): String? {
+        synchronized(this) {
+            if (vendorProductNameProbed) return cachedVendorProductName
+        }
+        val productName = readEstkmeProductName(apduInterface)
+        synchronized(this) {
+            vendorProductNameProbed = true
+            cachedVendorProductName = productName
+        }
+        return productName
+    }
 
     /** Reuses the ES10c eUICC-info response required while initializing this session. */
     fun readEuiccInfo2(refresh: Boolean = false): EuiccInfo2? {

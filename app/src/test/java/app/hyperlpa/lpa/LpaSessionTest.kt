@@ -84,6 +84,39 @@ class LpaSessionTest {
         assertEquals(1, liveReads)
     }
 
+    @Test
+    fun vendorProductNameIsProbedOncePerSession() {
+        var channelOpens = 0
+        val assistant = Proxy.newProxyInstance(
+            LocalProfileAssistant::class.java.classLoader,
+            arrayOf(LocalProfileAssistant::class.java),
+        ) { _, method, _ -> error("Unexpected LocalProfileAssistant call: ${method.name}") } as LocalProfileAssistant
+        val apdu = Proxy.newProxyInstance(
+            ApduInterface::class.java.classLoader,
+            arrayOf(ApduInterface::class.java),
+        ) { _, method, _ ->
+            when (method.name) {
+                "logicalChannelOpen" -> {
+                    channelOpens += 1
+                    throw NoSuchElementException("No such applet")
+                }
+                else -> error("Unexpected APDU call: ${method.name}")
+            }
+        } as ApduInterface
+        val session = LpaSession(
+            reader = ReaderInfo("reader", "Reader", ReaderKind.OMAPI),
+            aid = "A0000005591010FFFFFFFF8900000100",
+            assistant = assistant,
+            requiresProfileSwitchRefresh = true,
+            initialEuiccInfo2 = null,
+            apduInterface = apdu,
+        )
+
+        assertNull(session.readVendorProductName())
+        assertNull(session.readVendorProductName())
+        assertEquals(1, channelOpens)
+    }
+
     private fun euiccInfo(label: String) = EuiccInfo2(
         sgp22Version = Version(2, 2, 0),
         profileVersion = Version(2, 3, 0),

@@ -207,6 +207,10 @@ private class LogicalChannelBleApduInterface(
             checkSuccessful(response, "MANAGE CHANNEL")
             response.firstOrNull()?.toUByte()?.toInt() ?: 0
         }.getOrDefault(0)
+        // Selecting on a basic channel that is already in use would replace that handle's applet.
+        check(channel != 0 || synchronized(channels) { 0 !in channels.values }) {
+            "Bluetooth reader has no free logical channel"
+        }
 
         val select = ByteArray(6 + aid.size)
         select[0] = mapCla(0x00, channel).toByte()
@@ -216,8 +220,16 @@ private class LogicalChannelBleApduInterface(
         select[4] = aid.size.toByte()
         aid.copyInto(select, 5)
         select[select.lastIndex] = 0x00
-        val response = transport.transceive(select)
-        checkSuccessful(response, "SELECT ${aid.toHexString()}")
+        try {
+            checkSuccessful(transport.transceive(select), "SELECT ${aid.toHexString()}")
+        } catch (error: Throwable) {
+            if (channel != 0) {
+                runCatching {
+                    transport.transceive(byteArrayOf(0x00, 0x70, 0x80.toByte(), channel.toByte(), 0x00))
+                }
+            }
+            throw error
+        }
 
         val handle = nextHandle.getAndIncrement()
         synchronized(channels) { channels[handle] = channel }
