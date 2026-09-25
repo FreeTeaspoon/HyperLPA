@@ -99,7 +99,7 @@ class RemoteDevicesIntegrationTest {
             assertTrue(second.host.calls.get() == 0)
             second.devices.approve(second.devices.ui.value.peers.single().id)
             await("paired and discovered") { first.devices.readers.value.size == 2 }
-            assertEquals(listOf("Test phone · SIM1", "Test phone · SIM2"), first.devices.readers.value.map { it.name })
+            assertEquals(listOf("SIM1 on Test phone", "SIM2 on Test phone"), first.devices.readers.value.map { it.name })
             val reader = first.devices.readers.value.first()
             assertTrue(first.devices.select(reader.id) is OperationOutcome.Success)
             await("shared reader dropdown") { first.repository.state.value.selectedReaderId == reader.id }

@@ -356,15 +356,15 @@
     <string name="reader_remote_credential_stored">Bearer credential stored securely</string>
     <string name="reader_remote_credential_none">No bearer credential</string>
     <string name="reader_diagnostics_section">Compatibility diagnostics</string>
-    <string name="reader_diagnostics_android_version">%1$s · API %2$d</string>
+    <string name="reader_diagnostics_android_version">%1$s (API %2$d)</string>
     <string name="reader_omapi_advertised">Advertised by this device</string>
     <string name="reader_omapi_not_advertised">Not advertised by this device</string>
     <string name="reader_bluetooth_permission">Bluetooth permission</string>
     <string name="reader_bluetooth_adapter">Bluetooth &amp; paired devices</string>
     <string name="reader_bluetooth_unsupported">Not available on this device</string>
     <string name="reader_bluetooth_adapter_permission_required">Grant Bluetooth permission to check its state</string>
-    <string name="reader_bluetooth_adapter_on">On · Manage paired readers in Android settings</string>
-    <string name="reader_bluetooth_adapter_off">Off · Open Android settings to turn it on</string>
+    <string name="reader_bluetooth_adapter_on">On: manage paired readers in Android settings</string>
+    <string name="reader_bluetooth_adapter_off">Off: open Android settings to turn it on</string>
     <string name="reader_bluetooth_settings_unavailable">Android Bluetooth settings could not be opened</string>
     <string name="app_settings_unavailable">Android app settings could not be opened</string>
     <string name="reader_telephony_permission">Telephony permission</string>
@@ -392,11 +392,11 @@
     <string name="reader_remote_too_many_endpoints" tools:ignore="PluralsCandidate">Enter no more than %1$d remote reader endpoints</string>
     <string name="reader_remote_invalid_endpoint_line">Line %1$d is not a valid HTTPS endpoint</string>
     <string name="reader_remote_duplicate_endpoint_line" tools:ignore="PluralsCandidate">Line %1$d duplicates an earlier endpoint</string>
-    <string name="reader_remote_secure_detail">RemoCard v2 · secure transport</string>
-    <string name="reader_remote_unavailable_detail">RemoCard v2 unavailable · Check TLS, credentials, and server compatibility</string>
+    <string name="reader_remote_secure_detail">RemoCard v2 uses secure transport</string>
+    <string name="reader_remote_unavailable_detail">RemoCard v2 unavailable: check TLS, credentials, and server compatibility</string>
     <string name="reader_remote_configured_name">Configured remote reader</string>
     <string name="reader_telephony_not_in_build">Not included in this build</string>
-    <string name="reader_telephony_permission_status">Phone state: %1$s · protected access: %2$s</string>
+    <string name="reader_telephony_permission_status">Phone state: %1$s; protected access: %2$s</string>
     <string name="reader_diagnostics_app_line">HyperLPA %1$s (%2$d)</string>
     <string name="reader_diagnostics_android_line">Android %1$s (API %2$d)</string>
     <plurals name="reader_diagnostics_found_line">
@@ -580,8 +580,8 @@
     <string name="download_progress_finalizing">Finalizing…</string>
     <string name="download_progress_installing">Installing…</string>
     <string name="download_progress_waiting">Working…</string>
-    <string name="download_progress_detail">%1$d%% · %2$s / %3$s</string>
-    <string name="download_progress_status">%1$s · %2$s</string>
+    <string name="download_progress_detail">%1$d%%, %2$s/%3$s</string>
+    <string name="download_progress_status">%1$s %2$s</string>
 
     <!-- Profile details and editing -->
     <string name="profile_provider_fallback">this provider</string>
@@ -766,7 +766,7 @@
     <string name="batch_status_failed">Failed</string>
     <string name="batch_status_cancelled">Cancelled</string>
     <string name="batch_progress">Progress</string>
-    <string name="batch_progress_value" tools:ignore="PluralsCandidate">%1$d installed · %2$d failed</string>
+    <string name="batch_progress_value" tools:ignore="PluralsCandidate">%1$d installed, %2$d failed</string>
     <string name="batch_download_in_progress">Download in progress</string>
     <plurals name="batch_download_profiles">
         <item quantity="one">Download %1$d profile</item>
@@ -796,7 +796,7 @@
     <string name="euicc_product">Product</string>
     <string name="euicc_eid">EID</string>
     <string name="euicc_eid_reading">Reading…</string>
-    <string name="euicc_eid_named_summary">EID · %1$s</string>
+    <string name="euicc_eid_named_summary">EID: %1$s</string>
     <string name="euicc_category">eUICC category</string>
     <string name="euicc_sas_accreditation">SAS accreditation</string>
     <string name="euicc_firmware">Firmware</string>
@@ -827,7 +827,7 @@
     <string name="euicc_open_discovered_summary">Open this SM-DP+ address in profile download</string>
     <string name="euicc_keys_policy">Keys and policy</string>
     <string name="euicc_keys_policy_hide">Hide key IDs and policy rules</string>
-    <string name="euicc_key_counts" tools:ignore="PluralsCandidate">%1$d signing · %2$d verification keys</string>
+    <string name="euicc_key_counts" tools:ignore="PluralsCandidate">%1$d signing keys, %2$d verification keys</string>
     <string name="euicc_signing_keys">Signing key IDs (%1$d)</string>
     <string name="euicc_verification_keys">Verification key IDs (%1$d)</string>
     <string name="euicc_forbidden_rules">Forbidden policy rules</string>
@@ -973,16 +973,16 @@
     <string name="common_add">Add</string>
     <!-- Reader descriptions -->
     <string name="reader_nbridge_detail">NBridge secure-element provider</string>
-    <string name="reader_omapi_card_detected">Android OMAPI · card detected</string>
-    <string name="reader_omapi_no_card">Android OMAPI · no SIM card</string>
-    <string name="reader_omapi_status_unavailable">Android OMAPI · card status unavailable</string>
+    <string name="reader_omapi_card_detected">Card detected</string>
+    <string name="reader_omapi_no_card">No SIM card</string>
+    <string name="reader_omapi_status_unavailable">Card status unavailable</string>
     <string name="reader_usb_default_name">USB smart-card reader</string>
     <string name="reader_telephony_euicc_name">Telephony eUICC %1$d</string>
     <string name="reader_telephony_sim_name">Telephony SIM %1$d</string>
     <string name="reader_telephony_port">Port %1$d</string>
-    <string name="reader_telephony_port_removable">Port %1$d · removable</string>
-    <string name="reader_telephony_port_inactive">Port %1$d · inactive</string>
-    <string name="reader_telephony_port_removable_inactive">Port %1$d · removable · inactive</string>
+    <string name="reader_telephony_port_removable">Port %1$d (removable)</string>
+    <string name="reader_telephony_port_inactive">Port %1$d (inactive)</string>
+    <string name="reader_telephony_port_removable_inactive">Port %1$d (removable, inactive)</string>
 
     <!-- Privacy-safe support report -->
     <string name="support_report_title">HyperLPA privacy-safe support report</string>

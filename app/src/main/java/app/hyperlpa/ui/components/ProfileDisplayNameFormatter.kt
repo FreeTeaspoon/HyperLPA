@@ -11,7 +11,7 @@ data class FormattedProfileDisplayName(
     val nameText: String,
     val phoneNumbers: List<String>,
 ) {
-    val phoneText: String = phoneNumbers.joinToString(" · ")
+    val phoneText: String = phoneNumbers.joinToString(", ")
     val hasPhoneNumber: Boolean = phoneNumbers.isNotEmpty()
 }
 

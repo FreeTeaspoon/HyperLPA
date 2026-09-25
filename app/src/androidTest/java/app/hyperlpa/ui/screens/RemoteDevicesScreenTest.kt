@@ -51,7 +51,7 @@ class RemoteDevicesScreenTest {
     @Test fun localAndRemoteSimSlotsShareTheActiveReaderDropdown() {
         var selected: String? = null
         val local = ReaderInfo("local-sim1", "SIM1", ReaderKind.OMAPI)
-        val remote = ReaderInfo("device:phone:sim2", "Travel phone · SIM2", ReaderKind.REMOTE,
+        val remote = ReaderInfo("device:phone:sim2", "SIM2 on Travel phone", ReaderKind.REMOTE,
             deviceId = "phone", sourceReaderId = "sim2")
         val state = HyperLpaUiState(settingsLoaded = true, settings = AppSettings(),
             lpa = LpaRepositoryState(readers = listOf(local, remote), selectedReaderId = local.id, initialized = true))
@@ -66,7 +66,7 @@ class RemoteDevicesScreenTest {
             }
         }
         compose.onNodeWithText("Active reader").performClick()
-        compose.onNodeWithText("Travel phone · SIM2").assertIsDisplayed().performClick()
+        compose.onNodeWithText("SIM2 on Travel phone").assertIsDisplayed().performClick()
         assertEquals(remote.id, selected)
     }
 }

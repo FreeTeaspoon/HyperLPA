@@ -669,7 +669,7 @@ private fun PhoneNotificationRow(entry: PhoneNotificationEntry, modifier: Modifi
             withLink(LinkAnnotation.Clickable("otp", codeStyle) { onCopyCode(value) }) { append(value) }
             append(body, code.last + 1, body.length)
         }
-        if (body.isNotEmpty()) append(" · ")
+        if (body.isNotEmpty()) append("\n")
         append(time)
     }
     GroupedCard(modifier) {

@@ -789,7 +789,7 @@ fun ReaderSettingsScreen(
                             summary = listOfNotNull(
                                 stringResource(reader.kind.labelResource()),
                                 reader.detail,
-                            ).joinToString(" · "),
+                            ).joinToString(": "),
                             endActions = {
                                 if (selected) {
                                     Icon(
@@ -1083,7 +1083,7 @@ private fun remoteReaderSummary(urls: List<String>): String {
     }.distinct()
     val count = pluralStringResource(R.plurals.reader_remote_endpoint_count, urls.size, urls.size)
     return hosts.takeIf(List<String>::isNotEmpty)
-        ?.joinToString(prefix = "$count · ", limit = 2, truncated = "…")
+        ?.joinToString(prefix = "$count: ", limit = 2, truncated = "…")
         ?: count
 }
 

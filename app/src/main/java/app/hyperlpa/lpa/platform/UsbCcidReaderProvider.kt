@@ -55,7 +55,7 @@ internal class UsbCcidReaderProvider(
                 detail = listOfNotNull(
                     manufacturerName,
                     "${device.vendorId.toString(16)}:${device.productId.toString(16)}",
-                ).joinToString(" · "),
+                ).joinToString(", "),
             ),
             requiresProfileSwitchRefresh = false,
             openApduInterface = {

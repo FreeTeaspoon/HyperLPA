@@ -115,7 +115,7 @@ internal class BluetoothLeReaderProvider(context: Context) : ReaderProvider {
                     id = "ble:${reader.protocol.name}:${reader.device.address}",
                     name = reader.name,
                     kind = ReaderKind.BLE,
-                    detail = "${reader.protocol.label} · ${reader.device.address}",
+                    detail = "${reader.protocol.label}, ${reader.device.address}",
                 ),
                 requiresProfileSwitchRefresh = reader.protocol.requiresProfileSwitchRefresh,
                 openApduInterface = {

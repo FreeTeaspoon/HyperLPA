@@ -8,7 +8,7 @@ HTTPS and WebSocket, so there is no server to maintain or port to forward.
 
 The relay forwards encrypted commands and results. The phone with the eUICC does
 the card work, including profile downloads. On the controlling phone, its readers
-appear in **Active reader** as `Device name · SIM1` and `Device name · SIM2`.
+appear in **Active reader** as `SIM1 on Device name` and `SIM2 on Device name`.
 
 ## Before you start
 
@@ -66,7 +66,7 @@ an APK, Git, or public logs.
 5. Approve the incoming request on the phone that created the code. Approval gives
    both phones control of each other's compatible readers. Pair other devices
    separately; pairing does not transitively authorize an entire group.
-6. Return to Profiles and select `Device name · SIM1` or `Device name · SIM2` in
+6. Return to Profiles and select `SIM1 on Device name` or `SIM2 on Device name` in
    **Active reader**. Use the existing profile and notification screens.
 
 ## What you can do
