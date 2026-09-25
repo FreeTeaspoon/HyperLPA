@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Base.Theme.HyperLPA" parent="android:style/Theme.Material.Light.NoActionBar">
+    <style name="Theme.HyperLPA" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowBackground">@color/window_background</item>
         <item name="android:windowActionModeOverlay">true</item>
@@ -9,6 +9,4 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:windowNoTitle">true</item>
     </style>
-
-    <style name="Theme.HyperLPA" parent="Base.Theme.HyperLPA" />
 </resources>
