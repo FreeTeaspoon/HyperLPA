@@ -255,7 +255,7 @@ fun ProfilesScreen(
                     contentPadding = PaddingValues(
                         start = sidePadding,
                         end = sidePadding,
-                        top = contentPadding.calculateTopPadding(),
+                        top = contentPadding.calculateTopPadding() + ProfilesFirstCardGap,
                         bottom = contentPadding.calculateBottomPadding() + 24.dp,
                     ),
                     horizontalArrangement = Arrangement.spacedBy(0.dp),
@@ -281,7 +281,7 @@ fun ProfilesScreen(
                     }
                 }
             } else {
-                val listTopPadding = contentPadding.calculateTopPadding()
+                val listTopPadding = contentPadding.calculateTopPadding() + ProfilesFirstCardGap
                 val listBottomPadding = contentPadding.calculateBottomPadding() + 24.dp
                 val showDownloadAction = state.lpa.selectedReader != null &&
                     state.lpa.operation !is LpaOperation.Connecting &&
@@ -601,6 +601,9 @@ private fun ProfilesHeader(
 }
 
 private const val ProfileEnrichmentLoadingDelayMillis = 500L
+
+// The same 12 dp card start MishkaPageContent gives other pages; the refresh header offset assumes it.
+private val ProfilesFirstCardGap = 12.dp
 
 @Composable
 private fun ProfileCard(
