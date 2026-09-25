@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
 import androidx.core.net.toUri
 import android.util.Base64
+import android.util.LruCache
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
@@ -33,7 +34,6 @@ import app.hyperlpa.domain.model.ProfileInfo
 import app.hyperlpa.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.util.LinkedHashMap
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Surface
 import top.yukonga.miuix.kmp.icon.MiuixIcons
@@ -66,77 +66,66 @@ internal fun rememberProfileArtworkBitmap(
     cloudIcon: ByteArray?,
 ): Bitmap? {
     val context = LocalContext.current
-    val artworkKey = listOf(
-        profile?.customIconUri.orEmpty(),
-        profile?.iconBase64.orEmpty(),
-        cloudIcon?.contentHashCode()?.toString().orEmpty(),
-    )
-    val cachedBitmap = profile?.let { ProfileArtworkBatchCache.getBitmap(it, cloudIcon) }
-    return key(artworkKey) {
-        val bitmap by produceState<Bitmap?>(
-            initialValue = cachedBitmap,
-            profile?.customIconUri,
-            profile?.iconBase64,
-            cloudIcon?.contentHashCode(),
-        ) {
-            if (cachedBitmap != null) return@produceState
+    val input = profile?.artworkInput(cloudIcon)
+    val cached = input?.let(ProfileArtworkCache::get)
+    return key(input, cloudIcon?.contentHashCode()) {
+        val bitmap by produceState(initialValue = cached?.bitmap) {
+            if (cached != null) return@produceState
             value = withContext(Dispatchers.IO) {
                 loadProfileArtworkBitmap(context, profile, cloudIcon)
+                    .also { bitmap -> input?.let { ProfileArtworkCache.put(it, bitmap) } }
             }
         }
         bitmap
     }
 }
 
+/**
+ * Resolves the artwork of a whole profile list. Artwork decoded before, for any list, is returned
+ * in the first composition, so a card shown again never passes through placeholders.
+ */
 @Composable
 internal fun rememberProfileArtworkBitmaps(
     profiles: List<ProfileInfo>,
     cloudIcons: Map<String, ByteArray>,
-    sourceKey: String?,
     enabled: Boolean,
 ): ProfileArtworkLoadState {
     if (!enabled || profiles.isEmpty()) return ProfileArtworkLoadState.ReadyWithoutArtwork
     val context = LocalContext.current
     val artworkInputs = remember(profiles, cloudIcons) {
-        profiles.map { profile ->
-            ProfileArtworkInput(
-                iccid = profile.iccid,
-                customIconUri = profile.customIconUri,
-                embeddedIcon = profile.iconBase64,
-                cloudIconHash = cloudIcons[profile.iccid]?.contentHashCode(),
-            )
-        }
+        profiles.map { profile -> profile.artworkInput(cloudIcons[profile.iccid]) }
     }
-    val batchKey = ProfileArtworkBatchKey(sourceKey = sourceKey, inputs = artworkInputs)
-    val cachedState = ProfileArtworkBatchCache.get(batchKey)
+    val cachedArtwork = remember(artworkInputs) {
+        artworkInputs.mapNotNull { input -> ProfileArtworkCache.get(input)?.let { input.iccid to it } }.toMap()
+    }
     val previousState = remember { mutableStateOf<ProfileArtworkLoadState?>(null) }
-    return key(batchKey) {
-        val carriedBitmaps = previousState.value?.bitmaps
-            ?.filterKeys { iccid -> profiles.any { profile -> profile.iccid == iccid } }
-            .orEmpty()
-        val initialState = cachedState
-            ?: ProfileArtworkLoadState(bitmaps = carriedBitmaps, ready = false)
-        val loadState by produceState(
-            initialValue = initialState,
-            batchKey,
-        ) {
-            if (cachedState != null) {
-                previousState.value = cachedState
+    return key(artworkInputs) {
+        val cachedBitmaps = cachedArtwork.mapNotNull { (iccid, artwork) -> artwork.bitmap?.let { iccid to it } }.toMap()
+        val initialState = if (cachedArtwork.size == artworkInputs.size) {
+            ProfileArtworkLoadState(bitmaps = cachedBitmaps, ready = true)
+        } else {
+            // Keep the artwork a profile already shows until its replacement is decoded.
+            val carriedBitmaps = previousState.value?.bitmaps
+                ?.filterKeys { iccid -> iccid !in cachedArtwork && artworkInputs.any { it.iccid == iccid } }
+                .orEmpty()
+            ProfileArtworkLoadState(bitmaps = carriedBitmaps + cachedBitmaps, ready = false)
+        }
+        val loadState by produceState(initialValue = initialState) {
+            if (initialState.ready) {
+                previousState.value = initialState
                 return@produceState
             }
-            val bitmaps = withContext(Dispatchers.IO) {
-                buildMap<String, Bitmap> {
-                    profiles.forEach { profile ->
-                        loadProfileArtworkBitmap(
-                            context = context,
-                            profile = profile,
-                            cloudIcon = cloudIcons[profile.iccid],
-                        )?.let { bitmap -> put(profile.iccid, bitmap) }
+            val loaded = withContext(Dispatchers.IO) {
+                profiles.zip(artworkInputs)
+                    .filter { (_, input) -> input.iccid !in cachedArtwork }
+                    .mapNotNull { (profile, input) ->
+                        loadProfileArtworkBitmap(context, profile, cloudIcons[profile.iccid])
+                            .also { bitmap -> ProfileArtworkCache.put(input, bitmap) }
+                            ?.let { bitmap -> input.iccid to bitmap }
                     }
-                }
+                    .toMap()
             }
-            val readyState = ProfileArtworkLoadState(bitmaps = bitmaps, ready = true)
-            ProfileArtworkBatchCache.put(batchKey, readyState)
+            val readyState = ProfileArtworkLoadState(bitmaps = cachedBitmaps + loaded, ready = true)
             previousState.value = readyState
             value = readyState
         }
@@ -212,6 +201,8 @@ private const val MaxEmbeddedIconBase64Characters = 1_500_000
 private const val MaxRenderedProfileArtworkDimension = 512
 private const val ProfileArtworkCrossfadeMillis = 140
 
+private const val MaxCachedArtworkBytes = 24 * 1024 * 1024
+
 private data class ProfileArtworkInput(
     val iccid: String,
     val customIconUri: String?,
@@ -219,43 +210,26 @@ private data class ProfileArtworkInput(
     val cloudIconHash: Int?,
 )
 
-private data class ProfileArtworkBatchKey(
-    val sourceKey: String?,
-    val inputs: List<ProfileArtworkInput>,
+private fun ProfileInfo.artworkInput(cloudIcon: ByteArray?) = ProfileArtworkInput(
+    iccid = iccid,
+    customIconUri = customIconUri,
+    embeddedIcon = iconBase64,
+    cloudIconHash = cloudIcon?.contentHashCode(),
 )
 
-private object ProfileArtworkBatchCache {
-    private const val MaxCachedBatches = 3
-    private val cached = LinkedHashMap<ProfileArtworkBatchKey, ProfileArtworkLoadState>(
-        4,
-        0.75f,
-        true,
-    )
+/** A decoded result, where a null [bitmap] records that the profile has no usable artwork. */
+private class CachedProfileArtwork(val bitmap: Bitmap?)
 
-    @Synchronized
-    fun get(key: ProfileArtworkBatchKey): ProfileArtworkLoadState? =
-        cached[key]
-
-    @Synchronized
-    fun getBitmap(profile: ProfileInfo, cloudIcon: ByteArray?): Bitmap? {
-        val input = ProfileArtworkInput(
-            iccid = profile.iccid,
-            customIconUri = profile.customIconUri,
-            embeddedIcon = profile.iconBase64,
-            cloudIconHash = cloudIcon?.contentHashCode(),
-        )
-        val matchingBatch = cached.keys.toList().asReversed().firstOrNull { batchKey ->
-            input in batchKey.inputs
-        } ?: return null
-        return cached[matchingBatch]?.bitmaps?.get(profile.iccid)
+private object ProfileArtworkCache {
+    private val cached = object : LruCache<ProfileArtworkInput, CachedProfileArtwork>(MaxCachedArtworkBytes) {
+        override fun sizeOf(key: ProfileArtworkInput, value: CachedProfileArtwork): Int =
+            value.bitmap?.allocationByteCount?.coerceAtLeast(1) ?: 1
     }
 
-    @Synchronized
-    fun put(key: ProfileArtworkBatchKey, state: ProfileArtworkLoadState) {
-        cached[key] = state
-        while (cached.size > MaxCachedBatches) {
-            cached.entries.iterator().apply { next(); remove() }
-        }
+    fun get(input: ProfileArtworkInput): CachedProfileArtwork? = cached.get(input)
+
+    fun put(input: ProfileArtworkInput, bitmap: Bitmap?) {
+        cached.put(input, CachedProfileArtwork(bitmap))
     }
 }
 

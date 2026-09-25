@@ -80,6 +80,7 @@ fun TextInputDialog(
     visualTransformation: VisualTransformation = VisualTransformation.None,
     inputFilter: (String) -> String = { it },
     validate: (String) -> String? = { null },
+    error: String? = null,
 ) {
     OverlayDialog(
         show = show,
@@ -89,19 +90,23 @@ fun TextInputDialog(
         onDismissRequest = onDismiss,
     ) {
         var value by remember { mutableStateOf(TextFieldValue(initialValue, TextRange(initialValue.length))) }
+        // A failure reported by the caller describes the submitted text, so editing hides it.
+        var editedSinceError by remember(error) { mutableStateOf(false) }
         val focusRequester = remember { FocusRequester() }
         val keyboard = LocalSoftwareKeyboardController.current
         LaunchedEffect(Unit) {
             focusRequester.requestFocus()
             keyboard?.show()
         }
-        val error = value.text.takeIf { it.isNotBlank() }?.let(validate)
-        val canConfirm = error == null && (allowBlank || value.text.isNotBlank())
+        val validationError = value.text.takeIf { it.isNotBlank() }?.let(validate)
+        val shownError = validationError ?: error.takeUnless { editedSinceError }
+        val canConfirm = validationError == null && (allowBlank || value.text.isNotBlank())
         TextField(
             value = value,
             onValueChange = { input ->
                 val filtered = inputFilter(input.text)
                 if (filtered.length <= maxLength) {
+                    if (filtered != value.text) editedSinceError = true
                     value = if (filtered == input.text) input else TextFieldValue(filtered, TextRange(filtered.length))
                 }
             },
@@ -115,9 +120,9 @@ fun TextInputDialog(
                 .fillMaxWidth()
                 .focusRequester(focusRequester),
         )
-        if (error != null) {
+        if (shownError != null) {
             Text(
-                text = error,
+                text = shownError,
                 color = MiuixTheme.colorScheme.error,
                 style = MiuixTheme.textStyles.footnote1,
                 modifier = Modifier.padding(top = 8.dp),

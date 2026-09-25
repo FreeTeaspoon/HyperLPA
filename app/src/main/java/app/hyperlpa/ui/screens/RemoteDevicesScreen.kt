@@ -28,6 +28,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -64,13 +65,17 @@ import app.hyperlpa.ui.components.AppIcon
 import app.hyperlpa.ui.components.DetailLazyScaffold
 import app.hyperlpa.ui.components.DialogActionRow
 import app.hyperlpa.ui.components.EmptyState
+import app.hyperlpa.ui.components.ErrorCard
 import app.hyperlpa.ui.components.GroupedCard
 import app.hyperlpa.ui.components.LoadingState
 import app.hyperlpa.ui.components.PageStart
+import app.hyperlpa.ui.components.PageStateKind
 import app.hyperlpa.ui.components.SectionHeading
 import app.hyperlpa.ui.components.TextInputDialog
 import app.hyperlpa.ui.components.TipCard
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
@@ -88,7 +93,7 @@ import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Copy
 import top.yukonga.miuix.kmp.icon.extended.Delete
 import top.yukonga.miuix.kmp.icon.extended.More
-import top.yukonga.miuix.kmp.icon.extended.Messages
+import top.yukonga.miuix.kmp.icon.extended.Community
 import top.yukonga.miuix.kmp.menu.OverlayIconDropdownMenu
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
@@ -129,6 +134,7 @@ internal fun RemoteDevicesScreen(
     LaunchedEffect(state.loaded, state.relay) {
         if (state.loaded) { address = state.relay; name = state.name; if (state.relay.isNotBlank()) enrollment = "" }
     }
+    DisposableEffect(devices) { onDispose(devices::clearError) }
     DetailLazyScaffold(
         title = stringResource(R.string.remote_title),
         onBack = onBack,
@@ -147,7 +153,7 @@ internal fun RemoteDevicesScreen(
                 LoadingState(stringResource(R.string.common_loading), Modifier.fillParentMaxSize())
             }
             !configured -> {
-                state.error?.let { message -> item(contentType = PageStart.Inset) { TipCard(message) } }
+                state.error?.let { message -> item(contentType = PageStart.Inset) { ErrorCard(message) } }
                 item(contentType = PageStart.Inset) { RemoteSetupTip() }
                 item { SmallTitle(stringResource(R.string.remote_relay_address)) }
                 item {
@@ -179,8 +185,8 @@ internal fun RemoteDevicesScreen(
                 }
             }
             else -> {
+                state.error?.let { message -> item(contentType = PageStart.Inset) { ErrorCard(message) } }
                 item(contentType = PageStart.Inset) { TipCard(stringResource(R.string.remote_background_tip)) }
-                state.error?.let { message -> item { TipCard(message) } }
                 if (state.pendingOperations > 0) item { TipCard(stringResource(R.string.remote_pending_operations)) }
                 item {
                     GroupedCard {
@@ -441,12 +447,18 @@ internal fun PhoneNotificationSettingsScreen(devices: RemoteDevices, onBack: () 
     val sensitiveNotificationCommand = remember(context.packageName) {
         "adb shell cmd appops set --user 0 ${context.packageName} RECEIVE_SENSITIVE_NOTIFICATIONS allow"
     }
-    val messagesApp = remember { runCatching { Telephony.Sms.getDefaultSmsPackage(context) }.getOrNull() }
-    val apps = remember(state.notificationApps, messagesApp) {
-        state.notificationApps.map { it to (installedAppLabel(context, it) ?: it) }
-            .sortedWith(compareBy({ it.first != messagesApp }, { it.second.lowercase() }))
+    val notificationApps = state.notificationApps
+    val apps by produceState(emptyList<Pair<String, String>>(), notificationApps) {
+        value = withContext(Dispatchers.IO) {
+            val messagesApp = runCatching { Telephony.Sms.getDefaultSmsPackage(context) }.getOrNull()
+            notificationApps.map { it to (installedAppLabel(context, it) ?: it) }
+                .sortedWith(compareBy({ it.first != messagesApp }, { it.second.lowercase() }))
+        }
     }
+    val appGroups = remember(apps) { apps.chunked(6) }
+    DisposableEffect(devices) { onDispose(devices::clearError) }
     DetailLazyScaffold(title = stringResource(R.string.phone_notifications_title), onBack = onBack) { _ ->
+        state.error?.let { message -> item(contentType = PageStart.Inset) { ErrorCard(message) } }
         item {
             GroupedCard {
                 SwitchPreference(
@@ -478,9 +490,9 @@ internal fun PhoneNotificationSettingsScreen(devices: RemoteDevices, onBack: () 
         }
         if (state.sharePhoneNotifications) {
             item(contentType = PageStart.Inset) { TipCard(stringResource(R.string.phone_notifications_apps_tip)) }
-            if (apps.isNotEmpty()) item {
+            items(appGroups, key = { it.first().first }) { group ->
                 GroupedCard {
-                    apps.forEach { (packageName, label) ->
+                    group.forEach { (packageName, label) ->
                         key(packageName) {
                             SwitchPreference(
                                 title = label,
@@ -536,7 +548,10 @@ internal fun PhoneNotificationHistoryScreen(devices: RemoteDevices, deviceId: St
         if (!local) devices.refreshPhoneNotifications(deviceId)
     }
     DisposableEffect(deviceId) {
-        onDispose { if (!local) devices.closePhoneNotifications(deviceId) }
+        onDispose {
+            if (!local) devices.closePhoneNotifications(deviceId)
+            devices.clearError()
+        }
     }
     val view = phoneView.takeIf { it.deviceId == deviceId }
     val entries = if (local) localNotifications else view?.entries.orEmpty()
@@ -569,19 +584,27 @@ internal fun PhoneNotificationHistoryScreen(devices: RemoteDevices, deviceId: St
         },
         isRefreshing = view?.refreshing == true,
         onRefresh = if (local) null else ({ devices.refreshPhoneNotifications(deviceId, userInitiated = true) }),
-        emptyOverlay = if (!firstLoad && available && entries.isEmpty()) ({
-            EmptyState(
-                title = stringResource(R.string.phone_notifications_empty),
-                message = "",
-                icon = MiuixIcons.Messages,
-                modifier = Modifier.fillMaxSize(),
-            )
-        }) else null,
-    ) { _ ->
-        when {
-            firstLoad -> item(contentType = PageStart.Viewport) {
-                LoadingState(stringResource(R.string.common_loading), Modifier.fillParentMaxSize())
+        pageState = when {
+            firstLoad -> PageStateKind.LOADING
+            available && entries.isEmpty() -> PageStateKind.EMPTY
+            else -> PageStateKind.CONTENT
+        },
+        pageStateContent = { kind ->
+            if (kind == PageStateKind.LOADING) {
+                LoadingState(stringResource(R.string.common_loading), Modifier.fillMaxSize())
+            } else {
+                EmptyState(
+                    title = stringResource(R.string.phone_notifications_empty),
+                    message = "",
+                    icon = MiuixIcons.Community,
+                    modifier = Modifier.fillMaxSize(),
+                )
             }
+        },
+    ) { _ ->
+        state.error?.let { message -> item(contentType = PageStart.Inset) { ErrorCard(message) } }
+        when {
+            firstLoad -> Unit
             !available -> item(contentType = PageStart.Inset) {
                 TipCard(stringResource(R.string.phone_notifications_unavailable))
             }

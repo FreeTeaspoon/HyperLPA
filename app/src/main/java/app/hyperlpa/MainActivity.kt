@@ -180,7 +180,7 @@ class MainActivity : ComponentActivity() {
                         permissionGranted = bluetoothPermissionGranted,
                         adapterEnabled = bluetoothAdapterEnabled,
                     ),
-                    onRefreshReaders = { discoverReaders(state.settings) },
+                    onResolveReaderAccess = { resolveBluetoothReaderAccess(state.settings) },
                     onRequestBluetoothPermission = {
                         requestRuntimePermissions(state.settings, userInitiated = true)
                     },
@@ -324,7 +324,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun discoverReaders(settings: AppSettings) {
+    private fun resolveBluetoothReaderAccess(settings: AppSettings) {
         refreshBluetoothState()
         if (settings.enableBle && bluetoothSupported) {
             if (!bluetoothPermissionGranted) {
@@ -333,8 +333,6 @@ class MainActivity : ComponentActivity() {
                 openBluetoothSettings()
             }
         }
-        // BLE remediation must never prevent the other enabled reader providers from refreshing.
-        viewModel.refreshReaders()
     }
 
     private fun bluetoothRuntimePermissions(): List<String> =
@@ -424,7 +422,7 @@ class MainActivity : ComponentActivity() {
         }.onFailure {
             lifecycleScope.launch {
                 snackbarHostState.showSnackbar(
-                    message = getString(R.string.reader_bluetooth_settings_unavailable),
+                    message = getString(R.string.app_settings_unavailable),
                     duration = SnackbarDuration.Long,
                 )
             }

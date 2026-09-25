@@ -62,6 +62,26 @@ class ProfilesPageStateTest {
     }
 
     @Test
+    fun pullingWithoutAReaderLeavesDiscoveryProgressToTheRefreshIndicator() {
+        val lpa = LpaRepositoryState(
+            operation = LpaOperation.DiscoveringReaders("Looking for readers"),
+            initialized = true,
+        )
+
+        assertEquals(PageStateKind.CONTENT, profilesPageState(lpa, emptyList(), refreshPending = true))
+    }
+
+    @Test
+    fun automaticDiscoveryWithoutProfilesShowsTheLoadingState() {
+        val lpa = LpaRepositoryState(
+            operation = LpaOperation.DiscoveringReaders("Looking for readers"),
+            initialized = true,
+        )
+
+        assertEquals(PageStateKind.LOADING, profilesPageState(lpa, emptyList()))
+    }
+
+    @Test
     fun idleEmptyListShowsTheEmptyState() {
         val reader = ReaderInfo("reader", "Reader", ReaderKind.OMAPI)
         val lpa = LpaRepositoryState(

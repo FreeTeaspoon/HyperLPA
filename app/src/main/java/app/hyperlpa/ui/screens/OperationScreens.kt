@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -55,7 +56,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -73,14 +76,13 @@ import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import app.hyperlpa.R
 import app.hyperlpa.data.LpaRepositoryState
+import app.hyperlpa.data.downloadRequestErrorResource
 import app.hyperlpa.data.metadata.normalizeProfileTags
 import app.hyperlpa.data.metadata.providerIconKey
 import app.hyperlpa.data.settings.AppSettings
 import app.hyperlpa.data.settings.RedactionMode
 import app.hyperlpa.domain.model.ActivityLogEntry
 import app.hyperlpa.domain.model.DownloadRequest
-import app.hyperlpa.domain.model.DownloadRequestError
-import app.hyperlpa.domain.model.DownloadRequestException
 import app.hyperlpa.domain.model.DownloadStage
 import app.hyperlpa.domain.model.EuiccInfo
 import app.hyperlpa.domain.model.LogLevel
@@ -95,12 +97,17 @@ import app.hyperlpa.domain.model.ReaderInfo
 import app.hyperlpa.domain.model.ReaderKind
 import app.hyperlpa.domain.model.analyzeIccid
 import app.hyperlpa.domain.model.buildActivationCode
+import app.hyperlpa.domain.model.normalizeRspServerAddress
 import app.hyperlpa.domain.model.takeUnicodeCodePoints
 import app.hyperlpa.ui.components.DialogActionRow
 import app.hyperlpa.ui.components.TextInputDialog
 import app.hyperlpa.ui.components.EmptyState
 import app.hyperlpa.ui.components.GroupedCard
 import app.hyperlpa.ui.components.LoadingState
+import app.hyperlpa.ui.components.PageStateKind
+import app.hyperlpa.ui.components.ProfilesStateIcon
+import app.hyperlpa.ui.components.ReaderStateIcon
+import app.hyperlpa.ui.components.inlinePageStateItem
 import app.hyperlpa.ui.components.MiuixDatePickerDialog
 import app.hyperlpa.ui.components.ResolvedProfileArtwork
 import app.hyperlpa.ui.components.SectionHeading
@@ -118,6 +125,8 @@ import app.hyperlpa.ui.components.effect.ProfileGradientBackdrop
 import app.hyperlpa.provisioning.BatchDownloadError
 import app.hyperlpa.provisioning.BatchDownloadStatus
 import app.hyperlpa.provisioning.BatchDownloadUiState
+import app.hyperlpa.provisioning.BatchLineError
+import app.hyperlpa.provisioning.BatchLineException
 import app.hyperlpa.provisioning.MaxProvisioningQueueItems
 import app.hyperlpa.provisioning.parseBatchDownloadLine
 import app.hyperlpa.reminders.formatReminderDate
@@ -154,12 +163,11 @@ import top.yukonga.miuix.kmp.icon.extended.Delete
 import top.yukonga.miuix.kmp.icon.extended.ExpandLess
 import top.yukonga.miuix.kmp.icon.extended.ExpandMore
 import top.yukonga.miuix.kmp.icon.extended.Info
-import top.yukonga.miuix.kmp.icon.extended.Layers
 import top.yukonga.miuix.kmp.icon.extended.Notes
 import top.yukonga.miuix.kmp.icon.extended.Refresh
 import top.yukonga.miuix.kmp.icon.extended.Scan
 import top.yukonga.miuix.kmp.icon.extended.Search
-import top.yukonga.miuix.kmp.icon.extended.SearchDevice
+import top.yukonga.miuix.kmp.icon.extended.Years
 import top.yukonga.miuix.kmp.icon.extended.UploadCloud
 import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
@@ -211,9 +219,16 @@ fun ProfileDetailsScreen(
     val showSnackbar = LocalMiuixSnackbar.current
     val reminderPermissionRequired = stringResource(R.string.profile_reminder_permission_required)
     val iconImportFailed = stringResource(R.string.profile_icon_import_failed)
+    val iconUpdateFailed = stringResource(R.string.profile_icon_update_failed)
+    val filePickerUnavailable = stringResource(R.string.common_file_picker_unavailable)
     val reportIconResult: (Boolean) -> Unit = { success ->
         if (!success) {
             showSnackbar(iconImportFailed, SnackbarDuration.Long)
+        }
+    }
+    val reportIconUpdateResult: (Boolean) -> Unit = { success ->
+        if (!success) {
+            showSnackbar(iconUpdateFailed, SnackbarDuration.Long)
         }
     }
     val providerFallback = stringResource(R.string.profile_provider_fallback)
@@ -238,10 +253,11 @@ fun ProfileDetailsScreen(
         ?: reminderFirstSelectableDate
     val setReminder: (Instant) -> Unit = { reminderAt ->
         onRequestNotificationPermission { granted ->
+            showReminder = false
             if (granted) {
                 onSetReminder(reminderLabel, reminderAt)
-                showReminder = false
             } else {
+                // The sheet is drawn above the snackbar, so it has to close first.
                 showSnackbar(reminderPermissionRequired, SnackbarDuration.Long)
             }
         }
@@ -311,23 +327,25 @@ fun ProfileDetailsScreen(
         background = if (profile == null) null else {
             { ProfileGradientBackdrop(bitmap = artworkBitmap) }
         },
-        emptyOverlay = if (profile == null && !isProfileDetailsLoading(profile, lpa)) ({
-            EmptyState(
-                title = stringResource(R.string.profile_unavailable_title),
-                message = stringResource(R.string.profile_unavailable_message),
-                icon = MiuixIcons.Layers,
-                modifier = Modifier.fillMaxSize(),
-            )
-        }) else null,
-    ) { _ ->
-        if (profile == null && isProfileDetailsLoading(profile, lpa)) {
-            item(contentType = PageStart.Viewport) {
-                LoadingState(
-                    message = profileLoadingMessage,
-                    modifier = Modifier.fillParentMaxSize(),
+        pageState = when {
+            profile != null -> PageStateKind.CONTENT
+            isProfileDetailsLoading(profile, lpa) -> PageStateKind.LOADING
+            else -> PageStateKind.EMPTY
+        },
+        pageStateContent = { kind ->
+            if (kind == PageStateKind.LOADING) {
+                LoadingState(message = profileLoadingMessage, modifier = Modifier.fillMaxSize())
+            } else {
+                EmptyState(
+                    title = stringResource(R.string.profile_unavailable_title),
+                    message = stringResource(R.string.profile_unavailable_message),
+                    icon = ProfilesStateIcon,
+                    modifier = Modifier.fillMaxSize(),
                 )
             }
-        } else if (profile != null) {
+        },
+    ) { _ ->
+        if (profile != null) {
             item {
                 ProfileHero(
                     profile = profile,
@@ -674,7 +692,7 @@ fun ProfileDetailsScreen(
                 pickForProvider = false
                 showIconOptions = false
                 runCatching { pickIcon.launch("image/*") }
-                    .onFailure { reportIconResult(false) }
+                    .onFailure { showSnackbar(filePickerUnavailable, SnackbarDuration.Long) }
             }
             if (canShareByProvider) {
                 ReminderOption(
@@ -686,7 +704,7 @@ fun ProfileDetailsScreen(
                     runCatching { pickIcon.launch("image/*") }
                         .onFailure {
                             pickForProvider = false
-                            reportIconResult(false)
+                            showSnackbar(filePickerUnavailable, SnackbarDuration.Long)
                         }
                 }
             }
@@ -695,7 +713,7 @@ fun ProfileDetailsScreen(
                     stringResource(R.string.profile_icon_use_provider, providerLabel),
                     stringResource(R.string.profile_icon_use_provider_summary),
                 ) {
-                    onApplyIconToProvider(reportIconResult)
+                    onApplyIconToProvider(reportIconUpdateResult)
                     showIconOptions = false
                 }
             }
@@ -722,7 +740,7 @@ fun ProfileDetailsScreen(
                     stringResource(R.string.profile_icon_restore_profile),
                     stringResource(R.string.profile_icon_restore_profile_summary),
                 ) {
-                    onSetProviderIconHidden(false, reportIconResult)
+                    onSetProviderIconHidden(false, reportIconUpdateResult)
                     showIconOptions = false
                 }
             }
@@ -751,7 +769,7 @@ fun ProfileDetailsScreen(
             destructive = true,
             onConfirm = {
                 showRemoveSharedProviderIconForProfileConfirmation = false
-                onSetProviderIconHidden(true, reportIconResult)
+                onSetProviderIconHidden(true, reportIconUpdateResult)
             },
         )
     }
@@ -768,7 +786,7 @@ fun ProfileDetailsScreen(
             destructive = true,
             onConfirm = {
                 showRemoveProfileIconConfirmation = false
-                onSetIcon(null, false, reportIconResult)
+                onSetIcon(null, false, reportIconUpdateResult)
             },
         )
     }
@@ -785,7 +803,7 @@ fun ProfileDetailsScreen(
             destructive = true,
             onConfirm = {
                 showRemoveProviderIconConfirmation = false
-                onSetIcon(null, true, reportIconResult)
+                onSetIcon(null, true, reportIconUpdateResult)
             },
         )
     }
@@ -804,9 +822,10 @@ fun DownloadProfileScreen(
     onScanQr: () -> Unit,
     onSelectReader: (String) -> Unit,
     onFindReaders: () -> Unit,
-    onContinue: (DownloadRequest) -> Unit,
+    onContinue: (DownloadRequest) -> Boolean,
 ) {
     var localValue by remember(initialValue) { mutableStateOf(initialValue) }
+    var startRejected by remember { mutableStateOf(false) }
     // The confirmation code is a credential, so it stays out of saved state.
     var confirmationCode by remember(initialValue) { mutableStateOf("") }
     var imeiOverride by rememberSaveable { mutableStateOf<String?>(null) }
@@ -815,9 +834,12 @@ fun DownloadProfileScreen(
     var imageScanError by rememberSaveable { mutableStateOf<String?>(null) }
     val context = LocalContext.current
     val activationTooLong = stringResource(R.string.activation_error_too_long)
+    val clipboardEmpty = stringResource(R.string.activation_error_clipboard_empty)
     val imageOpenError = stringResource(R.string.activation_error_image_open)
     val noQrError = stringResource(R.string.activation_error_no_qr)
     val qrReadError = stringResource(R.string.activation_error_qr_read)
+    val filePickerUnavailable = stringResource(R.string.common_file_picker_unavailable)
+    val downloadNotStarted = stringResource(R.string.activation_error_download_not_started)
     val imageDecodeScope = rememberCoroutineScope()
     val barcodeScanner = remember {
         BarcodeScanning.getClient(
@@ -829,13 +851,20 @@ fun DownloadProfileScreen(
     DisposableEffect(barcodeScanner) {
         onDispose(barcodeScanner::close)
     }
-    fun acceptActivationCode(value: CharSequence?) {
-        if (value == null || value.length > MaxActivationInputCharacters) {
+    fun acceptActivationCode(value: CharSequence?, missingError: String) {
+        if (value.isNullOrBlank()) {
+            imageScanError = missingError
+            return
+        }
+        if (value.length > MaxActivationInputCharacters) {
             imageScanError = activationTooLong
             return
         }
         val code = normalizeActivationInput(value.toString())
-        if (code.isBlank()) return
+        if (code.isBlank()) {
+            imageScanError = missingError
+            return
+        }
         if (code != localValue) confirmationCode = ""
         localValue = code
         onValueChange(code)
@@ -854,12 +883,7 @@ fun DownloadProfileScreen(
             try {
                 barcodeScanner.process(decoded.image)
                     .addOnSuccessListener { barcodes ->
-                        val rawValue = barcodes.firstNotNullOfOrNull(Barcode::getRawValue)
-                        if (rawValue == null) {
-                            imageScanError = noQrError
-                        } else {
-                            acceptActivationCode(rawValue)
-                        }
+                        acceptActivationCode(barcodes.firstNotNullOfOrNull(Barcode::getRawValue), noQrError)
                     }
                     .addOnFailureListener {
                         imageScanError = qrReadError
@@ -918,7 +942,11 @@ fun DownloadProfileScreen(
                         value = localValue,
                         onValueChange = {
                             val bounded = it.take(MaxActivationInputCharacters)
-                            if (bounded != localValue) confirmationCode = ""
+                            if (bounded != localValue) {
+                                confirmationCode = ""
+                                imageScanError = null
+                                startRejected = false
+                            }
                             localValue = bounded
                             onValueChange(bounded)
                         },
@@ -946,13 +974,16 @@ fun DownloadProfileScreen(
                     onClick = {
                         val clipboard = context.getSystemService(ClipboardManager::class.java)
                         val item = clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)
-                        acceptActivationCode(item?.coerceToText(context))
+                        acceptActivationCode(item?.coerceToText(context), clipboardEmpty)
                     },
                 )
                 ArrowPreference(
                     title = stringResource(app.hyperlpa.R.string.activation_image),
                     summary = stringResource(app.hyperlpa.R.string.activation_image_summary),
-                    onClick = { pickQrImage.launch("image/*") },
+                    onClick = {
+                        runCatching { pickQrImage.launch("image/*") }
+                            .onFailure { imageScanError = filePickerUnavailable }
+                    },
                 )
             }
         }
@@ -1027,14 +1058,7 @@ fun DownloadProfileScreen(
             }
         }
         requestResult.exceptionOrNull()?.takeIf { validationAttempted }?.let { error ->
-            item {
-                Text(
-                    text = localizedDownloadRequestError(error),
-                    color = MiuixTheme.colorScheme.error,
-                    style = MiuixTheme.textStyles.body2,
-                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 6.dp),
-                )
-            }
+            item { PageErrorText(localizedDownloadRequestError(error)) }
         }
         if (
             validationAttempted &&
@@ -1042,24 +1066,13 @@ fun DownloadProfileScreen(
                 request.confirmationCodeRequired && request.confirmationCode.isNullOrBlank()
             } == true
         ) {
-            item {
-                Text(
-                    text = stringResource(R.string.failure_confirmation_code_required),
-                    color = MiuixTheme.colorScheme.error,
-                    style = MiuixTheme.textStyles.body2,
-                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 6.dp),
-                )
-            }
+            item { PageErrorText(stringResource(R.string.failure_confirmation_code_required)) }
         }
         imageScanError?.let { message ->
-            item {
-                Text(
-                    text = message,
-                    color = MiuixTheme.colorScheme.error,
-                    style = MiuixTheme.textStyles.body2,
-                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 6.dp),
-                )
-            }
+            item { PageErrorText(message) }
+        }
+        if (startRejected && !busy) {
+            item { PageErrorText(downloadNotStarted) }
         }
         item {
             PrimaryPageButton(
@@ -1068,9 +1081,9 @@ fun DownloadProfileScreen(
                 ),
                 onClick = {
                     validationAttempted = true
-                    requestResult.getOrNull()
+                    startRejected = requestResult.getOrNull()
                         ?.takeIf(DownloadRequest::hasRequiredConfirmationCode)
-                        ?.let(onContinue)
+                        ?.let(onContinue) == false
                 },
                 busy = busy,
             )
@@ -1235,28 +1248,41 @@ private fun normalizeActivationInput(value: String): String {
 private fun localizedDownloadRequestError(error: Throwable): String =
     stringResource(downloadRequestErrorResource(error))
 
-private fun downloadRequestErrorResource(error: Throwable): Int =
-    when ((error as? DownloadRequestException)?.reason) {
-        DownloadRequestError.CONFIRMATION_CODE_TOO_LONG -> R.string.activation_error_confirmation_too_long
-        DownloadRequestError.CONFIRMATION_CODE_INVALID -> R.string.activation_error_confirmation_invalid
-        DownloadRequestError.SMDP_ADDRESS_REQUIRED -> R.string.activation_error_address_required
-        DownloadRequestError.ACTIVATION_CODE_TOO_LONG -> R.string.activation_error_too_long
-        DownloadRequestError.ACTIVATION_CODE_FIELDS -> R.string.activation_error_fields
-        DownloadRequestError.ACTIVATION_CODE_VERSION -> R.string.activation_error_version
-        DownloadRequestError.ACTIVATION_CODE_ADDRESS_MISSING -> R.string.activation_error_address_missing
-        DownloadRequestError.MATCHING_ID_TOO_LONG -> R.string.activation_error_matching_too_long
-        DownloadRequestError.MATCHING_ID_INVALID -> R.string.activation_error_matching_invalid
-        DownloadRequestError.SMDP_OID_INVALID -> R.string.activation_error_oid_invalid
-        DownloadRequestError.CONFIRMATION_FLAG_INVALID -> R.string.activation_error_confirmation_flag
-        DownloadRequestError.RSP_ADDRESS_REQUIRED -> R.string.activation_error_rsp_required
-        DownloadRequestError.RSP_ADDRESS_TOO_LONG -> R.string.activation_error_rsp_too_long
-        DownloadRequestError.RSP_ADDRESS_HAS_SCHEME -> R.string.activation_error_rsp_scheme
-        DownloadRequestError.RSP_ADDRESS_WHITESPACE -> R.string.activation_error_rsp_whitespace
-        DownloadRequestError.RSP_ADDRESS_UNSUPPORTED_CHARACTERS -> R.string.activation_error_rsp_characters
-        DownloadRequestError.RSP_ADDRESS_INVALID -> R.string.activation_error_rsp_invalid
-        DownloadRequestError.RSP_PORT_INVALID -> R.string.activation_error_rsp_port
-        null -> R.string.activation_error_invalid
-    }
+@Composable
+private fun BatchItemRow(title: String, value: String, failed: Boolean) {
+    BasicComponent(
+        title = title,
+        summary = value,
+        titleColor = BasicComponentDefaults.titleColor(
+            disabledColor = MiuixTheme.colorScheme.onBackground,
+        ),
+        summaryColor = BasicComponentDefaults.summaryColor(
+            disabledColor = if (failed) MiuixTheme.colorScheme.error else MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        ),
+        enabled = false,
+    )
+}
+
+private fun batchLineErrorResource(error: Throwable?): Int = when ((error as? BatchLineException)?.reason) {
+    BatchLineError.LINE_TOO_LONG -> R.string.batch_error_line_too_long
+    BatchLineError.MULTIPLE_SEPARATORS -> R.string.batch_error_multiple_separators
+    BatchLineError.ACTIVATION_CODE_MISSING -> R.string.batch_error_activation_code_missing
+    BatchLineError.CONFIRMATION_CODE_TOO_LONG -> R.string.activation_error_confirmation_too_long
+    BatchLineError.CONFIRMATION_CODE_MISSING -> R.string.batch_error_confirmation_code_missing
+    null -> error?.let(::downloadRequestErrorResource) ?: R.string.activation_error_invalid
+}
+
+@Composable
+private fun PageErrorText(text: String) {
+    Text(
+        text = text,
+        color = MiuixTheme.colorScheme.error,
+        style = MiuixTheme.textStyles.body2,
+        modifier = Modifier
+            .padding(horizontal = 28.dp, vertical = 6.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite },
+    )
+}
 
 @Composable
 fun ProfileDownloadConfirmationScreen(
@@ -1691,6 +1717,26 @@ fun BatchDownloadScreen(
         Triple(request.smdpAddress, request.matchingId, request.smdpOid)
     }.size
     val withinQueueLimit = lines.size <= MaxProvisioningQueueItems
+    val firstInvalidLine = parsed.indexOfFirst(Result<DownloadRequest>::isFailure)
+    val seenRequests = mutableMapOf<Triple<String, String?, String?>, Int>()
+    val firstDuplicate = parsed.withIndex().firstNotNullOfOrNull { (line, result) ->
+        val request = result.getOrNull() ?: return@firstNotNullOfOrNull null
+        seenRequests.putIfAbsent(Triple(request.smdpAddress, request.matchingId, request.smdpOid), line)
+            ?.let { original -> original to line }
+    }
+    val lineError = when {
+        firstInvalidLine >= 0 -> stringResource(
+            R.string.batch_line_error,
+            firstInvalidLine + 1,
+            stringResource(batchLineErrorResource(parsed[firstInvalidLine].exceptionOrNull())),
+        )
+        firstDuplicate != null -> stringResource(
+            R.string.batch_line_duplicate,
+            firstDuplicate.second + 1,
+            firstDuplicate.first + 1,
+        )
+        else -> null
+    }
 
     DetailLazyScaffold(title = stringResource(R.string.batch_download_title), onBack = onBack) { _ ->
         item(contentType = PageStart.Inset) {
@@ -1734,15 +1780,11 @@ fun BatchDownloadScreen(
                 }
             }
         }
+        lineError?.let { message ->
+            item { PageErrorText(message) }
+        }
         state.notice?.let { notice ->
-            item {
-                Text(
-                    text = notice,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    style = MiuixTheme.textStyles.body2,
-                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 6.dp),
-                )
-            }
+            item { PageErrorText(notice) }
         }
         item {
             PrimaryPageButton(
@@ -1772,9 +1814,10 @@ fun BatchDownloadScreen(
             item {
                 GroupedCard {
                     state.items.forEach { item ->
-                        ValuePreference(
+                        BatchItemRow(
                             title = "${item.index + 1}. ${item.address}",
-                            value = when (item.error) {
+                            failed = item.error != null || item.status == BatchDownloadStatus.FAILED,
+                            value = item.detail ?: when (item.error) {
                                 BatchDownloadError.DOWNLOAD_FAILED -> stringResource(
                                     app.hyperlpa.R.string.provisioning_error_download_failed,
                                 )
@@ -1902,14 +1945,15 @@ fun EuiccDetailsScreen(
     DetailLazyScaffold(
         title = stringResource(R.string.euicc_information_title),
         onBack = onBack,
-        emptyOverlay = if (info == null) ({
+        pageState = if (info == null) PageStateKind.EMPTY else PageStateKind.CONTENT,
+        pageStateContent = {
             EmptyState(
                 title = stringResource(R.string.euicc_not_connected),
                 message = stringResource(R.string.euicc_not_connected_message),
-                icon = MiuixIcons.SearchDevice,
+                icon = ReaderStateIcon,
                 modifier = Modifier.fillMaxSize(),
             )
-        }) else null,
+        },
     ) { _ ->
         if (info != null) {
             item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.euicc_identity)) }
@@ -2239,6 +2283,7 @@ private fun ProvisioningAddressDialog(
     onConfirm: (String) -> Unit,
 ) {
     val tooLong = stringResource(R.string.euicc_server_address_too_long)
+    val resources = LocalResources.current
     TextInputDialog(
         show = show,
         title = title,
@@ -2249,7 +2294,11 @@ private fun ProvisioningAddressDialog(
         maxLength = MaxProvisioningAddressCharacters * 4,
         allowBlank = allowBlank,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-        validate = { value -> tooLong.takeIf { value.length > MaxProvisioningAddressCharacters } },
+        validate = { value ->
+            tooLong.takeIf { value.length > MaxProvisioningAddressCharacters }
+                ?: runCatching { normalizeRspServerAddress(value) }.exceptionOrNull()
+                    ?.let { resources.getString(downloadRequestErrorResource(it)) }
+        },
         onDismiss = onDismiss,
         onConfirm = onConfirm,
     )
@@ -2373,17 +2422,21 @@ fun TagManagerScreen(
         ).any { it.contains(searchQuery, ignoreCase = true) }
     }
 
+    val listState = rememberLazyListState()
+
     DetailLazyScaffold(
         title = stringResource(R.string.profile_tags_title),
         onBack = onBack,
-        emptyOverlay = if (profiles.isEmpty()) ({
+        listState = listState,
+        pageState = if (profiles.isEmpty()) PageStateKind.EMPTY else PageStateKind.CONTENT,
+        pageStateContent = {
             EmptyState(
                 stringResource(R.string.tags_no_profiles),
                 stringResource(R.string.tags_no_profiles_message),
-                icon = MiuixIcons.Layers,
+                icon = ProfilesStateIcon,
                 modifier = Modifier.fillMaxSize(),
             )
-        }) else null,
+        },
     ) { _ ->
         if (profiles.isNotEmpty()) {
             item {
@@ -2426,12 +2479,12 @@ fun TagManagerScreen(
             }
             item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.tags_profiles_section)) }
             if (filteredProfiles.isEmpty()) {
-                item(contentType = PageStart.Viewport) {
+                inlinePageStateItem(key = "tags-none-found", listState = listState) { stateModifier ->
                     EmptyState(
                         title = stringResource(R.string.tags_none_found),
                         message = stringResource(R.string.tags_none_found_message),
                         icon = MiuixIcons.Search,
-                        modifier = Modifier.fillParentMaxSize(),
+                        modifier = stateModifier,
                     )
                 }
             } else {
@@ -2487,14 +2540,15 @@ fun ScheduledRemindersScreen(
     DetailLazyScaffold(
         title = stringResource(R.string.reminders_scheduled_title),
         onBack = onBack,
-        emptyOverlay = if (scheduled.isEmpty()) ({
+        pageState = if (scheduled.isEmpty()) PageStateKind.EMPTY else PageStateKind.CONTENT,
+        pageStateContent = {
             EmptyState(
                 title = stringResource(R.string.reminders_none),
                 message = stringResource(R.string.reminders_none_message),
-                icon = MiuixIcons.Alarm,
+                icon = MiuixIcons.Years,
                 modifier = Modifier.fillMaxSize(),
             )
-        }) else null,
+        },
     ) { _ ->
         if (scheduled.isNotEmpty()) {
             if (upcoming.isNotEmpty()) {
@@ -2596,6 +2650,7 @@ fun LogsScreen(
     val showSnackbar = LocalMiuixSnackbar.current
     val logsExported = stringResource(R.string.logs_exported)
     val logsExportFailed = stringResource(R.string.logs_export_failed)
+    val filePickerUnavailable = stringResource(R.string.common_file_picker_unavailable)
     val exportSupportReport = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/plain"),
     ) { uri ->
@@ -2613,12 +2668,17 @@ fun LogsScreen(
         .mapIndexed { index, entry -> index to entry }
         .asReversed()
         .filter { (_, entry) -> levels[selectedLevel] == null || entry.level == levels[selectedLevel] }
+    val listState = rememberLazyListState()
     DetailLazyScaffold(
         title = stringResource(R.string.logs_title),
         onBack = onBack,
+        listState = listState,
         actions = {
             IconButton(
-                onClick = { exportSupportReport.launch("hyperlpa-support-report.txt") },
+                onClick = {
+                    runCatching { exportSupportReport.launch("hyperlpa-support-report.txt") }
+                        .onFailure { showSnackbar(filePickerUnavailable, SnackbarDuration.Long) }
+                },
             ) {
                 Icon(
                     MiuixIcons.UploadCloud,
@@ -2659,12 +2719,12 @@ fun LogsScreen(
             }
         }
         if (visibleLogs.isEmpty()) {
-            item(contentType = PageStart.Viewport) {
+            inlinePageStateItem(key = "logs-empty", listState = listState) { stateModifier ->
                 EmptyState(
                     stringResource(R.string.logs_empty),
                     stringResource(R.string.logs_empty_message),
                     icon = MiuixIcons.Notes,
-                    modifier = Modifier.fillParentMaxSize(),
+                    modifier = stateModifier,
                 )
             }
         } else {

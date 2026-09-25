@@ -34,6 +34,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
+import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 
 data class RemotePeerUi(val id: String, val name: String, val approved: Boolean, val incoming: Boolean, val online: Boolean)
@@ -189,19 +190,44 @@ internal class RemoteDevices(
             ready.await()
             actionMutex.withLock {
                 mutableUi.update { it.copy(busy = true, error = null) }
-                try { check(initialized); block() }
+                try { ensure(initialized, R.string.remote_storage_unavailable); block() }
                 catch (error: CancellationException) { throw error }
-                catch (error: Exception) { mutableUi.update { it.copy(error = error.message?.take(160) ?: context.getString(R.string.remote_action_failed)) } }
+                catch (error: Exception) {
+                    // Other exception messages are English diagnostics, not text for the user.
+                    val message = (error as? RemoteActionException)?.message ?: context.getString(R.string.remote_action_failed)
+                    mutableUi.update { it.copy(error = message) }
+                }
                 finally { mutableUi.update { it.copy(busy = false) } }
             }
         }
     }
 
+    private class RemoteActionException(message: String) : Exception(message)
+
+    private fun ensure(condition: Boolean, message: Int) {
+        if (!condition) throw RemoteActionException(context.getString(message))
+    }
+
+    /** Runs a relay request, reporting a failure the user can act on. */
+    private inline fun <T> relayRequest(rejected: Int, request: () -> T): T = try {
+        request()
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: IOException) {
+        throw RemoteActionException(context.getString(R.string.remote_relay_unreachable))
+    } catch (_: Exception) {
+        throw RemoteActionException(context.getString(rejected))
+    }
+
+    fun clearError() { mutableUi.update { it.copy(error = null) } }
+
     fun configure(address: String, enrollmentKey: String, name: String) = action {
-        check(!running && config.peers.isEmpty()) { context.getString(R.string.remote_disconnect_first) }
+        ensure(!running && config.peers.isEmpty(), R.string.remote_disconnect_first)
         require(name.trim().length in 1..80)
-        val next = config.copy(relay = relayAddress(address), name = name.trim())
-        connection.register(next, enrollmentKey.trim())
+        val relay = runCatching { relayAddress(address) }
+            .getOrElse { throw RemoteActionException(context.getString(R.string.remote_relay_address_invalid)) }
+        val next = config.copy(relay = relay, name = name.trim())
+        relayRequest(R.string.remote_relay_rejected) { connection.register(next, enrollmentKey.trim()) }
         update { next }
     }
 
@@ -214,7 +240,7 @@ internal class RemoteDevices(
     suspend fun shouldResume(): Boolean { ready.await(); return initialized && config.enabled && config.relay.isNotBlank() }
 
     fun setEnabled(enabled: Boolean) = action {
-        check(config.relay.isNotBlank()) { context.getString(R.string.remote_configure_first) }
+        ensure(config.relay.isNotBlank(), R.string.remote_configure_first)
         update { it.copy(enabled = enabled) }
         withContext(Dispatchers.Main) { serviceControl(enabled) }
     }
@@ -345,18 +371,19 @@ internal class RemoteDevices(
     }
 
     fun createInvitation() = action {
-        check(connected) { context.getString(R.string.remote_connect_first) }
-        check(config.peers.size < 32)
+        ensure(connected, R.string.remote_connect_first)
+        ensure(config.peers.size < 32, R.string.remote_already_paired)
         val invitation = PairInvitation(relay = config.relay, device = config.id, name = config.name,
             pair = newDeviceId(), secret = DeviceCrypto.secret(), expires = System.currentTimeMillis() + 600_000)
         update { it.copy(invitation = invitation) }
     }
 
     fun pair(code: String) = action {
-        check(connected) { context.getString(R.string.remote_connect_first) }
-        val invite = DeviceCrypto.parseInvitation(code.trim())
-        check(invite.relay == config.relay && invite.device != config.id) { context.getString(R.string.remote_pair_wrong_relay) }
-        check(config.peers.size < 32 && config.peers.none { it.id == invite.device }) { context.getString(R.string.remote_already_paired) }
+        ensure(connected, R.string.remote_connect_first)
+        val invite = runCatching { DeviceCrypto.parseInvitation(code.trim()) }
+            .getOrElse { throw RemoteActionException(context.getString(R.string.remote_pair_code_invalid)) }
+        ensure(invite.relay == config.relay && invite.device != config.id, R.string.remote_pair_wrong_relay)
+        ensure(config.peers.size < 32 && config.peers.none { it.id == invite.device }, R.string.remote_already_paired)
         val device = PairedDevice(invite.device, invite.name, invite.pair, invite.secret)
         update { it.copy(peers = it.peers + device) }
         send(device, DeviceMessage("pair", name = config.name))
@@ -393,8 +420,8 @@ internal class RemoteDevices(
     }
 
     fun unregister() = action {
-        check(!agent.busy && config.pending.isEmpty()) { context.getString(R.string.remote_operation_running) }
-        if (config.relay.isNotBlank()) connection.unregister(config)
+        ensure(!agent.busy && config.pending.isEmpty(), R.string.remote_operation_running)
+        if (config.relay.isNotBlank()) relayRequest(R.string.remote_action_failed) { connection.unregister(config) }
         stopRuntime()
         withContext(Dispatchers.Main) { serviceControl(false) }
         update { StoredDevices(name = config.name) }
@@ -642,10 +669,10 @@ internal class RemoteDevices(
     )
 
     suspend fun select(id: String): OperationOutcome = withContext(Dispatchers.IO) {
-        if (!requestMutex.tryLock()) return@withContext failure(R.string.remote_operation_running)
+        if (!requestMutex.tryLock()) return@withContext failure(R.string.remote_operation_running).also(::showRejection)
         try {
             val reader = mutableReaders.value.firstOrNull { it.id == id }
-                ?: return@withContext failure(R.string.remote_reader_unavailable)
+                ?: return@withContext failure(R.string.remote_reader_unavailable).also(::showRejection)
             rememberView(mutableView.value)
             val cached = synchronized(readerSnapshots) { readerSnapshots[id] }
             mutableView.value = (cached ?: DeviceSnapshot()).let { shown -> shown.copy(lpa = shown.lpa.copy(
@@ -692,7 +719,9 @@ internal class RemoteDevices(
     suspend fun execute(command: DeviceCommand, expectedAffinity: ReaderAffinity? = affinity()): OperationOutcome =
         withContext(Dispatchers.IO) {
             requestMutex.withLock {
-                if (expectedAffinity != affinity()) return@withLock failure(R.string.remote_card_changed)
+                if (expectedAffinity != affinity()) {
+                    return@withLock failure(R.string.remote_card_changed).also(::showRejection)
+                }
                 executeLocked(command)
             }
         }
@@ -828,6 +857,16 @@ internal class RemoteDevices(
     }
     private fun failure(message: Int) = OperationOutcome.Failed(OperationFailure(context.getString(R.string.remote_title), context.getString(message)))
     private fun unknownOutcome() = OperationOutcome.Unverified(OperationFailure(context.getString(R.string.remote_title), context.getString(R.string.remote_outcome_unknown)))
+
+    /** Shows [failure] on the presented remote reader without changing its running operation. */
+    internal fun showFailure(failure: OperationFailure) {
+        mutableView.update { it?.copy(lpa = it.lpa.copy(failure = failure)) }
+    }
+
+    /** A request refused before it reached the device is otherwise invisible to the user. */
+    private fun showRejection(outcome: OperationOutcome) {
+        outcome.failureOrNull()?.let(::showFailure)
+    }
 
     internal fun close() { connection.stop(); scope.cancel() }
 

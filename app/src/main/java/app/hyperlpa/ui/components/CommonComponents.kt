@@ -1,33 +1,31 @@
 package app.hyperlpa.ui.components
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -41,10 +39,12 @@ import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.Backup
+import top.yukonga.miuix.kmp.icon.extended.Link
 import top.yukonga.miuix.kmp.icon.extended.Notes
 import top.yukonga.miuix.kmp.icon.extended.Refresh
+import top.yukonga.miuix.kmp.squircle.squircleSurface
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.PressFeedbackType
 
@@ -164,51 +164,44 @@ enum class PageStateKind {
     CONTENT,
 }
 
+// Loading, empty and error states share this line so switching between them does not jump.
+// A bias scales the lift with the free space, which keeps short windows balanced.
+val PageStateAlignment = BiasAlignment(horizontalBias = 0f, verticalBias = -0.12f)
+
+// Miuix calls its stacked-layers glyph Backup; the one named Layers draws a list.
+val ProfilesStateIcon: ImageVector
+    get() = MiuixIcons.Backup
+
+val ReaderStateIcon: ImageVector
+    get() = MiuixIcons.Link
+
+const val PageStateFadeInMillis = 150
+const val PageStateFadeOutMillis = 120
+
+fun pageStateTransition(): ContentTransform = ContentTransform(
+    targetContentEnter = fadeIn(tween(PageStateFadeInMillis)),
+    initialContentExit = fadeOut(tween(PageStateFadeOutMillis)),
+    sizeTransform = null,
+)
+
+/**
+ * Fades whole-page states in and out and cross-fades between them. [PageStateKind.CONTENT]
+ * draws nothing, so the page underneath shows through.
+ */
 @Composable
-fun PageStateHost(
+fun PageStateOverlay(
     state: PageStateKind,
     modifier: Modifier = Modifier,
-    loadingMessage: String? = null,
-    emptyTitle: String? = null,
-    emptyMessage: String? = null,
-    emptyActionLabel: String? = null,
-    onEmptyAction: (() -> Unit)? = null,
-    errorTitle: String? = null,
-    errorMessage: String? = null,
-    onRetry: (() -> Unit)? = null,
-    content: @Composable () -> Unit,
+    content: @Composable (PageStateKind) -> Unit,
 ) {
-    val resolvedLoadingMessage = loadingMessage ?: stringResource(app.hyperlpa.R.string.common_loading)
-    val resolvedEmptyTitle = emptyTitle ?: stringResource(app.hyperlpa.R.string.common_nothing_here)
-    val resolvedEmptyMessage = emptyMessage ?: stringResource(app.hyperlpa.R.string.common_content_available_later)
-    val resolvedErrorTitle = errorTitle ?: stringResource(app.hyperlpa.R.string.common_something_went_wrong)
-    val resolvedErrorMessage = errorMessage ?: stringResource(app.hyperlpa.R.string.common_try_again_later)
     AnimatedContent(
         targetState = state,
         modifier = modifier,
-        transitionSpec = { fadeIn() togetherWith fadeOut() },
+        transitionSpec = { pageStateTransition() },
+        contentAlignment = Alignment.Center,
         label = "page-state",
     ) { target ->
-        when (target) {
-            PageStateKind.LOADING -> LoadingState(
-                message = resolvedLoadingMessage,
-                modifier = Modifier.fillMaxSize(),
-            )
-            PageStateKind.EMPTY -> EmptyState(
-                title = resolvedEmptyTitle,
-                message = resolvedEmptyMessage,
-                modifier = Modifier.fillMaxSize(),
-                actionLabel = emptyActionLabel,
-                onAction = onEmptyAction,
-            )
-            PageStateKind.ERROR -> ErrorState(
-                title = resolvedErrorTitle,
-                message = resolvedErrorMessage,
-                modifier = Modifier.fillMaxSize(),
-                onRetry = onRetry,
-            )
-            PageStateKind.CONTENT -> content()
-        }
+        if (target != PageStateKind.CONTENT) content(target)
     }
 }
 
@@ -217,17 +210,18 @@ fun LoadingState(
     message: String,
     modifier: Modifier = Modifier,
 ) {
-    Column(
+    Box(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 28.dp, vertical = 56.dp)
             .semantics(mergeDescendants = true) { contentDescription = message },
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+        contentAlignment = PageStateAlignment,
     ) {
-        InfiniteProgressIndicator(size = 20.dp)
-        Spacer(Modifier.height(10.dp))
-        Text(text = message, style = MiuixTheme.textStyles.body1, textAlign = TextAlign.Center)
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            InfiniteProgressIndicator(size = 20.dp)
+            Spacer(Modifier.height(10.dp))
+            Text(text = message, style = MiuixTheme.textStyles.body1, textAlign = TextAlign.Center)
+        }
     }
 }
 
@@ -238,32 +232,32 @@ fun EmptyState(
     modifier: Modifier = Modifier,
     icon: ImageVector = MiuixIcons.Notes,
     showMessage: Boolean = false,
-    actionLabel: String? = null,
-    onAction: (() -> Unit)? = null,
 ) {
     val muted = MiuixTheme.colorScheme.onSurfaceVariantSummary
+    val visibleMessage = message.takeIf { showMessage && it.isNotBlank() }
     val stateDescription = if (message.isBlank()) title else stringResource(
         app.hyperlpa.R.string.common_state_description,
         title,
         message,
     )
-    Column(
+    Box(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 28.dp)
             .semantics(mergeDescendants = true) { contentDescription = stateDescription },
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+        contentAlignment = PageStateAlignment,
     ) {
         Column(
-            modifier = Modifier.offset(y = (-36).dp),
+            modifier = Modifier.widthIn(max = 320.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Box(
                 modifier = Modifier
                     .size(48.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(muted.copy(alpha = if (LocalDarkTheme.current) 0.28f else 0.23f)),
+                    .squircleSurface(
+                        color = muted.copy(alpha = if (LocalDarkTheme.current) 0.38f else 0.23f),
+                        cornerRadius = 12.dp,
+                    ),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
@@ -277,24 +271,17 @@ fun EmptyState(
             Text(
                 text = title,
                 fontSize = 15.sp,
-                color = muted,
+                fontWeight = if (visibleMessage == null) FontWeight.Normal else FontWeight.Medium,
+                color = if (visibleMessage == null) muted else MiuixTheme.colorScheme.onSurfaceSecondary,
                 textAlign = TextAlign.Center,
             )
-            if (showMessage && message.isNotBlank()) {
+            if (visibleMessage != null) {
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = message,
+                    text = visibleMessage,
                     fontSize = 13.sp,
                     color = muted,
                     textAlign = TextAlign.Center,
-                )
-            }
-            if (actionLabel != null && onAction != null) {
-                Spacer(Modifier.height(16.dp))
-                TextButton(
-                    text = actionLabel,
-                    onClick = onAction,
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
                 )
             }
         }
@@ -306,15 +293,13 @@ fun ErrorState(
     title: String,
     message: String,
     modifier: Modifier = Modifier,
-    onRetry: (() -> Unit)? = null,
+    icon: ImageVector = MiuixIcons.Refresh,
 ) {
     EmptyState(
         title = title,
         message = message,
         modifier = modifier,
-        icon = MiuixIcons.Refresh,
+        icon = icon,
         showMessage = true,
-        actionLabel = if (onRetry == null) null else stringResource(app.hyperlpa.R.string.common_try_again),
-        onAction = onRetry,
     )
 }

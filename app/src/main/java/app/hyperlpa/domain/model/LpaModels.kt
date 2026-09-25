@@ -364,7 +364,6 @@ data class OperationFailure(
     val title: String,
     val message: String,
     val diagnostic: String? = null,
-    val recoverable: Boolean = true,
 )
 
 @Serializable

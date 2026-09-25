@@ -8,6 +8,7 @@ import app.hyperlpa.data.ReaderAffinity
 import app.hyperlpa.domain.model.DownloadRequest
 import app.hyperlpa.domain.model.OperationOutcome
 import java.time.Instant
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -47,6 +48,8 @@ class ProvisioningCoordinator(
     private var queueUnreadable: Boolean = false
     private var queueClearInProgress: Boolean = false
     private var provisioningPauseCount: Int = 0
+    // Failure messages may echo activation data, so they live only in memory, keyed by entry index.
+    private val failureDetails = ConcurrentHashMap<Int, String>()
 
     val batchState: StateFlow<BatchDownloadUiState> = mutableBatchState.asStateFlow()
     val singleDownloadActive: StateFlow<Boolean> = mutableSingleDownloadActive.asStateFlow()
@@ -141,6 +144,7 @@ class ProvisioningCoordinator(
             entries = requests.mapIndexed { index, request -> request.toStoredEntry(index) },
             updatedAtEpochMillis = Instant.now().toEpochMilli(),
         )
+        failureDetails.clear()
         return beginBatch(queue, queue.entries.indices.toSet(), restored = false)
     }
 
@@ -276,6 +280,7 @@ class ProvisioningCoordinator(
                 if (cleared) {
                     storedQueue = null
                     queueUnreadable = false
+                    failureDetails.clear()
                 }
                 queueClearInProgress = false
             }
@@ -376,6 +381,7 @@ class ProvisioningCoordinator(
                     expectedAffinity = queue.readerAffinity,
                     confirmBeforeInstall = false,
                     onReady = {
+                        failureDetails.remove(index)
                         val starting = queue.updateEntry(index) { current ->
                             current.copy(status = BatchDownloadStatus.DOWNLOADING, error = null)
                         }
@@ -398,6 +404,7 @@ class ProvisioningCoordinator(
                         current.copy(status = BatchDownloadStatus.SUCCEEDED, error = null)
                     }
                     is OperationOutcome.Failed -> queue.updateEntry(index) { current ->
+                        failureDetails[index] = outcome.failure.message
                         current.copy(
                             status = BatchDownloadStatus.FAILED,
                             // A remote error may echo activation data. Persist only a stable,
@@ -501,6 +508,7 @@ class ProvisioningCoordinator(
                     address = entry.smdpAddress,
                     status = entry.status,
                     error = entry.error,
+                    detail = failureDetails[entry.index]?.takeIf { entry.status == BatchDownloadStatus.FAILED },
                 )
             },
             running = running,
