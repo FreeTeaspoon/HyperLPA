@@ -8,7 +8,6 @@
     <string name="about_project">Project</string>
     <string name="common_back">Back</string>
     <string name="common_close">Close</string>
-    <string name="common_try_again">Try again</string>
     <string name="nav_profiles">Profiles</string>
     <string name="nav_notifications">Notifications</string>
     <string name="nav_tools">Tools</string>
@@ -76,6 +75,8 @@
     <string name="common_content_available_later">Content will appear here when available.</string>
     <string name="common_something_went_wrong">Something went wrong</string>
     <string name="common_try_again_later">Try again in a moment.</string>
+    <string name="common_file_picker_unavailable">No app on this device can open files.</string>
+    <string name="common_action_failed">The change could not be completed. Try again.</string>
     <string name="common_state_description">%1$s. %2$s</string>
     <string name="common_clear">Clear</string>
     <string name="common_remove">Remove</string>
@@ -365,6 +366,7 @@
     <string name="reader_bluetooth_adapter_on">On · Manage paired readers in Android settings</string>
     <string name="reader_bluetooth_adapter_off">Off · Open Android settings to turn it on</string>
     <string name="reader_bluetooth_settings_unavailable">Android Bluetooth settings could not be opened</string>
+    <string name="app_settings_unavailable">Android app settings could not be opened</string>
     <string name="reader_telephony_permission">Telephony permission</string>
     <string name="reader_copy_diagnostics">Copy redacted diagnostics</string>
     <string name="reader_copy_diagnostics_summary">Copy app, Android, backend and reader availability information</string>
@@ -503,6 +505,7 @@
     <string name="backup_protect_summary">Choose at least 10 characters. You will need this password to restore the backup.</string>
     <string name="backup_password">Backup password</string>
     <string name="backup_confirm_password">Confirm password</string>
+    <string name="backup_passwords_differ">The passwords do not match.</string>
     <string name="backup_encrypt_save">Encrypt &amp; save</string>
     <string name="backup_created">Encrypted backup created</string>
     <string name="backup_create_failed">Could not create backup</string>
@@ -675,6 +678,7 @@
     <string name="profile_icon_remove_title">Remove icon for this profile?</string>
     <string name="profile_icon_remove_summary">The shared provider icon or operator artwork will be shown instead.</string>
     <string name="profile_icon_import_failed">The selected image could not be imported. Choose a valid image no larger than 4 MB.</string>
+    <string name="profile_icon_update_failed">The icon could not be updated. Try again.</string>
     <string name="profile_class_operational">Operational</string>
     <string name="profile_class_testing">Testing</string>
     <string name="profile_class_provisioning">Provisioning</string>
@@ -686,6 +690,8 @@
     <string name="activation_error_no_qr">No QR code was found in the selected image.</string>
     <string name="activation_error_qr_read">The QR code could not be read.</string>
     <string name="activation_error_camera_permission">Camera permission is required to scan a QR code.</string>
+    <string name="activation_error_clipboard_empty">The clipboard does not contain any text.</string>
+    <string name="activation_error_download_not_started">The download could not start. Wait for other downloads to finish, then try again.</string>
     <string name="activation_scan_qr">Scan QR code</string>
     <string name="activation_entry_label">LPA:1$address$matching-id or SM-DP+ address</string>
     <string name="activation_waiting_valid">Waiting for a valid code</string>
@@ -746,6 +752,12 @@
     <string name="batch_queue_limit">Queue limit</string>
     <string name="batch_queue_limit_value">%1$d / %2$d</string>
     <string name="batch_duplicates">Duplicates</string>
+    <string name="batch_line_error">Line %1$d. %2$s</string>
+    <string name="batch_line_duplicate">Line %1$d repeats line %2$d.</string>
+    <string name="batch_error_line_too_long">This line is too long.</string>
+    <string name="batch_error_multiple_separators">Use only one | before the confirmation code.</string>
+    <string name="batch_error_activation_code_missing">Add an activation code before the |.</string>
+    <string name="batch_error_confirmation_code_missing">This profile needs a confirmation code. Add it after a |.</string>
     <string name="batch_saved_queue">Saved queue</string>
     <string name="batch_queue">Queue</string>
     <string name="batch_status_waiting">Waiting</string>
@@ -783,6 +795,7 @@
     <string name="euicc_card_name_dialog_summary">Stored locally and linked to this EID. Leave it blank to remove the name.</string>
     <string name="euicc_product">Product</string>
     <string name="euicc_eid">EID</string>
+    <string name="euicc_eid_reading">Reading…</string>
     <string name="euicc_eid_named_summary">EID · %1$s</string>
     <string name="euicc_category">eUICC category</string>
     <string name="euicc_sas_accreditation">SAS accreditation</string>
@@ -1098,4 +1111,8 @@
     <string name="phone_notifications_content_hidden">Android hid this notification’s content. The original message was not available to HyperLPA.</string>
     <string name="remote_operation_limit">The remote operation journal is full. Try again after older records expire.</string>
     <string name="remote_download_cancelled">The remote download was cancelled before it started.</string>
+    <string name="remote_relay_address_invalid">Enter an HTTPS relay address without a path or sign-in details.</string>
+    <string name="remote_relay_unreachable">The relay could not be reached. Check your connection and try again.</string>
+    <string name="remote_relay_rejected">The relay did not accept this device. Check the relay address and enrollment key.</string>
+    <string name="remote_pair_code_invalid">This pairing code is not valid or has expired. Create a new code on the other device.</string>
 </resources>

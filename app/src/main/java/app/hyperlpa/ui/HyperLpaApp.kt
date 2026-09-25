@@ -161,14 +161,14 @@ fun HyperLpaApp(
     onTestProfileReminder: () -> Unit,
     onScanQr: () -> Unit,
     bluetoothReaderState: BluetoothReaderUiState,
-    onRefreshReaders: () -> Unit,
+    onResolveReaderAccess: () -> Unit,
     onRequestBluetoothPermission: () -> Unit,
     onOpenBluetoothSettings: () -> Unit,
 ) {
     val currentState = rememberUpdatedState(state)
     val currentNotificationPermissionGranted = rememberUpdatedState(notificationPermissionGranted)
     val currentBluetoothReaderState = rememberUpdatedState(bluetoothReaderState)
-    val currentOnRefreshReaders = rememberUpdatedState(onRefreshReaders)
+    val currentOnResolveReaderAccess = rememberUpdatedState(onResolveReaderAccess)
     val currentOnRequestBluetoothPermission = rememberUpdatedState(onRequestBluetoothPermission)
     val currentOnOpenBluetoothSettings = rememberUpdatedState(onOpenBluetoothSettings)
     val rootTabBack = remember { RootTabBackState() }
@@ -237,7 +237,7 @@ fun HyperLpaApp(
                         state = currentState.value,
                         viewModel = viewModel,
                         bluetoothReaderState = currentBluetoothReaderState.value,
-                        onRefreshReaders = { currentOnRefreshReaders.value() },
+                        onResolveReaderAccess = { currentOnResolveReaderAccess.value() },
                         snackbarHostState = snackbarHostState,
                         rootTabBack = rootTabBack,
                     )
@@ -308,7 +308,10 @@ fun HyperLpaApp(
                     onValueChange = viewModel::setActivationCodeDraft,
                     onScanQr = onScanQr,
                     onSelectReader = viewModel::connectReader,
-                    onFindReaders = { currentOnRefreshReaders.value() },
+                    onFindReaders = {
+                        currentOnResolveReaderAccess.value()
+                        viewModel.refreshReaders()
+                    },
                     onContinue = viewModel::downloadProfile,
                 )
             }
@@ -394,7 +397,7 @@ fun HyperLpaApp(
                     state = currentState.value,
                     viewModel = viewModel,
                     bluetoothReaderState = currentBluetoothReaderState.value,
-                    onRefreshReaders = { currentOnRefreshReaders.value() },
+                    onResolveReaderAccess = { currentOnResolveReaderAccess.value() },
                     snackbarHostState = snackbarHostState,
                     rootTabBack = rootTabBack,
                 )
@@ -635,7 +638,7 @@ private fun MainShell(
     state: HyperLpaUiState,
     viewModel: HyperLpaViewModel,
     bluetoothReaderState: BluetoothReaderUiState,
-    onRefreshReaders: () -> Unit,
+    onResolveReaderAccess: () -> Unit,
     snackbarHostState: SnackbarHostState,
     rootTabBack: RootTabBackState,
 ) {
@@ -691,7 +694,7 @@ private fun MainShell(
                 scrollBehavior = scrollBehaviors[page],
                 outerPadding = outerPadding,
                 bluetoothReaderState = bluetoothReaderState,
-                onRefreshReaders = onRefreshReaders,
+                onResolveReaderAccess = onResolveReaderAccess,
             )
         }
     }
@@ -827,7 +830,7 @@ private fun MainTabPage(
     scrollBehavior: ScrollBehavior,
     outerPadding: PaddingValues,
     bluetoothReaderState: BluetoothReaderUiState,
-    onRefreshReaders: () -> Unit,
+    onResolveReaderAccess: () -> Unit,
 ) {
     val profilesLoading = state.isProfilesLoading
     val useStaticBackdrop = profilesLoading && tab == AppTab.PROFILES
@@ -901,13 +904,12 @@ private fun MainTabPage(
                     bluetoothReaderState = bluetoothReaderState,
                     onSearchChange = viewModel::updateSearchQuery,
                     onSelectReader = viewModel::connectReader,
-                    onRefreshReaders = onRefreshReaders,
+                    onResolveReaderAccess = onResolveReaderAccess,
                     onOpenEuiccDetails = { viewModel.navigate(AppRoute.EuiccDetails) },
                     onOpenProfile = { profile -> viewModel.navigate(AppRoute.ProfileDetails(profile.iccid)) },
                     onEnableChange = viewModel::setProfileEnabled,
                     onSetPinned = viewModel::setProfilePinned,
                     onRename = viewModel::renameProfile,
-                    onDownload = { viewModel.navigate(AppRoute.DownloadProfile) },
                     refreshPending = viewModel.profileRefreshPending,
                     onRefresh = viewModel::refreshProfiles,
                 )

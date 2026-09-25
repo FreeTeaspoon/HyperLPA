@@ -20,6 +20,7 @@ import app.hyperlpa.data.metadata.ProfileMetadataStore
 import app.hyperlpa.data.settings.AppSettings
 import app.hyperlpa.domain.model.ActivityLogEntry
 import app.hyperlpa.domain.model.DownloadRequest
+import app.hyperlpa.domain.model.DownloadRequestException
 import app.hyperlpa.domain.model.DownloadStage
 import app.hyperlpa.domain.model.EuiccInfo
 import app.hyperlpa.domain.model.LogLevel
@@ -59,6 +60,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -135,6 +137,31 @@ internal fun LpaRepositoryState.withReaderSnapshot(
     readerSnapshotPendingRefresh = true,
 )
 
+/** A reader the user chose whose session has not opened yet, and its cached card if any. */
+private data class ConnectionPreview(
+    val readerId: String,
+    val readerName: String,
+    val snapshot: ReaderSnapshot?,
+)
+
+/** Presents [preview] exactly as opening its reader will once the session starts to open. */
+private fun LpaRepositoryState.withConnectionPreview(preview: ConnectionPreview?): LpaRepositoryState {
+    if (preview == null) return this
+    val presented = when {
+        preview.snapshot != null -> withReaderSnapshot(preview.readerId, preview.snapshot)
+        selectedReaderId == preview.readerId -> this
+        else -> copy(
+            selectedReaderId = null,
+            profiles = emptyList(),
+            notifications = emptyList(),
+            euiccInfo = null,
+            discoveredSmdpAddresses = emptyList(),
+            readerSnapshotPendingRefresh = false,
+        )
+    }
+    return presented.copy(operation = LpaOperation.Connecting(preview.readerName), failure = null)
+}
+
 internal data class CachedEuiccConfiguredAddresses(
     val defaultSmdpAddress: String = "",
     val rootSmdsAddress: String = "",
@@ -207,21 +234,26 @@ class LpaRepository(
 
     internal val localState: StateFlow<LpaRepositoryState> = mutableState.asStateFlow()
     private val deviceController = MutableStateFlow<RemoteDevices?>(null)
+    // A chosen reader is shown at once, even while its session waits for a deferred card read.
+    private val connectionPreview = MutableStateFlow<ConnectionPreview?>(null)
     private val presentationState = MutableStateFlow(LpaRepositoryState())
     val state: StateFlow<LpaRepositoryState>
         get() = if (deviceController.value == null) mutableState.asStateFlow() else presentationState.asStateFlow()
     private var devicePresentationJob: Job? = null
 
     init {
-        devicePresentationJob = backgroundScope.launch { mutableState.collect { presentationState.value = it } }
+        devicePresentationJob = backgroundScope.launch {
+            combine(mutableState, connectionPreview) { local, preview -> local.withConnectionPreview(preview) }
+                .collect { presentationState.value = it }
+        }
     }
 
     internal fun attachDevices(devices: RemoteDevices) {
         deviceController.value = devices
         devicePresentationJob?.cancel()
         devicePresentationJob = backgroundScope.launch {
-            combine(mutableState, devices.view, devices.readers) { local, remote, readers ->
-                (remote?.lpa ?: local).copy(readers = local.readers + readers)
+            combine(mutableState, connectionPreview, devices.view, devices.readers) { local, preview, remote, readers ->
+                (remote?.lpa ?: local.withConnectionPreview(preview)).copy(readers = local.readers + readers)
             }.collect { presentationState.value = it }
         }
     }
@@ -317,7 +349,12 @@ class LpaRepository(
         deviceController.value?.discover()
         cancelDeferredCardFollowUp()
         operationMutex.withLock {
-            withOperation(LpaOperation.DiscoveringReaders(appContext.getString(R.string.reader_loading))) {
+            // Discovery also runs after SIM broadcasts and permission results, so it must not
+            // dismiss a failure the user has not read yet.
+            withOperation(
+                LpaOperation.DiscoveringReaders(appContext.getString(R.string.reader_loading)),
+                clearFailure = false,
+            ) {
                 discoverReadersInternal(autoConnect, includeRemoteReaders)
             }
         }
@@ -342,7 +379,7 @@ class LpaRepository(
                 null
             }
             if (selectedRemoteId != null) {
-                readerSnapshots.remove(selectedRemoteId)
+                synchronized(readerSnapshots) { readerSnapshots.remove(selectedRemoteId) }
                 closeSession()
                 mutableState.value = mutableState.value.copy(
                     selectedReaderId = null,
@@ -445,7 +482,6 @@ class LpaRepository(
             mutableState.value = mutableState.value.copy(
                 readers = endpoints.map(ReaderEndpoint::info),
                 initialized = true,
-                failure = null,
             )
 
             if (autoConnect && endpoints.isNotEmpty()) {
@@ -486,7 +522,7 @@ class LpaRepository(
                 }
                 if (!connected) {
                     closeSession()
-                    val failure = lastFailure?.toFailure(appContext)
+                    val failure = lastFailure?.toFailure(appContext, settings.developerMode)
                     mutableState.value = mutableState.value.copy(
                         selectedReaderId = null,
                         profiles = emptyList(),
@@ -513,38 +549,68 @@ class LpaRepository(
 
     suspend fun connect(readerId: String): OperationOutcome {
         val devices = deviceController.value
-        if (devices?.readers?.value?.any { it.id == readerId } == true) return devices.select(readerId)
-        cancelDeferredCardFollowUp()
-        return operationMutex.withLock {
-            val endpoint = endpointById[readerId]
-                ?: throw IllegalArgumentException(appContext.getString(R.string.failure_reader_unavailable))
-            // Present this reader before releasing a remote one, so the page never falls back to
-            // the local reader that was selected before it.
-            var presentedReconnect: Boolean? = null
-            if (devices?.isSelected == true && !withContext(ioDispatcher) {
-                    devices.deselect {
-                        presentedReconnect = presentConnectionTarget(endpoint)
-                        mutableState.value = mutableState.value.copy(
-                            operation = LpaOperation.Connecting(endpoint.info.name),
-                            failure = null,
-                        )
-                    }
-                }
-            ) return@withLock remoteOperationRunning()
-            selectedReaderTargetId = readerId
-            withOperation(LpaOperation.Connecting(endpoint.info.name)) {
-                connectInternal(endpoint, presentedReconnect = presentedReconnect)
+        if (devices?.readers?.value?.any { it.id == readerId } == true) {
+            val outcome = devices.select(readerId)
+            // A refused selection leaves the local reader presented, so show the failure there.
+            if (outcome is OperationOutcome.Failed && !devices.isSelected) {
+                mutableState.value = mutableState.value.copy(failure = outcome.failure)
             }
+            return outcome
+        }
+        cancelDeferredCardFollowUp()
+        // A deferred card read of the previous reader can hold the mutex for a second or more, so
+        // the choice is shown before waiting for it. Showing it first also means releasing a
+        // remote reader never falls back to the local reader that was selected before it.
+        val preview = mutableState.value.readers.firstOrNull { it.id == readerId }?.let { reader ->
+            ConnectionPreview(reader.id, reader.name, synchronized(readerSnapshots) { readerSnapshots[reader.id] })
+        }
+        connectionPreview.value = preview
+        try {
+            if (devices?.isSelected == true && !devices.deselect()) return remoteOperationRunning(devices)
+            return operationMutex.withLock {
+                val endpoint = endpointById[readerId]
+                    ?: throw IllegalArgumentException(appContext.getString(R.string.failure_reader_unavailable))
+                selectedReaderTargetId = readerId
+                withOperation(LpaOperation.Connecting(endpoint.info.name)) {
+                    val reconnecting = presentConnectionTarget(endpoint)
+                    if (preview != null) connectionPreview.compareAndSet(preview, null)
+                    connectInternal(endpoint, presentedReconnect = reconnecting)
+                }
+            }
+        } finally {
+            if (preview != null) connectionPreview.compareAndSet(preview, null)
         }
     }
 
-    private fun remoteOperationRunning() = OperationOutcome.Failed(OperationFailure(
-        appContext.getString(R.string.remote_title), appContext.getString(R.string.remote_operation_running)))
+    private fun remoteOperationRunning(devices: RemoteDevices): OperationOutcome {
+        val failure = OperationFailure(
+            appContext.getString(R.string.remote_title), appContext.getString(R.string.remote_operation_running))
+        // The remote reader is still presented, so the failure has to appear on its view.
+        devices.showFailure(failure)
+        return OperationOutcome.Failed(failure)
+    }
+
+    /** Shows a failure raised outside a card operation, such as an unexpected storage error. */
+    fun reportFailure(error: Throwable) {
+        val failure = error.toFailure(appContext, settings.developerMode)
+        log(LogLevel.ERROR, failure.title, failure.message)
+        val devices = deviceController.value
+        if (devices?.isSelected == true) {
+            devices.showFailure(failure)
+        } else {
+            mutableState.value = mutableState.value.copy(failure = failure)
+        }
+    }
 
     suspend fun refresh(): OperationOutcome =
         remoteOrLocal(DeviceCommand(DeviceAction.REFRESH)) { refreshLocal() }
 
     private suspend fun refreshLocal(): OperationOutcome {
+        if (mutableState.value.selectedReader == null) {
+            // Without a reader there is no card to read, so a pull looks for readers instead.
+            discoverReaders(autoConnect = true, includeRemoteReaders = true)
+            return OperationOutcome.Success
+        }
         // A manual refresh is serialized with a pending profile-switch follow-up. Do not cancel
         // that follow-up here, or pulling to refresh immediately after switching can prevent the
         // automatic notification delivery from ever running.
@@ -830,7 +896,10 @@ class LpaRepository(
     ): BoundProfileDownloadResult {
         val devices = deviceController.value
         if (devices?.isSelected == true) {
-            if (expectedAffinity == null || devices.affinity() != expectedAffinity) return BoundProfileDownloadResult.ReaderMismatch
+            if (expectedAffinity == null || devices.affinity() != expectedAffinity) {
+                publishReaderAffinityFailure(expectedAffinity)
+                return BoundProfileDownloadResult.ReaderMismatch
+            }
             onReady()
             return BoundProfileDownloadResult.Attempted(devices.execute(DeviceCommand(DeviceAction.DOWNLOAD,
                 download = request, confirmBeforeInstall = confirmBeforeInstall), expectedAffinity))
@@ -1367,7 +1436,7 @@ class LpaRepository(
             // was selected before it.
             return operationMutex.withLock {
                 val released = withContext(ioDispatcher) { devices.deselect(::clearSelectedReaderLocked) }
-                if (released) OperationOutcome.Success else remoteOperationRunning()
+                if (released) OperationOutcome.Success else remoteOperationRunning(devices)
             }
         }
         cancelProfileDownload()
@@ -1402,7 +1471,7 @@ class LpaRepository(
         selectedReaderTargetId = null
         closeSession()
         endpointById.clear()
-        readerSnapshots.clear()
+        synchronized(readerSnapshots) { readerSnapshots.clear() }
         mutableState.value = mutableState.value.copy(
             readers = emptyList(),
             selectedReaderId = null,
@@ -1514,7 +1583,7 @@ class LpaRepository(
         ) {
             cacheReaderSnapshot(stateBeforeConnection.selectedReaderId, stateBeforeConnection)
         }
-        val cachedTargetSnapshot = readerSnapshots[endpoint.info.id]
+        val cachedTargetSnapshot = synchronized(readerSnapshots) { readerSnapshots[endpoint.info.id] }
         closeSession()
         if (cachedTargetSnapshot != null) {
             // A target-bound snapshot can be shown safely while its new session is opened. It
@@ -1538,12 +1607,14 @@ class LpaRepository(
 
     private fun cacheReaderSnapshot(readerId: String, state: LpaRepositoryState) {
         val euiccInfo = state.euiccInfo ?: return
-        readerSnapshots[readerId] = ReaderSnapshot(
+        val snapshot = ReaderSnapshot(
             profiles = state.profiles,
             notifications = state.notifications,
             euiccInfo = euiccInfo,
             discoveredSmdpAddresses = state.discoveredSmdpAddresses,
         )
+        // Also read outside operationMutex, to preview a reader choice.
+        synchronized(readerSnapshots) { readerSnapshots[readerId] = snapshot }
     }
 
     /**
@@ -1579,6 +1650,8 @@ class LpaRepository(
             try {
                 if (currentReaderAffinity() != expectedAffinity) return@launch
                 refreshNotificationsSafely("reader connection")
+                // A reader switch cancels this job and waits for the mutex; stop between commands.
+                ensureActive()
                 if (
                     currentReaderAffinity() == expectedAffinity &&
                     shouldScheduleInitialNotificationDelivery(
@@ -1855,7 +1928,12 @@ class LpaRepository(
             ),
         )
         log(LogLevel.ERROR, failure.title, failure.message)
-        mutableState.value = mutableState.value.copy(failure = failure)
+        val devices = deviceController.value
+        if (devices?.isSelected == true) {
+            devices.showFailure(failure)
+        } else {
+            mutableState.value = mutableState.value.copy(failure = failure)
+        }
     }
 
     private suspend fun verifyProfileSwitchState(
@@ -2177,6 +2255,8 @@ class LpaRepository(
         var changed = false
         val notifications = readValidatedNotifications(assistant)
         notifications.forEach { notification ->
+            // A cancelled background delivery leaves the remaining notifications for later.
+            currentCoroutineContext().ensureActive()
             val mapped = mapNotification(notification).withCapturedPayload(assistant)
             val sent = try {
                 assistant.handleNotification(notification.seqNumber)
@@ -2394,9 +2474,13 @@ class LpaRepository(
 
     private suspend fun withOperation(
         operation: LpaOperation,
+        clearFailure: Boolean = true,
         block: suspend () -> Unit,
     ): OperationOutcome {
-        mutableState.value = mutableState.value.copy(operation = operation, failure = null)
+        mutableState.value = mutableState.value.copy(
+            operation = operation,
+            failure = if (clearFailure) null else mutableState.value.failure,
+        )
         val operationName = operation.logName()
         log(LogLevel.INFO, "LPA", "$operationName started")
         try {
@@ -2405,7 +2489,7 @@ class LpaRepository(
             return OperationOutcome.Success
         } catch (error: Throwable) {
             if (error is CancellationException) throw error
-            val failure = error.toFailure(appContext)
+            val failure = error.toFailure(appContext, settings.developerMode)
             // Server-provided download errors have been observed to echo request
             // fields. Keep detailed diagnostics volatile in the operation UI, but
             // never copy them into the activity log/support-report pipeline.
@@ -2752,13 +2836,12 @@ private class OutcomeUnverifiedException(
     cause: Throwable? = null,
 ) : IllegalStateException(message, cause)
 
-private fun Throwable.toFailure(context: Context): OperationFailure {
+private fun Throwable.toFailure(context: Context, includeStackTrace: Boolean): OperationFailure {
     val root = generateSequence(this) { it.cause }.last()
     return when (this) {
         is OutcomeUnverifiedException -> OperationFailure(
             title = context.getString(titleRes),
             message = message ?: context.getString(R.string.failure_download_outcome_unverified),
-            recoverable = false,
         )
         is LocalProfileAssistant.ProfileDownloadException -> OperationFailure(
             title = context.getString(R.string.failure_download_title),
@@ -2772,7 +2855,12 @@ private fun Throwable.toFailure(context: Context): OperationFailure {
                 lastApduException?.message?.let { append("Card: $it") }
             }.trim().ifEmpty { null },
         )
-        else -> if (root is SecurityException) {
+        else -> if (root is DownloadRequestException) {
+            OperationFailure(
+                title = context.getString(R.string.failure_lpa_title),
+                message = context.getString(downloadRequestErrorResource(root)),
+            )
+        } else if (root is SecurityException) {
             OperationFailure(
                 title = context.getString(R.string.failure_sim_access_title),
                 message = context.getString(R.string.failure_sim_access_message),
@@ -2782,7 +2870,7 @@ private fun Throwable.toFailure(context: Context): OperationFailure {
             OperationFailure(
                 title = context.getString(R.string.failure_lpa_title),
                 message = root.message ?: root::class.java.simpleName,
-                diagnostic = stackTraceToString(),
+                diagnostic = stackTraceToString().takeIf { includeStackTrace },
             )
         }
     }

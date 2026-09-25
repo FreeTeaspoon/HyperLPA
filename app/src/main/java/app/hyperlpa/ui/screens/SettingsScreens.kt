@@ -815,7 +815,6 @@ fun RemoteReadersScreen(
     onBack: () -> Unit,
     viewModel: HyperLpaViewModel,
 ) {
-    val showSnackbar = LocalMiuixSnackbar.current
     var showRemoteEditor by remember { mutableStateOf(false) }
     var remoteUrls by remember(settings.remoteReaderUrls) {
         mutableStateOf(settings.remoteReaderUrls.joinToString("\n"))
@@ -823,7 +822,9 @@ fun RemoteReadersScreen(
     var remoteInputTooLong by remember { mutableStateOf(false) }
     var remoteTokenEndpoint by remember { mutableStateOf<String?>(null) }
     var remoteTokenSaving by remember { mutableStateOf(false) }
+    var remoteTokenSaveFailed by remember { mutableStateOf(false) }
     var remoteUrlsSaving by remember { mutableStateOf(false) }
+    var remoteUrlsSaveFailed by remember { mutableStateOf(false) }
     val remoteSaveFailedMessage = stringResource(R.string.reader_remote_save_failed)
     val tokenInvalidMessage = stringResource(R.string.reader_remote_credential_invalid)
     val remoteUrlEntries = remember(remoteUrls) {
@@ -868,6 +869,7 @@ fun RemoteReadersScreen(
                         summary = remoteReaderSummary(settings.remoteReaderUrls),
                         onClick = {
                             remoteInputTooLong = false
+                            remoteUrlsSaveFailed = false
                             showRemoteEditor = true
                         },
                     )
@@ -886,7 +888,10 @@ fun RemoteReadersScreen(
                             } else {
                                 stringResource(R.string.reader_remote_credential_none)
                             },
-                            onClick = { remoteTokenEndpoint = endpoint },
+                            onClick = {
+                                remoteTokenSaveFailed = false
+                                remoteTokenEndpoint = endpoint
+                            },
                         )
                     }
                 }
@@ -902,8 +907,9 @@ fun RemoteReadersScreen(
         onValueChange = { value ->
             remoteInputTooLong = value.length > MaximumRemoteReaderEditorCharacters
             if (!remoteInputTooLong) remoteUrls = value
+            remoteUrlsSaveFailed = false
         },
-        error = remoteEditorError,
+        error = remoteEditorError ?: remoteSaveFailedMessage.takeIf { remoteUrlsSaveFailed },
         confirmEnabled = remoteEditorError == null && !remoteUrlsSaving,
         onDismiss = {
             if (!remoteUrlsSaving) {
@@ -914,6 +920,7 @@ fun RemoteReadersScreen(
         onConfirm = {
             if (!remoteUrlsSaving && remoteEditorError == null) {
                 remoteUrlsSaving = true
+                remoteUrlsSaveFailed = false
                 viewModel.setRemoteReaderUrls(
                     remoteUrlEntries,
                 ) { success ->
@@ -922,7 +929,7 @@ fun RemoteReadersScreen(
                         remoteInputTooLong = false
                         showRemoteEditor = false
                     } else {
-                        showSnackbar(remoteSaveFailedMessage, SnackbarDuration.Short)
+                        remoteUrlsSaveFailed = true
                     }
                 }
             }
@@ -946,17 +953,19 @@ fun RemoteReadersScreen(
         visualTransformation = PasswordVisualTransformation(),
         inputFilter = { value -> value.filterNot { it == '\r' || it == '\n' } },
         validate = { value -> tokenInvalidMessage.takeUnless { isValidRemoteReaderToken(value) } },
+        error = remoteSaveFailedMessage.takeIf { remoteTokenSaveFailed },
         onDismiss = { if (!remoteTokenSaving) remoteTokenEndpoint = null },
         onConfirm = { token ->
             val endpoint = remoteTokenEndpoint
             if (endpoint != null && !remoteTokenSaving) {
                 remoteTokenSaving = true
+                remoteTokenSaveFailed = false
                 viewModel.setRemoteReaderToken(endpoint, token) { success ->
                     remoteTokenSaving = false
                     if (success) {
                         remoteTokenEndpoint = null
                     } else {
-                        showSnackbar(remoteSaveFailedMessage, SnackbarDuration.Short)
+                        remoteTokenSaveFailed = true
                     }
                 }
             }
@@ -1343,6 +1352,7 @@ fun BackupRestoreSettingsScreen(
     val backupRestoreFailed = stringResource(R.string.backup_restore_failed)
     val backupResetComplete = stringResource(R.string.backup_reset_complete)
     val backupResetFailed = stringResource(R.string.backup_reset_failed)
+    val filePickerUnavailable = stringResource(R.string.common_file_picker_unavailable)
     val busy by viewModel.backupOperationInProgress.collectAsStateWithLifecycle()
     var showCreatePassword by rememberSaveable { mutableStateOf(false) }
     var pendingRestoreUri by rememberSaveable { mutableStateOf<String?>(null) }
@@ -1399,7 +1409,8 @@ fun BackupRestoreSettingsScreen(
                     summary = stringResource(R.string.backup_restore_summary),
                     enabled = !busy,
                     onClick = {
-                        restoreBackupLauncher.launch(arrayOf("application/json", "text/plain"))
+                        runCatching { restoreBackupLauncher.launch(arrayOf("application/json", "text/plain")) }
+                            .onFailure { showSnackbar(filePickerUnavailable, SnackbarDuration.Long) }
                     },
                 )
             }
@@ -1447,6 +1458,19 @@ fun BackupRestoreSettingsScreen(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 modifier = Modifier.fillMaxWidth(),
             )
+            // A partly typed confirmation is not a mismatch until it diverges or reaches full length.
+            val passwordsDiffer = backupPasswordConfirmation.isNotEmpty() &&
+                (!backupPassword.startsWith(backupPasswordConfirmation) ||
+                    backupPasswordConfirmation.length >= backupPassword.length) &&
+                backupPassword != backupPasswordConfirmation
+            if (passwordsDiffer) {
+                Text(
+                    text = stringResource(R.string.backup_passwords_differ),
+                    color = MiuixTheme.colorScheme.error,
+                    style = MiuixTheme.textStyles.footnote1,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
             Spacer(Modifier.height(12.dp))
             DialogActionRow(
                 confirmText = stringResource(R.string.backup_encrypt_save),

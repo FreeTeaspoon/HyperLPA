@@ -27,6 +27,8 @@ data class BatchDownloadItem(
     val address: String,
     val status: BatchDownloadStatus = BatchDownloadStatus.WAITING,
     val error: BatchDownloadError? = null,
+    /** The failure message from this session, which is never persisted. */
+    val detail: String? = null,
 )
 
 @Immutable
@@ -60,9 +62,9 @@ data class BatchDownloadUiState(
  * being mistaken for an SGP.22 activation-code field.
  */
 fun parseBatchDownloadLine(rawLine: String, defaultImei: String? = null): DownloadRequest {
-    require(rawLine.length <= MaxBatchLineLength) { "The batch line is too long" }
+    requireLine(rawLine.length <= MaxBatchLineLength, BatchLineError.LINE_TOO_LONG)
     val delimiterCount = rawLine.count { it == ConfirmationDelimiter }
-    require(delimiterCount <= 1) { "Use only one | confirmation-code separator" }
+    requireLine(delimiterCount <= 1, BatchLineError.MULTIPLE_SEPARATORS)
 
     val activationCode = rawLine.substringBefore(ConfirmationDelimiter).trim()
     val confirmationCode = if (delimiterCount == 1) {
@@ -70,18 +72,28 @@ fun parseBatchDownloadLine(rawLine: String, defaultImei: String? = null): Downlo
     } else {
         ""
     }
-    require(activationCode.isNotEmpty()) { "An activation code is required" }
-    require(confirmationCode.length <= MaxConfirmationCodeLength) {
-        "The confirmation code is too long"
-    }
+    requireLine(activationCode.isNotEmpty(), BatchLineError.ACTIVATION_CODE_MISSING)
+    requireLine(confirmationCode.length <= MaxConfirmationCodeLength, BatchLineError.CONFIRMATION_CODE_TOO_LONG)
 
     val request = DownloadRequest.parse(activationCode, defaultImei)
     if (request.confirmationCodeRequired) {
-        require(confirmationCode.isNotEmpty()) {
-            "Add the confirmation code after |"
-        }
+        requireLine(confirmationCode.isNotEmpty(), BatchLineError.CONFIRMATION_CODE_MISSING)
     }
     return if (confirmationCode.isEmpty()) request else request.withConfirmationCode(confirmationCode)
+}
+
+enum class BatchLineError {
+    LINE_TOO_LONG,
+    MULTIPLE_SEPARATORS,
+    ACTIVATION_CODE_MISSING,
+    CONFIRMATION_CODE_TOO_LONG,
+    CONFIRMATION_CODE_MISSING,
+}
+
+class BatchLineException(val reason: BatchLineError) : IllegalArgumentException(reason.name)
+
+private fun requireLine(condition: Boolean, reason: BatchLineError) {
+    if (!condition) throw BatchLineException(reason)
 }
 
 internal fun interruptInFlightItems(items: List<BatchDownloadItem>): List<BatchDownloadItem> =

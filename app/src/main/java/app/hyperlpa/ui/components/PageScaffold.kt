@@ -1,9 +1,6 @@
 package app.hyperlpa.ui.components
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
@@ -13,9 +10,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -23,7 +22,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -31,6 +29,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
@@ -65,15 +64,16 @@ fun DetailLazyScaffold(
     collapsedBarRevealStart: Dp = 0.dp,
     isRefreshing: Boolean = false,
     onRefresh: (() -> Unit)? = null,
-    emptyOverlay: (@Composable () -> Unit)? = null,
+    listState: LazyListState = rememberLazyListState(),
+    pageState: PageStateKind = PageStateKind.CONTENT,
+    pageStateContent: @Composable (PageStateKind) -> Unit = {},
     content: LazyListScope.(sidePadding: Dp) -> Unit,
 ) {
     val scrollBehavior = MiuixScrollBehavior()
-    val listState = rememberLazyListState()
     val hasBackground = background != null
     val backdrop = rememberAppBackdrop()
     val backgroundScrollOffset = remember { mutableFloatStateOf(0f) }
-    var hideEmptyDuringPull by remember { mutableStateOf(false) }
+    var hideStateDuringPull by remember { mutableStateOf(false) }
     val barRevealStart = with(LocalDensity.current) { collapsedBarRevealStart.toPx() }
     val barRevealDistance = with(LocalDensity.current) { 56.dp.toPx() }
     val collapsedBarProgress by remember(barRevealStart, barRevealDistance, hasBackground) {
@@ -268,38 +268,81 @@ fun DetailLazyScaffold(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(top = padding.calculateTopPadding() + RefreshHeaderTopGap),
                         topAppBarScrollBehavior = scrollBehavior,
-                        onPullProgress = { hideEmptyDuringPull = it > 0.01f },
+                        onPullProgress = { hideStateDuringPull = it > 0.01f },
                         content = list,
                     )
                 } else {
                     list()
                 }
-                if (emptyOverlay != null) {
-                    AnimatedVisibility(
-                        visible = onRefresh == null || (!isRefreshing && !hideEmptyDuringPull),
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(
-                                top = padding.calculateTopPadding(),
-                                bottom = padding.calculateBottomPadding(),
-                            ),
-                        enter = fadeIn(animationSpec = tween(150)),
-                        exit = fadeOut(animationSpec = tween(120)),
-                    ) {
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            emptyOverlay()
-                        }
-                    }
-                }
+                // The refresh indicator reports progress itself, so no page state competes with it.
+                val hideState = onRefresh != null && (isRefreshing || hideStateDuringPull)
+                PageStateOverlay(
+                    state = if (hideState) PageStateKind.CONTENT else pageState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(
+                            top = padding.calculateTopPadding(),
+                            bottom = padding.calculateBottomPadding(),
+                        )
+                        .horizontalCutoutPadding(),
+                    content = pageStateContent,
+                )
             }
         }
     }
 }
 
 val RefreshHeaderTopGap = 12.dp
+
+/**
+ * The list height left below the items before [itemKey], so an inline page state can center in
+ * the free space instead of taking a full viewport below the content. Zero once the content
+ * above already fills the viewport.
+ */
+@Composable
+fun rememberRemainingListHeight(listState: LazyListState, itemKey: Any): State<Int> =
+    remember(listState, itemKey) {
+        derivedStateOf {
+            val layoutInfo = listState.layoutInfo
+            val items = layoutInfo.visibleItemsInfo
+            val itemIndex = items.indexOfFirst { it.key == itemKey }
+            // Offsets are only complete while the first item is still on screen.
+            if (itemIndex < 0 || items.first().index != 0) return@derivedStateOf 0
+            val occupied = (0 until itemIndex).sumOf { items[it].size + layoutInfo.mainAxisItemSpacing }
+            layoutInfo.viewportSize.height - layoutInfo.beforeContentPadding -
+                layoutInfo.afterContentPadding - occupied
+        }
+    }
+
+fun Modifier.fillRemainingHeight(remainingHeight: State<Int>): Modifier = layout { measurable, constraints ->
+    val minHeight = remainingHeight.value.coerceIn(0, constraints.maxHeight)
+    val placeable = measurable.measure(constraints.copy(minHeight = minHeight))
+    layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+}
+
+/**
+ * A page state below other list content. The item fades in as it appears but leaves at once,
+ * because the content replacing it appears at once too and must not overlap it. [content]
+ * receives a modifier that stretches the state over the height left under that content.
+ */
+fun LazyListScope.inlinePageStateItem(
+    key: Any,
+    listState: LazyListState,
+    content: @Composable (fillModifier: Modifier) -> Unit,
+) {
+    item(key = key) {
+        val remainingHeight = rememberRemainingListHeight(listState, key)
+        Box(
+            modifier = Modifier.animateItem(
+                fadeInSpec = tween(PageStateFadeInMillis),
+                placementSpec = null,
+                fadeOutSpec = null,
+            ),
+        ) {
+            content(Modifier.fillRemainingHeight(remainingHeight))
+        }
+    }
+}
 
 private data class ListViewportSnapshot(
     val isScrollInProgress: Boolean,

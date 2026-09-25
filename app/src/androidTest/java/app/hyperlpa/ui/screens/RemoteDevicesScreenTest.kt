@@ -60,8 +60,8 @@ class RemoteDevicesScreenTest {
                 Scaffold { padding ->
                     ProfilesScreen(state = state, contentPadding = padding, scrollBehavior = MiuixScrollBehavior(),
                         bluetoothReaderState = BluetoothReaderUiState(false, false, false, false), onSearchChange = {}, onSelectReader = { selected = it },
-                        onRefreshReaders = {}, onOpenEuiccDetails = {}, onOpenProfile = {}, onEnableChange = { _, _ -> },
-                        onSetPinned = { _, _ -> }, onRename = { _, _ -> }, onDownload = {}, onRefresh = {})
+                        onResolveReaderAccess = {}, onOpenEuiccDetails = {}, onOpenProfile = {}, onEnableChange = { _, _ -> },
+                        onSetPinned = { _, _ -> }, onRename = { _, _ -> }, onRefresh = {})
                 }
             }
         }

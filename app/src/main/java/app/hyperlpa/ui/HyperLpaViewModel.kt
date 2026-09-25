@@ -292,7 +292,6 @@ class HyperLpaViewModel(
         val remote = (values[15] as DeviceSnapshot?).takeIf { lpa.selectedReader?.deviceId != null }
         val metadata = remote?.metadata ?: values[5] as Map<String, ProfileMetadata>
         val refreshToken = values[7] as Int
-        val cloudData = values[8] as CloudProfileData
         val previewCloudData = values[9] as DownloadPreviewCloudData
         val requestedSwitch = values[14] as ProfileSwitchRequest?
         val expectedCloudInput = CloudInputs(
@@ -303,6 +302,17 @@ class HyperLpaViewModel(
             metadata = metadata,
             refreshToken = refreshToken,
         )
+        val expectedEnrichmentKey = expectedCloudInput.enrichmentKey
+        // A card shown again, as after a reader switch, uses its cached cloud data in the same
+        // update as its profiles, so its operator icons never arrive a frame after the list.
+        val cloudData = (values[8] as CloudProfileData).let { current ->
+            val sourceKey = expectedEnrichmentKey.copy(refreshToken = 0)
+            current.takeIf { it.input?.enrichmentKey == expectedEnrichmentKey }
+                ?: cachedCloudProfileData(sourceKey)
+                    ?.takeIf { suppressedCloudProfileSource != sourceKey }
+                    ?.copy(input = expectedCloudInput)
+                ?: current
+        }
         HyperLpaUiState(
             settingsLoaded = true,
             settings = settings,
@@ -325,7 +335,7 @@ class HyperLpaViewModel(
             requestedProfileSwitchEnabled = requestedSwitch?.enabled ?: false,
             profileEnrichmentReady = lpa.profiles.isEmpty() ||
                 (!settings.loadOperatorIcons && !settings.estimateProfileSize) ||
-                cloudData.input?.enrichmentKey == expectedCloudInput.enrichmentKey,
+                cloudData.input?.enrichmentKey == expectedEnrichmentKey,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HyperLpaUiState())
 
@@ -690,9 +700,7 @@ class HyperLpaViewModel(
     }
     fun deleteProfile(iccid: String) = readerAction { repository.deleteProfile(iccid) }
     fun renameProfile(iccid: String, nickname: String) = readerAction { repository.renameProfile(iccid, nickname) }
-    fun downloadProfile(request: DownloadRequest) {
-        provisioningCoordinator.startSingleDownload(request)
-    }
+    fun downloadProfile(request: DownloadRequest): Boolean = provisioningCoordinator.startSingleDownload(request)
     fun startBatchDownload(requests: List<DownloadRequest>) {
         provisioningCoordinator.startBatchDownload(requests)
     }
@@ -1407,7 +1415,13 @@ class HyperLpaViewModel(
 
     private fun launch(block: suspend () -> Unit) {
         viewModelScope.launch {
-            dataMutationMutex.withLock { block() }
+            try {
+                dataMutationMutex.withLock { block() }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                repository.reportFailure(error)
+            }
         }
     }
 
@@ -1724,5 +1738,5 @@ private fun InputStream.readTextLimited(maxBytes: Int): String {
 private const val MaxBackupBytes = 48 * 1024 * 1024
 private const val MaxUiOperatorIconBytes = 8L * 1024 * 1024
 private const val MaxUiOperatorIconEntries = 32
-private const val MaxCloudProfileSnapshots = 4
+private const val MaxCloudProfileSnapshots = 8
 private const val MaxSearchQueryCharacters = 256
