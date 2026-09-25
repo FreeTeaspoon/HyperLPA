@@ -53,7 +53,6 @@ import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -82,9 +81,12 @@ import app.hyperlpa.ui.components.GroupedCard
 import app.hyperlpa.ui.components.LoadingState
 import app.hyperlpa.ui.components.PageStateHost
 import app.hyperlpa.ui.components.PageStateKind
+import app.hyperlpa.ui.components.RefreshHeaderTopGap
 import app.hyperlpa.ui.components.ResolvedProfileArtwork
 import app.hyperlpa.ui.components.SectionHeading
 import app.hyperlpa.ui.components.DetailLazyScaffold
+import app.hyperlpa.ui.components.DialogActionRow
+import app.hyperlpa.ui.components.TextInputDialog
 import app.hyperlpa.ui.components.formatProfileDisplayName
 import app.hyperlpa.ui.components.profileCountryFlag
 import app.hyperlpa.ui.components.redactIdentifier
@@ -96,7 +98,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import kotlinx.coroutines.delay
-import top.yukonga.miuix.kmp.basic.ButtonDefaults
+import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
@@ -104,20 +106,18 @@ import top.yukonga.miuix.kmp.basic.PullToRefresh
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.extended.Add
-import top.yukonga.miuix.kmp.icon.extended.BankCards
+import top.yukonga.miuix.kmp.icon.extended.Alarm
 import top.yukonga.miuix.kmp.icon.extended.Close
-import top.yukonga.miuix.kmp.icon.extended.Delete
 import top.yukonga.miuix.kmp.icon.extended.Download
 import top.yukonga.miuix.kmp.icon.extended.File
+import top.yukonga.miuix.kmp.icon.extended.GridView
 import top.yukonga.miuix.kmp.icon.extended.Info
-import top.yukonga.miuix.kmp.icon.extended.Messages
-import top.yukonga.miuix.kmp.icon.extended.Refresh
+import top.yukonga.miuix.kmp.icon.extended.Layers
+import top.yukonga.miuix.kmp.icon.extended.Notes
 import top.yukonga.miuix.kmp.icon.extended.Search
-import top.yukonga.miuix.kmp.icon.extended.Send
+import top.yukonga.miuix.kmp.icon.extended.Tune
 import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
@@ -224,7 +224,10 @@ fun ProfilesScreen(
         isRefreshing = state.lpa.operation is LpaOperation.Refreshing,
         onRefresh = onRefresh,
         modifier = modifier,
-        contentPadding = contentPadding,
+        contentPadding = PaddingValues(
+            top = contentPadding.calculateTopPadding() + RefreshHeaderTopGap,
+            bottom = contentPadding.calculateBottomPadding(),
+        ),
         topAppBarScrollBehavior = scrollBehavior,
     ) {
         CenteredContent { sidePadding ->
@@ -262,7 +265,6 @@ fun ProfilesScreen(
                             state = state,
                             onSearchChange = onSearchChange,
                             onSelectReader = onSelectReader,
-                            onRefreshReaders = onRefreshReaders,
                             onOpenEuiccDetails = onOpenEuiccDetails,
                         )
                     }
@@ -306,7 +308,6 @@ fun ProfilesScreen(
                                 state = state,
                                 onSearchChange = onSearchChange,
                                 onSelectReader = onSelectReader,
-                                onRefreshReaders = onRefreshReaders,
                                 onOpenEuiccDetails = onOpenEuiccDetails,
                                 modifier = Modifier.onSizeChanged { headerHeight = it.height },
                             )
@@ -404,9 +405,6 @@ private fun ProfileActionsOverlay(
     var renameProfile by remember { mutableStateOf<ProfileInfo?>(null) }
     var pendingRenameProfile by remember { mutableStateOf<ProfileInfo?>(null) }
     var isClosing by remember { mutableStateOf(false) }
-    var renameValue by remember(renameProfile?.iccid) {
-        mutableStateOf(renameProfile?.nickname.orEmpty())
-    }
     val profile = profileState.value
 
     LaunchedEffect(profile?.iccid) {
@@ -482,45 +480,36 @@ private fun ProfileActionsOverlay(
         }
     }
 
-    OverlayDialog(
+    ProfileRenameDialog(
         show = renameProfile != null,
+        nickname = renameProfile?.nickname.orEmpty(),
+        onDismiss = { renameProfile = null },
+        onRename = { nickname ->
+            renameProfile?.let { selectedProfile -> onRename(selectedProfile.iccid, nickname) }
+            renameProfile = null
+        },
+    )
+}
+
+@Composable
+internal fun ProfileRenameDialog(
+    show: Boolean,
+    nickname: String,
+    onDismiss: () -> Unit,
+    onRename: (String) -> Unit,
+) {
+    TextInputDialog(
+        show = show,
         title = stringResource(R.string.profile_rename),
         summary = stringResource(R.string.profile_rename_summary),
-        onDismissRequest = { renameProfile = null },
-    ) {
-        Column {
-            TextField(
-                value = renameValue,
-                onValueChange = { renameValue = it.takeUnicodeCodePoints(64) },
-                label = stringResource(R.string.profile_name),
-                useLabelAsPlaceholder = true,
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                TextButton(
-                    text = stringResource(R.string.common_cancel),
-                    onClick = { renameProfile = null },
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(
-                    text = stringResource(R.string.profile_rename_action),
-                    onClick = {
-                        renameProfile?.let { selectedProfile ->
-                            onRename(selectedProfile.iccid, renameValue.trim())
-                        }
-                        renameProfile = null
-                    },
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        }
-    }
+        label = stringResource(R.string.profile_name),
+        initialValue = nickname,
+        confirmText = stringResource(R.string.profile_rename_action),
+        allowBlank = true,
+        inputFilter = { it.takeUnicodeCodePoints(64) },
+        onDismiss = onDismiss,
+        onConfirm = { value -> onRename(value.trim()) },
+    )
 }
 
 @Composable
@@ -528,7 +517,6 @@ private fun ProfilesHeader(
     state: HyperLpaUiState,
     onSearchChange: (String) -> Unit,
     onSelectReader: (String) -> Unit,
-    onRefreshReaders: () -> Unit,
     onOpenEuiccDetails: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -544,32 +532,25 @@ private fun ProfilesHeader(
     }
     Column(modifier = modifier.fillMaxWidth()) {
         val showEid = state.settings.showEidOnHome && state.lpa.euiccInfo != null
+        val showReaderSelector = state.settings.showReaderSelectorOnHome && state.lpa.readers.isNotEmpty()
         val cardName = state.currentEuiccName
-        if (state.settings.showReaderSelectorOnHome || showEid) {
+        if (showReaderSelector || showEid) {
             GroupedCard {
-                if (state.settings.showReaderSelectorOnHome) {
-                    if (state.lpa.readers.isEmpty()) {
-                        ArrowPreference(
-                            title = stringResource(R.string.profiles_find_readers),
-                            summary = stringResource(R.string.profiles_find_readers_summary),
-                            onClick = onRefreshReaders,
-                        )
-                    } else {
-                        val selectedIndex = state.lpa.readers.indexOfFirst {
-                            it.id == state.lpa.selectedReaderId
-                        }
-                        OverlayDropdownPreference(
-                            title = stringResource(R.string.profiles_active_reader),
-                            enabled = state.lpa.operation is LpaOperation.Idle,
-                            summary = state.lpa.selectedReader?.detail
-                                ?: stringResource(R.string.profiles_select_reader),
-                            items = state.lpa.readers.map { it.name },
-                            selectedIndex = selectedIndex,
-                            onSelectedIndexChange = { index ->
-                                state.lpa.readers.getOrNull(index)?.id?.let(onSelectReader)
-                            },
-                        )
+                if (showReaderSelector) {
+                    val selectedIndex = state.lpa.readers.indexOfFirst {
+                        it.id == state.lpa.selectedReaderId
                     }
+                    OverlayDropdownPreference(
+                        title = stringResource(R.string.profiles_active_reader),
+                        enabled = state.lpa.operation is LpaOperation.Idle,
+                        summary = state.lpa.selectedReader?.detail
+                            ?: stringResource(R.string.profiles_select_reader),
+                        items = state.lpa.readers.map { it.name },
+                        selectedIndex = selectedIndex,
+                        onSelectedIndexChange = { index ->
+                            state.lpa.readers.getOrNull(index)?.id?.let(onSelectReader)
+                        },
+                    )
                 }
                 if (showEid) {
                     val info = requireNotNull(state.lpa.euiccInfo)
@@ -737,7 +718,7 @@ private fun ProfileCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp)
-            .padding(bottom = 8.dp)
+            .padding(bottom = 6.dp)
             .defaultMinSize(minHeight = 48.dp)
             .semantics {
                 contentDescription = cardDescription
@@ -1081,17 +1062,61 @@ fun NotificationsScreen(
     }
     var selectedNotification by remember { mutableStateOf<LpaNotification?>(null) }
     var showNotificationDetails by remember { mutableStateOf(false) }
+    var showNotificationActions by remember { mutableStateOf(false) }
+    var openDetailsAfterActions by remember { mutableStateOf(false) }
+    var confirmDeleteAfterActions by remember { mutableStateOf(false) }
+    var deleteNotification by remember { mutableStateOf<LpaNotification?>(null) }
+    val openActions: (LpaNotification) -> Unit = { notification ->
+        selectedNotification = notification
+        showNotificationActions = true
+    }
 
     PullToRefresh(
         isRefreshing = state.lpa.operation is LpaOperation.Refreshing,
         onRefresh = onRefresh,
         modifier = modifier,
         contentPadding = PaddingValues(
-            top = contentPadding.calculateTopPadding(),
+            top = contentPadding.calculateTopPadding() + RefreshHeaderTopGap,
             bottom = contentPadding.calculateBottomPadding(),
         ),
         topAppBarScrollBehavior = scrollBehavior,
     ) {
+        val pageContent = MishkaPageContent {
+            if (state.lpa.selectedReader == null) {
+                item(contentType = PageStart.Viewport) {
+                    EmptyState(
+                        title = stringResource(R.string.notifications_no_reader),
+                        message = stringResource(R.string.notifications_no_reader_message),
+                        modifier = Modifier.fillParentMaxSize(),
+                    )
+                }
+            } else if (state.lpa.notifications.isEmpty()) {
+                item(contentType = PageStart.Viewport) {
+                    EmptyState(
+                        title = stringResource(R.string.notifications_none_pending),
+                        message = stringResource(R.string.notifications_none_pending_message),
+                        modifier = Modifier.fillParentMaxSize(),
+                    )
+                }
+            } else {
+                items(state.lpa.notifications, key = LpaNotification::sequenceNumber) { notification ->
+                    val profile = profilesByIccid[notification.iccid]
+                    NotificationCard(
+                        notification = notification,
+                        profileName = profile?.let {
+                            formatProfileDisplayName(
+                                it,
+                                state.settings.phoneFormatStrategy,
+                                profileFallbackName,
+                                state.settings.profileNameRedaction,
+                            ).fullText
+                        },
+                        providerName = profile?.providerName?.takeIf(String::isNotBlank),
+                        onClick = { openActions(notification) },
+                    )
+                }
+            }
+        }
         CenteredContent { sidePadding ->
             LazyColumn(
                 modifier = Modifier
@@ -1103,58 +1128,46 @@ fun NotificationsScreen(
                 contentPadding = PaddingValues(
                     start = sidePadding,
                     end = sidePadding,
-                    top = contentPadding.calculateTopPadding(),
+                    top = contentPadding.calculateTopPadding() + pageContent.topPadding,
                     bottom = contentPadding.calculateBottomPadding() + 24.dp,
                 ),
-            ) {
-                item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.notifications_pending_section)) }
-                if (state.lpa.selectedReader == null) {
-                    item(contentType = PageStart.Viewport) {
-                        EmptyState(
-                            title = stringResource(R.string.notifications_no_reader),
-                            message = stringResource(R.string.notifications_no_reader_message),
-                            modifier = Modifier.fillParentMaxSize(),
-                            icon = MiuixIcons.Messages,
-                        )
-                    }
-                } else if (state.lpa.notifications.isEmpty()) {
-                    item(contentType = PageStart.Viewport) {
-                        EmptyState(
-                            title = stringResource(R.string.notifications_none_pending),
-                            message = stringResource(R.string.notifications_none_pending_message),
-                            modifier = Modifier.fillParentMaxSize(),
-                            icon = MiuixIcons.Messages,
-                        )
-                    }
-                } else {
-                    items(state.lpa.notifications, key = LpaNotification::sequenceNumber) { notification ->
-                        val profile = profilesByIccid[notification.iccid]
-                        NotificationCard(
-                            notification = notification,
-                            profileName = profile?.let {
-                                formatProfileDisplayName(
-                                    it,
-                                    state.settings.phoneFormatStrategy,
-                                    profileFallbackName,
-                                    state.settings.profileNameRedaction,
-                                ).fullText
-                            },
-                            providerName = profile?.providerName?.takeIf(String::isNotBlank),
-                            onDetails = {
-                                selectedNotification = notification
-                                showNotificationDetails = true
-                            },
-                            onProcess = onProcess,
-                            onDelete = onDelete,
-                        )
-                    }
-                }
-            }
+                content = pageContent.content,
+            )
         }
     }
 
     selectedNotification?.let { notification ->
         val profile = profilesByIccid[notification.iccid]
+        NotificationActionsSheet(
+            show = showNotificationActions,
+            onSend = {
+                showNotificationActions = false
+                onProcess(notification.sequenceNumber)
+            },
+            onViewDetails = {
+                openDetailsAfterActions = true
+                showNotificationActions = false
+            },
+            onDelete = {
+                confirmDeleteAfterActions = true
+                showNotificationActions = false
+            },
+            onDismissRequest = { showNotificationActions = false },
+            onDismissFinished = {
+                when {
+                    openDetailsAfterActions -> {
+                        openDetailsAfterActions = false
+                        showNotificationDetails = true
+                    }
+                    confirmDeleteAfterActions -> {
+                        confirmDeleteAfterActions = false
+                        deleteNotification = notification
+                        selectedNotification = null
+                    }
+                    else -> selectedNotification = null
+                }
+            },
+        )
         NotificationDetailsSheet(
             notification = notification,
             profile = profile,
@@ -1172,6 +1185,60 @@ fun NotificationsScreen(
             onDismissFinished = { selectedNotification = null },
         )
     }
+
+    OverlayDialog(
+        show = deleteNotification != null,
+        title = stringResource(R.string.notifications_delete_title),
+        summary = stringResource(R.string.notifications_delete_summary),
+        onDismissRequest = { deleteNotification = null },
+    ) {
+        DialogActionRow(
+            onCancel = { deleteNotification = null },
+            confirmText = stringResource(R.string.notifications_option_delete),
+            destructive = true,
+            onConfirm = {
+                deleteNotification?.let { onDelete(it.sequenceNumber) }
+                deleteNotification = null
+            },
+        )
+    }
+}
+
+@Composable
+private fun NotificationActionsSheet(
+    show: Boolean,
+    onSend: () -> Unit,
+    onViewDetails: () -> Unit,
+    onDelete: () -> Unit,
+    onDismissRequest: () -> Unit,
+    onDismissFinished: () -> Unit,
+) {
+    OverlayBottomSheet(
+        show = show,
+        title = stringResource(R.string.notifications_options_title),
+        onDismissRequest = onDismissRequest,
+        onDismissFinished = onDismissFinished,
+    ) {
+        Column {
+            ArrowPreference(
+                title = stringResource(R.string.notifications_option_send),
+                summary = stringResource(R.string.notifications_option_send_summary),
+                onClick = onSend,
+            )
+            ArrowPreference(
+                title = stringResource(R.string.notification_history_option_details),
+                summary = stringResource(R.string.notifications_option_details_summary),
+                onClick = onViewDetails,
+            )
+            ArrowPreference(
+                title = stringResource(R.string.notifications_option_delete),
+                summary = stringResource(R.string.notifications_option_delete_summary),
+                titleColor = BasicComponentDefaults.titleColor(color = MiuixTheme.colorScheme.error),
+                onClick = onDelete,
+            )
+            ProfileActionSheetFooterSpacer()
+        }
+    }
 }
 
 @Composable
@@ -1187,6 +1254,13 @@ fun NotificationHistoryScreen(
     var openDetailsAfterActions by remember { mutableStateOf(false) }
     var deleteHistoryEntry by remember { mutableStateOf<NotificationHistoryEntry?>(null) }
     var showDeleteConfirmation by remember { mutableStateOf(false) }
+    val historyItems = remember(state.notificationHistory) {
+        val seen = HashMap<Long, Int>()
+        state.notificationHistory.asReversed().map { entry ->
+            val occurrence = seen.merge(entry.timestampEpochMillis, 1, Int::plus)
+            "${entry.timestampEpochMillis}:$occurrence" to entry
+        }
+    }
 
     DetailLazyScaffold(
         title = stringResource(R.string.notification_history_title),
@@ -1198,25 +1272,10 @@ fun NotificationHistoryScreen(
                     title = stringResource(R.string.notification_history_empty),
                     message = stringResource(R.string.notification_history_empty_message),
                     modifier = Modifier.fillParentMaxSize(),
-                    icon = MiuixIcons.Messages,
                 )
             }
         } else {
-            item {
-                GroupedCard {
-                    Text(
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
-                        text = pluralStringResource(
-                            R.plurals.notification_history_saved_count,
-                            state.notificationHistory.size,
-                            state.notificationHistory.size,
-                        ),
-                        style = MiuixTheme.textStyles.body2,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    )
-                }
-            }
-            items(state.notificationHistory.asReversed()) { entry ->
+            items(historyItems, key = { it.first }) { (_, entry) ->
                 NotificationHistoryCard(
                     entry = entry,
                     onClick = {
@@ -1276,32 +1335,20 @@ fun NotificationHistoryScreen(
             deleteHistoryEntry = null
         },
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            TextButton(
-                text = stringResource(R.string.common_cancel),
-                onClick = {
-                    showDeleteConfirmation = false
-                    deleteHistoryEntry = null
-                },
-                modifier = Modifier.weight(1f),
-            )
-            TextButton(
-                text = stringResource(R.string.notification_history_delete_action),
-                onClick = {
-                    deleteHistoryEntry?.let(onDeleteHistoryEntry)
-                    showDeleteConfirmation = false
-                    deleteHistoryEntry = null
-                    selectedHistoryEntry = null
-                },
-                colors = ButtonDefaults.textButtonColors(
-                    textColor = MiuixTheme.colorScheme.error,
-                ),
-                modifier = Modifier.weight(1f),
-            )
-        }
+        DialogActionRow(
+            onCancel = {
+                showDeleteConfirmation = false
+                deleteHistoryEntry = null
+            },
+            confirmText = stringResource(R.string.notification_history_delete_action),
+            destructive = true,
+            onConfirm = {
+                deleteHistoryEntry?.let(onDeleteHistoryEntry)
+                showDeleteConfirmation = false
+                deleteHistoryEntry = null
+                selectedHistoryEntry = null
+            },
+        )
     }
 }
 
@@ -1322,73 +1369,66 @@ private fun NotificationHistoryCard(
     } else {
         MiuixTheme.colorScheme.primary
     }
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp)
-            .padding(bottom = 8.dp),
-        insideMargin = PaddingValues(16.dp),
-        pressFeedbackType = PressFeedbackType.Sink,
-        onClick = onClick,
-        onLongPress = onLongPress,
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+    GroupedCard(onClick = onClick, onLongPress = onLongPress) {
+        Column(Modifier.padding(16.dp)) {
             Row(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = actionLabel,
+                        fontSize = MiuixTheme.textStyles.headline1.fontSize,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = operationLabel,
+                        style = MiuixTheme.textStyles.subtitle,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantActions,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Text(
+                    text = statusLabel,
+                    style = MiuixTheme.textStyles.subtitle,
+                    color = statusColor,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(start = 12.dp),
+                )
+            }
+
+            Spacer(Modifier.height(4.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = actionLabel,
-                    fontSize = MiuixTheme.textStyles.headline1.fontSize,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = operationLabel,
-                    style = MiuixTheme.textStyles.subtitle,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantActions,
-                    fontWeight = FontWeight.Medium,
+                    text = profileLabel,
+                    style = MiuixTheme.textStyles.body1,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+                Text(
+                    text = timestamp,
+                    style = MiuixTheme.textStyles.body1,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    modifier = Modifier.padding(start = 12.dp),
+                )
             }
-            Text(
-                text = statusLabel,
-                style = MiuixTheme.textStyles.subtitle,
-                color = statusColor,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(start = 12.dp),
-            )
-        }
-
-        Spacer(Modifier.height(4.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = profileLabel,
-                style = MiuixTheme.textStyles.body1,
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                text = timestamp,
-                style = MiuixTheme.textStyles.body1,
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                modifier = Modifier.padding(start = 12.dp),
-            )
         }
     }
 }
@@ -1398,45 +1438,28 @@ private fun NotificationCard(
     notification: LpaNotification,
     profileName: String?,
     providerName: String?,
-    onDetails: () -> Unit,
-    onProcess: (Long) -> Unit,
-    onDelete: (Long) -> Unit,
+    onClick: () -> Unit,
 ) {
     val operationLabel = notification.operation.localizedLabel()
     val address = notification.address.ifBlank {
         stringResource(R.string.notification_no_address)
     }
-    GroupedCard(onClick = onDetails) {
+    GroupedCard(onClick = onClick, onLongPress = onClick) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = profileName ?: operationLabel,
-                        style = MiuixTheme.textStyles.title3,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    if (profileName != null) {
-                        Text(
-                            text = operationLabel,
-                            style = MiuixTheme.textStyles.footnote1,
-                            color = MiuixTheme.colorScheme.onSurfaceVariantActions,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
+            Text(
+                text = profileName ?: operationLabel,
+                style = MiuixTheme.textStyles.title3,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (profileName != null) {
                 Text(
-                    text = stringResource(R.string.notifications_pending_status),
-                    style = MiuixTheme.textStyles.subtitle,
-                    color = MiuixTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(start = 12.dp),
+                    text = operationLabel,
+                    style = MiuixTheme.textStyles.footnote1,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantActions,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
             providerName?.let { provider ->
@@ -1469,24 +1492,6 @@ private fun NotificationCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
-                IconButton(
-                    onClick = { onDelete(notification.sequenceNumber) },
-                ) {
-                    Icon(
-                        imageVector = MiuixIcons.Delete,
-                        contentDescription = stringResource(R.string.common_remove),
-                        tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
-                    )
-                }
-                IconButton(
-                    onClick = { onProcess(notification.sequenceNumber) },
-                ) {
-                    Icon(
-                        imageVector = MiuixIcons.Send,
-                        contentDescription = stringResource(R.string.common_send),
-                        tint = MiuixTheme.colorScheme.primary,
-                    )
-                }
             }
         }
     }
@@ -1847,7 +1852,7 @@ fun ToolsScreen(
                 ToolPreference(
                     stringResource(R.string.tools_batch_download),
                     stringResource(R.string.tools_batch_download_summary),
-                    MiuixIcons.Add,
+                    MiuixIcons.Layers,
                 ) {
                     onNavigate(AppRoute.BatchDownload)
                 }
@@ -1867,14 +1872,14 @@ fun ToolsScreen(
                 ToolPreference(
                     stringResource(R.string.tools_tags_reminders),
                     stringResource(R.string.tools_tags_reminders_summary),
-                    MiuixIcons.Messages,
+                    MiuixIcons.Alarm,
                 ) {
                     onNavigate(AppRoute.TagsAndReminders)
                 }
                 ToolPreference(
                     stringResource(R.string.tools_statistics),
                     stringResource(R.string.tools_statistics_summary),
-                    MiuixIcons.Info,
+                    MiuixIcons.GridView,
                 ) {
                     onNavigate(AppRoute.Statistics)
                 }
@@ -1884,23 +1889,16 @@ fun ToolsScreen(
         item {
             GroupedCard {
                 ToolPreference(
-                    stringResource(R.string.tools_reader_diagnostics),
-                    stringResource(R.string.tools_reader_diagnostics_summary),
-                    MiuixIcons.Refresh,
-                ) {
-                    onNavigate(AppRoute.ReaderSettings)
-                }
-                ToolPreference(
                     stringResource(R.string.tools_isdr_aids),
                     stringResource(R.string.tools_isdr_aids_summary),
-                    MiuixIcons.Info,
+                    MiuixIcons.Tune,
                 ) {
                     onNavigate(AppRoute.AidManager)
                 }
                 ToolPreference(
                     stringResource(R.string.tools_activity_logs),
                     stringResource(R.string.tools_activity_logs_summary),
-                    MiuixIcons.Messages,
+                    MiuixIcons.Notes,
                 ) {
                     onNavigate(AppRoute.Logs)
                 }
@@ -1966,11 +1964,6 @@ fun SettingsScreen(
                     onClick = { onNavigate(AppRoute.NotificationSettings) },
                 )
                 ArrowPreference(
-                    title = stringResource(R.string.tools_tags_reminders),
-                    summary = stringResource(R.string.settings_tags_reminders_summary),
-                    onClick = { onNavigate(AppRoute.TagsAndReminders) },
-                )
-                ArrowPreference(
                     title = stringResource(R.string.settings_advanced_lpa),
                     summary = stringResource(R.string.settings_advanced_lpa_summary),
                     onClick = { onNavigate(AppRoute.AdvancedSettings) },
@@ -1994,11 +1987,6 @@ fun SettingsScreen(
                     title = stringResource(R.string.settings_backup_restore),
                     summary = stringResource(R.string.settings_backup_restore_summary),
                     onClick = { onNavigate(AppRoute.BackupRestoreSettings) },
-                )
-                ArrowPreference(
-                    title = stringResource(R.string.settings_logs),
-                    summary = stringResource(R.string.settings_logs_summary),
-                    onClick = { onNavigate(AppRoute.Logs) },
                 )
                 ArrowPreference(
                     title = stringResource(R.string.settings_about),

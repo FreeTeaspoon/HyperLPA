@@ -1,12 +1,9 @@
 package app.hyperlpa.ui
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.EaseInOut
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.MutatePriority
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -66,6 +63,7 @@ import app.hyperlpa.domain.model.ProfileState
 import app.hyperlpa.ui.adaptive.AdaptiveTopAppBar
 import app.hyperlpa.ui.adaptive.rememberIsWideWindow
 import app.hyperlpa.ui.components.BlurredBar
+import app.hyperlpa.ui.components.DialogActionRow
 import app.hyperlpa.ui.components.appBackdropBlur
 import app.hyperlpa.ui.components.liquid.NzbLiquidGlassNavigationBar
 import app.hyperlpa.ui.components.rememberAppBackdrop
@@ -92,6 +90,7 @@ import app.hyperlpa.ui.screens.ProfileDetailsScreen
 import app.hyperlpa.ui.screens.ProfileDisplaySettingsScreen
 import app.hyperlpa.ui.screens.ProfilesScreen
 import app.hyperlpa.ui.screens.ReaderSettingsScreen
+import app.hyperlpa.ui.screens.RemoteReadersScreen
 import app.hyperlpa.ui.screens.ScheduledRemindersScreen
 import app.hyperlpa.ui.screens.SettingsScreen
 import app.hyperlpa.ui.screens.StatisticsScreen
@@ -100,7 +99,6 @@ import app.hyperlpa.ui.screens.TagsAndRemindersScreen
 import app.hyperlpa.ui.screens.ToolsScreen
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.job
@@ -126,7 +124,6 @@ import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.blur.highlight.Highlight
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.extended.Back
 import top.yukonga.miuix.kmp.icon.extended.BankCards
 import top.yukonga.miuix.kmp.icon.extended.Download
 import top.yukonga.miuix.kmp.icon.extended.Messages
@@ -462,11 +459,19 @@ fun HyperLpaApp(
                     onBack = viewModel::navigateBack,
                     viewModel = viewModel,
                     bluetoothReaderState = currentBluetoothReaderState.value,
-                    onDiscoverReaders = { currentOnRefreshReaders.value() },
+                    onRefreshReaders = { viewModel.refreshReaders().join() },
                     onRequestBluetoothPermission = {
                         currentOnRequestBluetoothPermission.value()
                     },
                     onOpenBluetoothSettings = { currentOnOpenBluetoothSettings.value() },
+                    onOpenRemoteReaders = { viewModel.navigate(AppRoute.RemoteReaders) },
+                )
+            }
+            entry<AppRoute.RemoteReaders>(swipeDismiss = swipeBackDirection) {
+                RemoteReadersScreen(
+                    settings = currentState.value.settings,
+                    onBack = viewModel::navigateBack,
+                    viewModel = viewModel,
                 )
             }
             entry<AppRoute.CompatibilityWizard>(swipeDismiss = swipeBackDirection) {
@@ -571,13 +576,6 @@ fun HyperLpaApp(
                     profiles = currentState.value.profiles,
                     onBack = viewModel::navigateBack,
                     onOpen = { profile -> viewModel.navigate(AppRoute.ProfileDetails(profile.iccid)) },
-                    onClear = { profile ->
-                        viewModel.setProfileReminder(
-                            profile.iccid,
-                            profile.nickname.ifBlank { profile.name },
-                            null,
-                        )
-                    },
                 )
             }
             entry<AppRoute.Statistics>(swipeDismiss = swipeBackDirection) {
@@ -1013,25 +1011,12 @@ private fun LastEnabledProfileDisableDialog(
         summary = stringResource(app.hyperlpa.R.string.last_profile_disable_summary),
         onDismissRequest = onCancel,
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TextButton(
-                text = stringResource(app.hyperlpa.R.string.common_cancel),
-                onClick = onCancel,
-                modifier = Modifier.weight(1f),
-            )
-            TextButton(
-                text = stringResource(app.hyperlpa.R.string.last_profile_disable_action),
-                onClick = onConfirm,
-                colors = ButtonDefaults.textButtonColors(
-                    textColor = MiuixTheme.colorScheme.error,
-                ),
-                modifier = Modifier.weight(1f),
-            )
-        }
+        DialogActionRow(
+            onCancel = onCancel,
+            confirmText = stringResource(app.hyperlpa.R.string.last_profile_disable_action),
+            destructive = true,
+            onConfirm = onConfirm,
+        )
     }
 }
 

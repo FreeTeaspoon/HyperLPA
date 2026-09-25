@@ -257,7 +257,7 @@ fun DetailLazyScaffold(
                         isRefreshing = isRefreshing,
                         onRefresh = onRefresh,
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(top = padding.calculateTopPadding()),
+                        contentPadding = PaddingValues(top = padding.calculateTopPadding() + RefreshHeaderTopGap),
                         topAppBarScrollBehavior = scrollBehavior,
                         content = list,
                     )
@@ -268,6 +268,8 @@ fun DetailLazyScaffold(
         }
     }
 }
+
+val RefreshHeaderTopGap = 12.dp
 
 private data class ListViewportSnapshot(
     val isScrollInProgress: Boolean,

@@ -1529,6 +1529,7 @@ private fun NavKey?.toPersistedRoute(): String? = when (val route = this as? App
     AppRoute.BatchDownload -> "batch"
     AppRoute.EuiccDetails -> "euicc"
     AppRoute.ReaderSettings -> "readers"
+    AppRoute.RemoteReaders -> "remote-readers"
     AppRoute.RemoteDevices -> "remote-devices"
     AppRoute.PhoneNotificationSettings -> "phone-notification-settings"
     is AppRoute.PhoneNotificationHistory -> "phone-notifications:${route.deviceId}"
@@ -1562,6 +1563,7 @@ private fun String?.toAppRoute(): AppRoute? = when {
         "batch" -> AppRoute.BatchDownload
         "euicc" -> AppRoute.EuiccDetails
         "readers" -> AppRoute.ReaderSettings
+        "remote-readers" -> AppRoute.RemoteReaders
         "remote-devices" -> AppRoute.RemoteDevices
         "phone-notification-settings" -> AppRoute.PhoneNotificationSettings
         "notifications" -> AppRoute.NotificationSettings

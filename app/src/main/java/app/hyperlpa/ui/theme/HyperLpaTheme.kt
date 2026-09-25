@@ -4,17 +4,19 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.os.Build
+import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Density
-import androidx.core.view.WindowCompat
 import app.hyperlpa.data.settings.AppSettings
 import app.hyperlpa.data.settings.normalizedInterfaceScale
 import app.hyperlpa.data.settings.ThemeAccent
@@ -102,14 +104,18 @@ fun HyperLpaTheme(
 private fun SystemBarsEffect(isDark: Boolean) {
     val view = LocalView.current
     if (view.isInEditMode) return
-    SideEffect {
-        val activity = view.context.findActivity() ?: return@SideEffect
-        val controller = WindowCompat.getInsetsController(activity.window, view)
-        controller.isAppearanceLightStatusBars = !isDark
-        controller.isAppearanceLightNavigationBars = !isDark
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            activity.window.isNavigationBarContrastEnforced = false
+    DisposableEffect(isDark) {
+        (view.context.findActivity() as? ComponentActivity)?.let { activity ->
+            val barStyle = SystemBarStyle.auto(
+                android.graphics.Color.TRANSPARENT,
+                android.graphics.Color.TRANSPARENT,
+            ) { isDark }
+            activity.enableEdgeToEdge(statusBarStyle = barStyle, navigationBarStyle = barStyle)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                activity.window.isNavigationBarContrastEnforced = false
+            }
         }
+        onDispose {}
     }
 }
 

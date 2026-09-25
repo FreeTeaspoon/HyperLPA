@@ -5,7 +5,6 @@ import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -15,17 +14,14 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.InputTransformation
 import androidx.compose.foundation.text.input.TextFieldLineLimits
@@ -37,6 +33,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -53,6 +50,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -101,8 +99,13 @@ import app.hyperlpa.ui.components.BlurredBar
 import app.hyperlpa.ui.components.TipCard
 import app.hyperlpa.ui.components.rememberAppBackdrop
 import app.hyperlpa.ui.components.redactIdentifier
+import app.hyperlpa.ui.components.DialogActionRow
+import app.hyperlpa.ui.components.PrimaryPageButton
+import app.hyperlpa.ui.components.TextInputDialog
+import app.hyperlpa.ui.components.ValuePreference
 import app.hyperlpa.ui.navigation.AppRoute
-import top.yukonga.miuix.kmp.basic.ButtonDefaults
+import top.yukonga.miuix.kmp.basic.BasicComponent
+import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
@@ -111,12 +114,14 @@ import top.yukonga.miuix.kmp.basic.Slider
 import top.yukonga.miuix.kmp.basic.SliderDefaults
 import top.yukonga.miuix.kmp.basic.SnackbarDuration
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.blur.isRuntimeShaderSupported
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Back
+import top.yukonga.miuix.kmp.icon.basic.Check
+import top.yukonga.miuix.kmp.icon.extended.Copy
+import top.yukonga.miuix.kmp.icon.extended.Reset
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
@@ -126,6 +131,7 @@ import top.yukonga.miuix.kmp.utils.overScrollVertical
 import top.yukonga.miuix.kmp.utils.scrollEndHaptic
 import top.yukonga.miuix.kmp.window.WindowDialog
 import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 import java.time.LocalDate
 
 @Composable
@@ -371,33 +377,22 @@ fun AppearanceSettingsScreen(
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(12.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            TextButton(
-                text = stringResource(R.string.common_cancel),
-                onClick = { showDensityDialog = false },
-                modifier = Modifier.weight(1f),
-            )
-            TextButton(
-                text = stringResource(R.string.common_confirm),
-                onClick = {
-                    val percent = densityTextState.text.toString().toIntOrNull()
-                        ?.coerceIn(
-                            (MIN_INTERFACE_SCALE * 100f).roundToInt(),
-                            (MAX_INTERFACE_SCALE * 100f).roundToInt(),
-                        )
-                        ?: densityDraft.roundToInt()
-                    densityDraft = percent.toFloat()
-                    haptic.performHapticFeedback(HapticFeedbackType.Confirm)
-                    viewModel.setDensityScale(percent / 100f)
-                    showDensityDialog = false
-                },
-                colors = ButtonDefaults.textButtonColorsPrimary(),
-                modifier = Modifier.weight(1f),
-            )
-        }
+        DialogActionRow(
+            onCancel = { showDensityDialog = false },
+            confirmText = stringResource(R.string.common_save),
+            onConfirm = {
+                val percent = densityTextState.text.toString().toIntOrNull()
+                    ?.coerceIn(
+                        (MIN_INTERFACE_SCALE * 100f).roundToInt(),
+                        (MAX_INTERFACE_SCALE * 100f).roundToInt(),
+                    )
+                    ?: densityDraft.roundToInt()
+                densityDraft = percent.toFloat()
+                haptic.performHapticFeedback(HapticFeedbackType.Confirm)
+                viewModel.setDensityScale(percent / 100f)
+                showDensityDialog = false
+            },
+        )
     }
 }
 
@@ -552,41 +547,19 @@ fun ReaderSettingsScreen(
     onBack: () -> Unit,
     viewModel: HyperLpaViewModel,
     bluetoothReaderState: BluetoothReaderUiState,
-    onDiscoverReaders: () -> Unit,
+    onRefreshReaders: suspend () -> Unit,
     onRequestBluetoothPermission: () -> Unit,
     onOpenBluetoothSettings: () -> Unit,
+    onOpenRemoteReaders: () -> Unit,
 ) {
     val context = LocalContext.current
     val showSnackbar = LocalMiuixSnackbar.current
-    var showRemoteEditor by remember { mutableStateOf(false) }
-    var remoteUrls by remember(state.settings.remoteReaderUrls) {
-        mutableStateOf(state.settings.remoteReaderUrls.joinToString("\n"))
-    }
-    var remoteInputTooLong by remember { mutableStateOf(false) }
-    var remoteTokenEndpoint by remember { mutableStateOf<String?>(null) }
-    var remoteTokenDraft by remember { mutableStateOf("") }
-    var remoteTokenSaving by remember { mutableStateOf(false) }
-    var remoteUrlsSaving by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    var refreshing by remember { mutableStateOf(false) }
     val diagnosticsClipboardLabel = stringResource(R.string.reader_diagnostics_clipboard_label)
     val diagnosticsCopiedMessage = stringResource(R.string.reader_diagnostics_copied)
-    val remoteSaveFailedMessage = stringResource(R.string.reader_remote_save_failed)
     val bluetoothAvailability = bluetoothReaderState.availability
     val usesNearbyDevicesPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-    val discoverSummary = when (bluetoothAvailability) {
-        BluetoothReaderAvailability.PERMISSION_REQUIRED -> stringResource(
-            if (usesNearbyDevicesPermission) {
-                R.string.reader_discover_permission_required_summary
-            } else {
-                R.string.reader_discover_location_required_summary
-            },
-        )
-        BluetoothReaderAvailability.BLUETOOTH_OFF -> stringResource(
-            R.string.reader_discover_bluetooth_off_summary,
-        )
-        else -> stringResource(R.string.reader_discover_now_summary)
-    }
-    // The Activity refreshes every backend and handles any BLE remediation separately.
-    val discoverAction = onDiscoverReaders
     val bluetoothBackendSummary = when (bluetoothAvailability) {
         BluetoothReaderAvailability.UNSUPPORTED -> stringResource(R.string.reader_bluetooth_unsupported_summary)
         BluetoothReaderAvailability.PERMISSION_REQUIRED -> stringResource(
@@ -599,34 +572,19 @@ fun ReaderSettingsScreen(
         BluetoothReaderAvailability.BLUETOOTH_OFF -> stringResource(R.string.reader_bluetooth_off_summary)
         else -> stringResource(R.string.reader_bluetooth_summary)
     }
-    val remoteUrlEntries = remember(remoteUrls) {
-        remoteUrls.lineSequence()
-            .map(String::trim)
-            .filter(String::isNotEmpty)
-            .take(MaximumRemoteReaderEndpoints + 1)
-            .toList()
-    }
-    val remoteValidationError = remember(remoteUrlEntries) {
-        runCatching { validateRemoteReaderSettings(remoteUrlEntries) }
-            .exceptionOrNull() as? RemoteReaderSettingsValidationException
-    }
-    val remoteEditorError = when {
-        remoteInputTooLong -> stringResource(R.string.reader_remote_input_too_long)
-        remoteValidationError?.reason == RemoteReaderSettingsValidationError.TOO_MANY -> stringResource(
-            R.string.reader_remote_too_many_endpoints,
-            MaximumRemoteReaderEndpoints,
-        )
-        remoteValidationError?.reason == RemoteReaderSettingsValidationError.INVALID_ENDPOINT -> stringResource(
-            R.string.reader_remote_invalid_endpoint_line,
-            remoteValidationError.lineNumber ?: 1,
-        )
-        remoteValidationError?.reason == RemoteReaderSettingsValidationError.DUPLICATE_ENDPOINT -> stringResource(
-            R.string.reader_remote_duplicate_endpoint_line,
-            remoteValidationError.lineNumber ?: 1,
-        )
-        else -> null
-    }
-    DetailLazyScaffold(title = stringResource(R.string.reader_settings_title), onBack = onBack) { _ ->
+    DetailLazyScaffold(
+        title = stringResource(R.string.reader_settings_title),
+        onBack = onBack,
+        isRefreshing = refreshing,
+        onRefresh = {
+            if (!refreshing) {
+                refreshing = true
+                scope.launch {
+                    try { onRefreshReaders() } finally { refreshing = false }
+                }
+            }
+        },
+    ) { _ ->
         item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.reader_settings_behaviour)) }
         item {
             GroupedCard {
@@ -635,11 +593,6 @@ fun ReaderSettingsScreen(
                     onCheckedChange = viewModel::setAutoLoadProfiles,
                     title = stringResource(R.string.reader_connect_automatically),
                     summary = stringResource(R.string.reader_connect_automatically_summary),
-                )
-                ArrowPreference(
-                    title = stringResource(R.string.reader_discover_now),
-                    summary = discoverSummary,
-                    onClick = discoverAction,
                 )
                 if (state.lpa.selectedReader != null) {
                     ArrowPreference(
@@ -680,10 +633,9 @@ fun ReaderSettingsScreen(
                         summary = stringResource(R.string.reader_telephony_summary),
                     )
                 } else {
-                    ArrowPreference(
+                    ValuePreference(
                         title = stringResource(R.string.reader_telephony_title),
-                        summary = stringResource(R.string.reader_telephony_unavailable_summary),
-                        enabled = false,
+                        value = stringResource(R.string.reader_telephony_unavailable_summary),
                     )
                 }
                 SwitchPreference(
@@ -694,101 +646,97 @@ fun ReaderSettingsScreen(
                     // Keep a restored, unsupported checked state switchable so it can be disabled.
                     enabled = bluetoothReaderState.supported || state.settings.enableBle,
                 )
-                SwitchPreference(
-                    checked = state.settings.enableRemote,
-                    onCheckedChange = viewModel::setEnableRemote,
-                    title = stringResource(R.string.reader_remote_title),
-                    summary = stringResource(R.string.reader_remote_summary),
-                )
                 ArrowPreference(
-                    title = stringResource(R.string.reader_remote_addresses),
-                    summary = remoteReaderSummary(state.settings.remoteReaderUrls),
-                    enabled = state.settings.enableRemote,
-                    onClick = {
-                        remoteInputTooLong = false
-                        showRemoteEditor = true
+                    title = stringResource(R.string.reader_remote_title),
+                    summary = if (state.settings.enableRemote) {
+                        remoteReaderSummary(state.settings.remoteReaderUrls)
+                    } else {
+                        stringResource(R.string.common_off)
                     },
+                    onClick = onOpenRemoteReaders,
                 )
-                if (state.settings.enableRemote) {
-                    state.settings.remoteReaderUrls.forEach { endpoint ->
-                        ArrowPreference(
-                            title = endpoint.toUri().host ?: endpoint,
-                            summary = if (state.settings.remoteReaderTokens.containsKey(endpoint)) {
-                                stringResource(R.string.reader_remote_credential_stored)
-                            } else {
-                                stringResource(R.string.reader_remote_credential_none)
-                            },
-                            onClick = {
-                                remoteTokenDraft = ""
-                                remoteTokenEndpoint = endpoint
-                            },
-                        )
-                    }
-                }
             }
         }
 
         item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.reader_diagnostics_section)) }
         item {
             GroupedCard {
-                ArrowPreference(
+                ValuePreference(
                     title = "HyperLPA",
-                    summary = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
-                    enabled = false,
+                    value = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
                 )
-                ArrowPreference(
+                ValuePreference(
                     title = "Android",
-                    summary = stringResource(
+                    value = stringResource(
                         R.string.reader_diagnostics_android_version,
                         Build.VERSION.RELEASE,
                         Build.VERSION.SDK_INT,
                     ),
-                    enabled = false,
                 )
-                ArrowPreference(
+                ValuePreference(
                     title = stringResource(R.string.reader_omapi_title),
-                    summary = if (context.packageManager.hasSystemFeature("android.hardware.se.omapi")) {
+                    value = if (context.packageManager.hasSystemFeature("android.hardware.se.omapi")) {
                         stringResource(R.string.reader_omapi_advertised)
                     } else {
                         stringResource(R.string.reader_omapi_not_advertised)
                     },
-                    enabled = false,
                 )
-                ArrowPreference(
-                    title = stringResource(R.string.reader_bluetooth_permission),
-                    summary = stringResource(
-                        if (bluetoothReaderState.permissionGranted) {
-                            R.string.common_granted
-                        } else {
-                            R.string.common_not_granted
-                        },
-                    ),
-                    enabled = state.settings.enableBle &&
-                        bluetoothReaderState.supported &&
-                        !bluetoothReaderState.permissionGranted,
-                    onClick = onRequestBluetoothPermission,
-                )
-                ArrowPreference(
-                    title = stringResource(R.string.reader_bluetooth_adapter),
-                    summary = when {
-                        !bluetoothReaderState.supported -> stringResource(R.string.reader_bluetooth_unsupported)
-                        !bluetoothReaderState.permissionGranted -> stringResource(
-                            R.string.reader_bluetooth_adapter_permission_required,
-                        )
-                        bluetoothReaderState.adapterEnabled -> stringResource(R.string.reader_bluetooth_adapter_on)
-                        else -> stringResource(R.string.reader_bluetooth_adapter_off)
+                val bluetoothPermissionSummary = stringResource(
+                    if (bluetoothReaderState.permissionGranted) {
+                        R.string.common_granted
+                    } else {
+                        R.string.common_not_granted
                     },
-                    enabled = bluetoothReaderState.supported && bluetoothReaderState.permissionGranted,
-                    onClick = onOpenBluetoothSettings,
                 )
-                ArrowPreference(
+                if (state.settings.enableBle &&
+                    bluetoothReaderState.supported &&
+                    !bluetoothReaderState.permissionGranted
+                ) {
+                    ArrowPreference(
+                        title = stringResource(R.string.reader_bluetooth_permission),
+                        summary = bluetoothPermissionSummary,
+                        onClick = onRequestBluetoothPermission,
+                    )
+                } else {
+                    ValuePreference(
+                        title = stringResource(R.string.reader_bluetooth_permission),
+                        value = bluetoothPermissionSummary,
+                    )
+                }
+                val bluetoothAdapterSummary = when {
+                    !bluetoothReaderState.supported -> stringResource(R.string.reader_bluetooth_unsupported)
+                    !bluetoothReaderState.permissionGranted -> stringResource(
+                        R.string.reader_bluetooth_adapter_permission_required,
+                    )
+                    bluetoothReaderState.adapterEnabled -> stringResource(R.string.reader_bluetooth_adapter_on)
+                    else -> stringResource(R.string.reader_bluetooth_adapter_off)
+                }
+                if (bluetoothReaderState.supported && bluetoothReaderState.permissionGranted) {
+                    ArrowPreference(
+                        title = stringResource(R.string.reader_bluetooth_adapter),
+                        summary = bluetoothAdapterSummary,
+                        onClick = onOpenBluetoothSettings,
+                    )
+                } else {
+                    ValuePreference(
+                        title = stringResource(R.string.reader_bluetooth_adapter),
+                        value = bluetoothAdapterSummary,
+                    )
+                }
+                ValuePreference(
                     title = stringResource(R.string.reader_telephony_permission),
-                    summary = privilegedTelephonyStatus(context),
-                    enabled = false,
+                    value = privilegedTelephonyStatus(context),
                 )
-                ArrowPreference(
+                BasicComponent(
                     title = stringResource(R.string.reader_copy_diagnostics),
                     summary = stringResource(R.string.reader_copy_diagnostics_summary),
+                    endActions = {
+                        Icon(
+                            imageVector = MiuixIcons.Copy,
+                            contentDescription = null,
+                            tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
+                        )
+                    },
                     onClick = {
                         val clipboard = context.getSystemService(ClipboardManager::class.java)
                         clipboard.setPrimaryClip(
@@ -807,55 +755,138 @@ fun ReaderSettingsScreen(
         if (state.lpa.readers.isEmpty()) {
             item {
                 GroupedCard {
-                    ArrowPreference(
-                        title = when (bluetoothAvailability) {
-                            BluetoothReaderAvailability.PERMISSION_REQUIRED -> stringResource(
-                                R.string.reader_bluetooth_permission_required_title,
-                            )
-                            BluetoothReaderAvailability.BLUETOOTH_OFF -> stringResource(
-                                R.string.reader_bluetooth_off_title,
-                            )
-                            else -> stringResource(R.string.reader_no_readers_found)
-                        },
-                        summary = when (bluetoothAvailability) {
-                            BluetoothReaderAvailability.PERMISSION_REQUIRED -> stringResource(
+                    when (bluetoothAvailability) {
+                        BluetoothReaderAvailability.PERMISSION_REQUIRED -> ArrowPreference(
+                            title = stringResource(R.string.reader_bluetooth_permission_required_title),
+                            summary = stringResource(
                                 if (usesNearbyDevicesPermission) {
                                     R.string.reader_bluetooth_permission_required_message
                                 } else {
                                     R.string.reader_bluetooth_location_required_message
                                 },
-                            )
-                            BluetoothReaderAvailability.BLUETOOTH_OFF -> stringResource(
-                                R.string.reader_bluetooth_off_message,
-                            )
-                            else -> stringResource(R.string.reader_no_readers_found_summary)
-                        },
-                        enabled = bluetoothAvailability == BluetoothReaderAvailability.PERMISSION_REQUIRED ||
-                            bluetoothAvailability == BluetoothReaderAvailability.BLUETOOTH_OFF,
-                        onClick = discoverAction,
-                    )
+                            ),
+                            onClick = onRequestBluetoothPermission,
+                        )
+                        BluetoothReaderAvailability.BLUETOOTH_OFF -> ArrowPreference(
+                            title = stringResource(R.string.reader_bluetooth_off_title),
+                            summary = stringResource(R.string.reader_bluetooth_off_message),
+                            onClick = onOpenBluetoothSettings,
+                        )
+                        else -> ValuePreference(
+                            title = stringResource(R.string.reader_no_readers_found),
+                            value = stringResource(R.string.reader_no_readers_found_summary),
+                        )
+                    }
                 }
             }
         } else {
             item {
                 GroupedCard {
                     state.lpa.readers.forEach { reader ->
-                        ArrowPreference(
+                        val selected = reader.id == state.lpa.selectedReaderId
+                        BasicComponent(
                             title = reader.name,
                             summary = listOfNotNull(
                                 stringResource(reader.kind.labelResource()),
                                 reader.detail,
                             ).joinToString(" · "),
                             endActions = {
-                                if (reader.id == state.lpa.selectedReaderId) {
-                                    Text(
-                                        text = stringResource(R.string.common_connected),
-                                        style = MiuixTheme.textStyles.body2,
-                                        color = MiuixTheme.colorScheme.primary,
+                                if (selected) {
+                                    Icon(
+                                        imageVector = MiuixIcons.Basic.Check,
+                                        contentDescription = stringResource(R.string.common_connected),
+                                        tint = MiuixTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp),
                                     )
                                 }
                             },
                             onClick = { viewModel.connectReader(reader.id) },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun RemoteReadersScreen(
+    settings: AppSettings,
+    onBack: () -> Unit,
+    viewModel: HyperLpaViewModel,
+) {
+    val showSnackbar = LocalMiuixSnackbar.current
+    var showRemoteEditor by remember { mutableStateOf(false) }
+    var remoteUrls by remember(settings.remoteReaderUrls) {
+        mutableStateOf(settings.remoteReaderUrls.joinToString("\n"))
+    }
+    var remoteInputTooLong by remember { mutableStateOf(false) }
+    var remoteTokenEndpoint by remember { mutableStateOf<String?>(null) }
+    var remoteTokenSaving by remember { mutableStateOf(false) }
+    var remoteUrlsSaving by remember { mutableStateOf(false) }
+    val remoteSaveFailedMessage = stringResource(R.string.reader_remote_save_failed)
+    val tokenInvalidMessage = stringResource(R.string.reader_remote_credential_invalid)
+    val remoteUrlEntries = remember(remoteUrls) {
+        remoteUrls.lineSequence()
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .take(MaximumRemoteReaderEndpoints + 1)
+            .toList()
+    }
+    val remoteValidationError = remember(remoteUrlEntries) {
+        runCatching { validateRemoteReaderSettings(remoteUrlEntries) }
+            .exceptionOrNull() as? RemoteReaderSettingsValidationException
+    }
+    val remoteEditorError = when {
+        remoteInputTooLong -> stringResource(R.string.reader_remote_input_too_long)
+        remoteValidationError?.reason == RemoteReaderSettingsValidationError.TOO_MANY -> stringResource(
+            R.string.reader_remote_too_many_endpoints,
+            MaximumRemoteReaderEndpoints,
+        )
+        remoteValidationError?.reason == RemoteReaderSettingsValidationError.INVALID_ENDPOINT -> stringResource(
+            R.string.reader_remote_invalid_endpoint_line,
+            remoteValidationError.lineNumber ?: 1,
+        )
+        remoteValidationError?.reason == RemoteReaderSettingsValidationError.DUPLICATE_ENDPOINT -> stringResource(
+            R.string.reader_remote_duplicate_endpoint_line,
+            remoteValidationError.lineNumber ?: 1,
+        )
+        else -> null
+    }
+    DetailLazyScaffold(title = stringResource(R.string.reader_remote_title), onBack = onBack) { _ ->
+        item {
+            GroupedCard {
+                SwitchPreference(
+                    checked = settings.enableRemote,
+                    onCheckedChange = viewModel::setEnableRemote,
+                    title = stringResource(R.string.reader_remote_enable),
+                    summary = stringResource(R.string.reader_remote_summary),
+                )
+                if (settings.enableRemote) {
+                    ArrowPreference(
+                        title = stringResource(R.string.reader_remote_addresses),
+                        summary = remoteReaderSummary(settings.remoteReaderUrls),
+                        onClick = {
+                            remoteInputTooLong = false
+                            showRemoteEditor = true
+                        },
+                    )
+                }
+            }
+        }
+        if (settings.enableRemote && settings.remoteReaderUrls.isNotEmpty()) {
+            item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.reader_remote_credentials)) }
+            item {
+                GroupedCard {
+                    settings.remoteReaderUrls.forEach { endpoint ->
+                        ArrowPreference(
+                            title = endpoint.toUri().host ?: endpoint,
+                            summary = if (settings.remoteReaderTokens.containsKey(endpoint)) {
+                                stringResource(R.string.reader_remote_credential_stored)
+                            } else {
+                                stringResource(R.string.reader_remote_credential_none)
+                            },
+                            onClick = { remoteTokenEndpoint = endpoint },
                         )
                     }
                 }
@@ -897,58 +928,40 @@ fun ReaderSettingsScreen(
             }
         },
     )
-    OverlayDialog(
+    TextInputDialog(
         show = remoteTokenEndpoint != null,
         title = stringResource(R.string.reader_remote_credential_title),
         summary = remoteTokenEndpoint?.let { endpoint ->
-            if (state.settings.remoteReaderTokens.containsKey(endpoint)) {
+            if (settings.remoteReaderTokens.containsKey(endpoint)) {
                 stringResource(R.string.reader_remote_credential_replace_summary)
             } else {
                 stringResource(R.string.reader_remote_credential_summary)
             }
         },
-        onDismissRequest = { if (!remoteTokenSaving) remoteTokenEndpoint = null },
-    ) {
-        val tokenValid = remoteTokenDraft.isEmpty() || isValidRemoteReaderToken(remoteTokenDraft)
-        TextField(
-            value = remoteTokenDraft,
-            onValueChange = { value ->
-                remoteTokenDraft = value.filterNot { it == '\r' || it == '\n' }.take(4_096)
-            },
-            label = stringResource(R.string.reader_remote_credential_label),
-            useLabelAsPlaceholder = true,
-            singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        if (!tokenValid) {
-            Text(
-                text = stringResource(R.string.reader_remote_credential_invalid),
-                style = MiuixTheme.textStyles.footnote1,
-                color = MiuixTheme.colorScheme.error,
-                modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
-            )
-        }
-        Spacer(Modifier.height(12.dp))
-        DialogButtons(
-            onDismiss = { if (!remoteTokenSaving) remoteTokenEndpoint = null },
-            confirmEnabled = tokenValid && !remoteTokenSaving,
-            onConfirm = {
-                remoteTokenEndpoint?.let { endpoint ->
-                    remoteTokenSaving = true
-                    viewModel.setRemoteReaderToken(endpoint, remoteTokenDraft) { success ->
-                        remoteTokenSaving = false
-                        if (success) {
-                            remoteTokenDraft = ""
-                            remoteTokenEndpoint = null
-                        } else {
-                            showSnackbar(remoteSaveFailedMessage, SnackbarDuration.Short)
-                        }
+        label = stringResource(R.string.reader_remote_credential_label),
+        initialValue = "",
+        maxLength = 4_096,
+        allowBlank = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+        visualTransformation = PasswordVisualTransformation(),
+        inputFilter = { value -> value.filterNot { it == '\r' || it == '\n' } },
+        validate = { value -> tokenInvalidMessage.takeUnless { isValidRemoteReaderToken(value) } },
+        onDismiss = { if (!remoteTokenSaving) remoteTokenEndpoint = null },
+        onConfirm = { token ->
+            val endpoint = remoteTokenEndpoint
+            if (endpoint != null && !remoteTokenSaving) {
+                remoteTokenSaving = true
+                viewModel.setRemoteReaderToken(endpoint, token) { success ->
+                    remoteTokenSaving = false
+                    if (success) {
+                        remoteTokenEndpoint = null
+                    } else {
+                        showSnackbar(remoteSaveFailedMessage, SnackbarDuration.Short)
                     }
                 }
-            },
-        )
-    }
+            }
+        },
+    )
 }
 
 private fun bluetoothPermissionStatus(context: android.content.Context): String =
@@ -1181,9 +1194,14 @@ fun PrivacySettingsScreen(
                     title = stringResource(R.string.privacy_profile_size),
                     summary = stringResource(R.string.privacy_profile_size_summary),
                 )
+            }
+        }
+        item {
+            GroupedCard {
                 ArrowPreference(
-                    title = stringResource(R.string.privacy_clear_cloud_caches),
+                    title = stringResource(R.string.privacy_clear_cloud_caches_title),
                     summary = stringResource(R.string.privacy_clear_cloud_caches_summary),
+                    titleColor = BasicComponentDefaults.titleColor(color = MiuixTheme.colorScheme.error),
                     onClick = { showClearCloudCachesConfirmation = true },
                 )
             }
@@ -1199,10 +1217,10 @@ fun PrivacySettingsScreen(
         summary = stringResource(R.string.privacy_clear_cloud_caches_dialog_summary),
         onDismissRequest = { showClearCloudCachesConfirmation = false },
     ) {
-        SettingsConfirmationActions(
+        DialogActionRow(
+            onCancel = { showClearCloudCachesConfirmation = false },
             confirmText = stringResource(R.string.privacy_clear_cloud_caches),
             destructive = true,
-            onCancel = { showClearCloudCachesConfirmation = false },
             onConfirm = {
                 showClearCloudCachesConfirmation = false
                 viewModel.clearCloudCaches()
@@ -1218,9 +1236,8 @@ fun AdvancedSettingsScreen(
     viewModel: HyperLpaViewModel,
 ) {
     var showMssEditor by remember { mutableStateOf(false) }
-    var mssText by remember(settings.es10xMss) { mutableStateOf(settings.es10xMss.toString()) }
     var showImeiEditor by remember { mutableStateOf(false) }
-    var imeiText by remember(settings.imei) { mutableStateOf(settings.imei) }
+    val mssOutOfRange = stringResource(R.string.advanced_mss_out_of_range)
 
     DetailLazyScaffold(title = stringResource(R.string.advanced_title), onBack = onBack) { _ ->
         item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.advanced_lpa_protocol)) }
@@ -1279,31 +1296,40 @@ fun AdvancedSettingsScreen(
         }
     }
 
-    NumberEditorDialog(
+    TextInputDialog(
         show = showMssEditor,
         title = stringResource(R.string.advanced_mss_dialog_title),
         summary = stringResource(R.string.advanced_mss_dialog_summary),
-        value = mssText,
-        onValueChange = { mssText = it.filter(Char::isDigit).take(3) },
+        initialValue = settings.es10xMss.toString(),
+        maxLength = 3,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        inputFilter = { it.filter(Char::isDigit) },
+        validate = { value -> mssOutOfRange.takeUnless { value.toIntOrNull() in MinEs10xMss..MaxEs10xMss } },
         onDismiss = { showMssEditor = false },
-        onConfirm = {
-            mssText.toIntOrNull()?.let(viewModel::setEs10xMss)
+        onConfirm = { value ->
+            value.toIntOrNull()?.let(viewModel::setEs10xMss)
             showMssEditor = false
         },
     )
-    NumberEditorDialog(
+    TextInputDialog(
         show = showImeiEditor,
         title = "IMEI",
         summary = stringResource(R.string.advanced_imei_dialog_summary),
-        value = imeiText,
-        onValueChange = { imeiText = it.filter(Char::isDigit).take(16) },
+        initialValue = settings.imei,
+        maxLength = 16,
+        allowBlank = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        inputFilter = { it.filter(Char::isDigit) },
         onDismiss = { showImeiEditor = false },
-        onConfirm = {
-            viewModel.setImei(imeiText)
+        onConfirm = { value ->
+            viewModel.setImei(value)
             showImeiEditor = false
         },
     )
 }
+
+private const val MinEs10xMss = 32
+private const val MaxEs10xMss = 255
 
 @Composable
 fun BackupRestoreSettingsScreen(
@@ -1345,7 +1371,21 @@ fun BackupRestoreSettingsScreen(
     }
 
     DetailLazyScaffold(title = stringResource(R.string.backup_title), onBack = onBack) { _ ->
-        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.backup_section)) }
+        item(contentType = PageStart.Inset) {
+            TipCard {
+                Text(
+                    text = stringResource(R.string.backup_keep_secure_summary),
+                    fontSize = 13.sp,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = stringResource(R.string.backup_esim_profiles_summary),
+                    fontSize = 13.sp,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+            }
+        }
         item {
             GroupedCard {
                 ArrowPreference(
@@ -1354,11 +1394,6 @@ fun BackupRestoreSettingsScreen(
                     enabled = !busy,
                     onClick = { showCreatePassword = true },
                 )
-            }
-        }
-        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.backup_restore_section)) }
-        item {
-            GroupedCard {
                 ArrowPreference(
                     title = stringResource(R.string.backup_restore),
                     summary = stringResource(R.string.backup_restore_summary),
@@ -1367,36 +1402,16 @@ fun BackupRestoreSettingsScreen(
                         restoreBackupLauncher.launch(arrayOf("application/json", "text/plain"))
                     },
                 )
+            }
+        }
+        item {
+            GroupedCard {
                 ArrowPreference(
                     title = stringResource(R.string.backup_reset_settings),
                     summary = stringResource(R.string.backup_reset_settings_summary),
                     enabled = !busy,
-                    titleColor = top.yukonga.miuix.kmp.basic.BasicComponentDefaults.titleColor(
-                        color = MiuixTheme.colorScheme.error,
-                    ),
+                    titleColor = BasicComponentDefaults.titleColor(color = MiuixTheme.colorScheme.error),
                     onClick = { showResetConfirmation = true },
-                )
-            }
-        }
-        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.backup_privacy_section)) }
-        item {
-            GroupedCard {
-                ArrowPreference(
-                    title = stringResource(R.string.backup_keep_secure),
-                    summary = stringResource(R.string.backup_keep_secure_summary),
-                    enabled = false,
-                    onClick = {},
-                )
-            }
-        }
-        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.backup_not_included)) }
-        item {
-            GroupedCard {
-                ArrowPreference(
-                    title = stringResource(R.string.backup_esim_profiles),
-                    summary = stringResource(R.string.backup_esim_profiles_summary),
-                    enabled = false,
-                    onClick = {},
                 )
             }
         }
@@ -1433,9 +1448,9 @@ fun BackupRestoreSettingsScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(12.dp))
-            SettingsConfirmationActions(
+            DialogActionRow(
                 confirmText = stringResource(R.string.backup_encrypt_save),
-                enabled = backupPassword.length >= 10 && backupPassword == backupPasswordConfirmation,
+                confirmEnabled = backupPassword.length >= 10 && backupPassword == backupPasswordConfirmation,
                 onCancel = {
                     showCreatePassword = false
                     backupPassword = ""
@@ -1448,7 +1463,7 @@ fun BackupRestoreSettingsScreen(
                     backupPasswordConfirmation = ""
                     if (!viewModel.prepareBackup(password)) {
                         showSnackbar(backupCreateFailed, SnackbarDuration.Short)
-                        return@SettingsConfirmationActions
+                        return@DialogActionRow
                     }
                     runCatching {
                         createBackupLauncher.launch(
@@ -1484,15 +1499,15 @@ fun BackupRestoreSettingsScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(12.dp))
-            SettingsConfirmationActions(
+            DialogActionRow(
                 confirmText = stringResource(R.string.backup_decrypt_restore),
-                enabled = restorePassword.isNotEmpty(),
+                confirmEnabled = restorePassword.isNotEmpty(),
                 onCancel = {
                     pendingRestoreUri = null
                     restorePassword = ""
                 },
                 onConfirm = {
-                    val uri = pendingRestoreUri?.toUri() ?: return@SettingsConfirmationActions
+                    val uri = pendingRestoreUri?.toUri() ?: return@DialogActionRow
                     val password = restorePassword
                     pendingRestoreUri = null
                     restorePassword = ""
@@ -1513,7 +1528,7 @@ fun BackupRestoreSettingsScreen(
         summary = stringResource(R.string.backup_reset_dialog_summary),
         onDismissRequest = { showResetConfirmation = false },
     ) {
-        SettingsConfirmationActions(
+        DialogActionRow(
             confirmText = stringResource(R.string.backup_reset_settings),
             destructive = true,
             onCancel = { showResetConfirmation = false },
@@ -1526,37 +1541,6 @@ fun BackupRestoreSettingsScreen(
                     )
                 }
             },
-        )
-    }
-}
-
-@Composable
-private fun SettingsConfirmationActions(
-    confirmText: String,
-    destructive: Boolean = false,
-    enabled: Boolean = true,
-    onCancel: () -> Unit,
-    onConfirm: () -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        TextButton(
-            text = stringResource(R.string.common_cancel),
-            onClick = onCancel,
-            modifier = Modifier.weight(1f),
-        )
-        TextButton(
-            text = confirmText,
-            onClick = onConfirm,
-            enabled = enabled,
-            colors = if (destructive) {
-                ButtonDefaults.textButtonColors(textColor = MiuixTheme.colorScheme.error)
-            } else {
-                ButtonDefaults.textButtonColorsPrimary()
-            },
-            modifier = Modifier.weight(1f),
         )
     }
 }
@@ -1597,7 +1581,18 @@ fun AidManagerScreen(
         else -> null
     }
 
-    DetailLazyScaffold(title = stringResource(R.string.aid_manager_title), onBack = onBack) { _ ->
+    DetailLazyScaffold(
+        title = stringResource(R.string.aid_manager_title),
+        onBack = onBack,
+        actions = {
+            IconButton(onClick = { text = DefaultIsdrAids.joinToString("\n") }) {
+                Icon(
+                    imageVector = MiuixIcons.Reset,
+                    contentDescription = stringResource(R.string.common_restore_defaults),
+                )
+            }
+        },
+    ) { _ ->
         item(contentType = PageStart.Inset) {
             TipCard(text = stringResource(R.string.aid_manager_summary))
         }
@@ -1631,29 +1626,15 @@ fun AidManagerScreen(
             }
         }
         item {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp)
-                    .padding(top = if (validationMessage != null) 12.dp else 0.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                TextButton(
-                    text = stringResource(R.string.common_restore_defaults),
-                    onClick = { text = DefaultIsdrAids.joinToString("\n") },
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(
-                    text = stringResource(R.string.common_save),
-                    onClick = {
-                        onSave(parsed)
-                        onBack()
-                    },
-                    enabled = validation.isSuccess && !inputTooLong,
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                    modifier = Modifier.weight(1f),
-                )
-            }
+            PrimaryPageButton(
+                text = stringResource(R.string.common_save),
+                onClick = {
+                    onSave(parsed)
+                    onBack()
+                },
+                enabled = validation.isSuccess && !inputTooLong,
+                modifier = Modifier.padding(top = if (validationMessage != null) 12.dp else 0.dp),
+            )
         }
     }
 }
@@ -1695,69 +1676,13 @@ private fun TextEditorDialog(
                 )
             }
             Spacer(Modifier.height(12.dp))
-            DialogButtons(
-                onDismiss = onDismiss,
-                onConfirm = onConfirm,
+            DialogActionRow(
+                onCancel = onDismiss,
+                confirmText = stringResource(R.string.common_save),
                 confirmEnabled = confirmEnabled,
+                onConfirm = onConfirm,
             )
         }
-    }
-}
-
-@Composable
-private fun NumberEditorDialog(
-    show: Boolean,
-    title: String,
-    summary: String,
-    value: String,
-    onValueChange: (String) -> Unit,
-    onDismiss: () -> Unit,
-    onConfirm: () -> Unit,
-) {
-    OverlayDialog(
-        show = show,
-        title = title,
-        summary = summary,
-        onDismissRequest = onDismiss,
-    ) {
-        Column {
-            TextField(
-                value = value,
-                onValueChange = onValueChange,
-                label = title,
-                useLabelAsPlaceholder = true,
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(12.dp))
-            DialogButtons(onDismiss = onDismiss, onConfirm = onConfirm)
-        }
-    }
-}
-
-@Composable
-private fun DialogButtons(
-    onDismiss: () -> Unit,
-    onConfirm: () -> Unit,
-    confirmEnabled: Boolean = true,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        TextButton(
-            text = stringResource(R.string.common_cancel),
-            onClick = onDismiss,
-            modifier = Modifier.weight(1f),
-        )
-        TextButton(
-            text = stringResource(R.string.common_confirm),
-            onClick = onConfirm,
-            enabled = confirmEnabled,
-            colors = ButtonDefaults.textButtonColorsPrimary(),
-            modifier = Modifier.weight(1f),
-        )
     }
 }
 

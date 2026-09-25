@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,6 +29,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.hyperlpa.ui.theme.LocalDarkTheme
+import top.yukonga.miuix.kmp.basic.BasicComponent
+import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
+import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
@@ -75,6 +79,46 @@ fun GroupedCard(
         onLongPress = onLongPress,
         content = content,
     )
+}
+
+@Composable
+fun ValuePreference(title: String, value: String) {
+    BasicComponent(
+        title = title,
+        summary = value,
+        titleColor = BasicComponentDefaults.titleColor(
+            disabledColor = MiuixTheme.colorScheme.onBackground,
+        ),
+        summaryColor = BasicComponentDefaults.summaryColor(
+            disabledColor = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        ),
+        enabled = false,
+    )
+}
+
+@Composable
+fun PrimaryPageButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    busy: Boolean = false,
+) {
+    Button(
+        onClick = onClick,
+        enabled = enabled && !busy,
+        colors = ButtonDefaults.buttonColorsPrimary(),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp)
+            .padding(bottom = 12.dp),
+    ) {
+        if (busy) {
+            InfiniteProgressIndicator(color = MiuixTheme.colorScheme.onPrimary)
+            Spacer(Modifier.width(10.dp))
+        }
+        Text(text = text, style = MiuixTheme.textStyles.button)
+    }
 }
 
 @Composable
@@ -189,7 +233,6 @@ fun EmptyState(
     title: String,
     message: String,
     modifier: Modifier = Modifier,
-    icon: ImageVector = MiuixIcons.Info,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
 ) {
@@ -197,7 +240,7 @@ fun EmptyState(
         title = title,
         message = message,
         modifier = modifier,
-        icon = icon,
+        icon = MiuixIcons.Info,
         iconTint = if (LocalDarkTheme.current) Color.White else Color.Black,
         showMessage = false,
         actionLabel = actionLabel,
