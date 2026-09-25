@@ -97,6 +97,7 @@ data class LpaNotification(
 @Serializable
 data class EuiccInfo(
     val eid: String,
+    val productName: String = "",
     val sgp22Version: String = "",
     val profileVersion: String = "",
     val firmwareVersion: String = "",

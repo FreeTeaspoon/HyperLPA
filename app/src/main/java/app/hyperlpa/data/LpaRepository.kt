@@ -40,6 +40,7 @@ import app.hyperlpa.lpa.LpaSession
 import app.hyperlpa.lpa.LpaSessionFactory
 import app.hyperlpa.lpa.ReaderEndpoint
 import app.hyperlpa.lpa.ReaderProvider
+import app.hyperlpa.lpa.nineEsimProductName
 import app.hyperlpa.lpa.platform.NBridgeReaderProvider
 import app.hyperlpa.lpa.platform.BluetoothLeReaderProvider
 import app.hyperlpa.lpa.platform.OmapiReaderProvider
@@ -2027,8 +2028,15 @@ class LpaRepository(
         } else {
             null
         }
+        val productName = nineEsimProductName(eid, info?.euiccFirmwareVersion)
+            ?: if (readConfiguredAddresses) {
+                active.readVendorProductName()
+            } else {
+                previousInfo?.takeIf { it.eid == eid }?.productName
+            }
         return EuiccInfo(
             eid = eid,
+            productName = productName.orEmpty(),
             sgp22Version = info?.sgp22Version?.toString().orEmpty(),
             profileVersion = info?.profileVersion?.toString().orEmpty(),
             firmwareVersion = info?.euiccFirmwareVersion?.toString().orEmpty(),

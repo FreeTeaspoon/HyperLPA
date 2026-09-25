@@ -11,6 +11,9 @@ of NekokoLPA2 (MIT), compose-miuix-ui/miuix (Apache-2.0), Mishka (GPL-3.0),
 InstallerX-Revived (GPL-3.0), OpenEUICC (GPL-3.0), and NZB Direct. No Nekoko
 mascot artwork or branding is included.
 
+The 9eSIM model table and eSTK.me product-applet query used for eUICC product
+detection are adapted from OpenEUICC under GPL-3.0.
+
 The About screen layout and animated background effect are adapted from Mishka
 under GPL-3.0.
 
