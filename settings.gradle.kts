@@ -18,14 +18,16 @@ rootProject.name = "HyperLPA"
 include(":app")
 include(":libs:lpac-jni")
 
-// Progressive blur is provided by the Miuix revision used by the demo app.
+// Miuix 0.9.4 plus pager and navigation fixes, pinned by the submodule commit.
+// Build every module from that revision to avoid mixing incompatible binaries.
 includeBuild("third_party/miuix") {
     dependencySubstitution {
-        substitute(module("top.yukonga.miuix.kmp:miuix-blur-android"))
-            .using(project(":miuix-blur"))
-        substitute(module("top.yukonga.miuix.kmp:miuix-ui"))
-            .using(project(":miuix-ui"))
-        substitute(module("top.yukonga.miuix.kmp:miuix-nav"))
-            .using(project(":miuix-nav"))
+        listOf("core", "ui", "preference", "icons", "shader", "blur", "squircle", "nav")
+            .forEach { name ->
+                substitute(module("top.yukonga.miuix.kmp:miuix-$name"))
+                    .using(project(":miuix-$name"))
+                substitute(module("top.yukonga.miuix.kmp:miuix-$name-android"))
+                    .using(project(":miuix-$name"))
+            }
     }
 }

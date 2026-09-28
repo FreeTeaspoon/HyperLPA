@@ -232,7 +232,7 @@ class HyperLpaViewModel(
     // which the repository cannot guarantee once the refresh waits for a lock or a paired device.
     var profileRefreshPending by mutableStateOf(false)
         private set
-    var startRouteResolved = false
+    var startRouteResolved by mutableStateOf(false)
         private set
     private val selectedTab = MutableStateFlow(AppTab.PROFILES)
     private val searchQuery = MutableStateFlow("")

@@ -21,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
@@ -87,9 +88,8 @@ class MainActivity : ComponentActivity() {
                 ),
             )
         }
-        splashScreen.setKeepOnScreenCondition {
-            !viewModel.state.value.settingsLoaded || !viewModel.startRouteResolved
-        }
+        var startupLayoutReady = false
+        splashScreen.setKeepOnScreenCondition { !startupLayoutReady }
 
         permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
             viewModel.completeRuntimePermissionRequest()
@@ -127,6 +127,15 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val state = viewModel.state.collectAsStateWithLifecycle().value
+            LaunchedEffect(state.settingsLoaded, viewModel.startRouteResolved) {
+                if (state.settingsLoaded && viewModel.startRouteResolved) {
+                    // The flow can be ready before the stored theme/navigation geometry has
+                    // been laid out. Let that composition and its inset traversal finish before
+                    // releasing the launch window, so the centered loader never draws mid-layout.
+                    repeat(2) { withFrameNanos { } }
+                    startupLayoutReady = true
+                }
+            }
             var firstReaderConfiguration by remember { mutableStateOf(true) }
             LaunchedEffect(
                 state.lpa.initialized,
@@ -148,8 +157,12 @@ class MainActivity : ComponentActivity() {
                     viewModel.refreshReaders()
                 }
             }
-            LaunchedEffect(state.settings.predictiveBack) {
-                if (applicationGraph.isPredictiveBackEnabled() != state.settings.predictiveBack) {
+            LaunchedEffect(state.settingsLoaded, state.settings.predictiveBack) {
+                // The initial UI state contains defaults, not the persisted preference. Applying
+                // it can recreate twice during startup and strand the launch-window handoff.
+                if (state.settingsLoaded &&
+                    applicationGraph.isPredictiveBackEnabled() != state.settings.predictiveBack
+                ) {
                     applicationGraph.setPredictiveBackEnabled(state.settings.predictiveBack)
                     recreate()
                 }
