@@ -1,10 +1,8 @@
 package app.hyperlpa.ui
 
-import androidx.compose.animation.core.EaseInOut
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.MutatePriority
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -20,6 +18,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerDefaults
+import androidx.compose.foundation.pager.PagerScope
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.selection.selectable
@@ -142,9 +142,13 @@ import top.yukonga.miuix.kmp.nav.transition.NavTransitions
 import top.yukonga.miuix.kmp.nav.transition.navGraphicsTransition
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.utils.PagerGestureNestedScrollConnection
+import top.yukonga.miuix.kmp.utils.PagerNavigationSpringSpec
+import top.yukonga.miuix.kmp.utils.pagerGestureOverride
+import top.yukonga.miuix.kmp.utils.springAnimateToPage
 
 @Stable
-private class RootTabBackState {
+internal class RootTabBackState {
     val targetPage = mutableStateOf(0)
     var onBack: () -> Unit = {}
 }
@@ -680,11 +684,9 @@ private fun MainShell(
         if (index != mainPagerState.selectedPage) mainPagerState.animateToPage(index)
     }
     val pagerContent: @Composable (Modifier, PaddingValues) -> Unit = { modifier, outerPadding ->
-        HorizontalPager(
+        MainTabPager(
             state = pagerState,
             modifier = modifier,
-            beyondViewportPageCount = 1,
-            overscrollEffect = null,
         ) { page ->
             val tab = tabs[page]
             MainTabPage(
@@ -1117,8 +1119,34 @@ private fun OperationProgressDialog(operation: LpaOperation) {
     }
 }
 
+@Composable
+internal fun MainTabPager(
+    state: PagerState,
+    modifier: Modifier = Modifier,
+    pageContent: @Composable PagerScope.(Int) -> Unit,
+) {
+    val flingBehavior = PagerDefaults.flingBehavior(
+        state = state,
+        snapAnimationSpec = PagerNavigationSpringSpec,
+    )
+    HorizontalPager(
+        state = state,
+        modifier = modifier.pagerGestureOverride(
+            pagerState = state,
+            flingBehavior = flingBehavior,
+        ),
+        // Miuix owns touch scrolling so a vertical fling cannot block a tab swipe.
+        userScrollEnabled = false,
+        flingBehavior = flingBehavior,
+        pageNestedScrollConnection = PagerGestureNestedScrollConnection,
+        beyondViewportPageCount = 1,
+        overscrollEffect = null,
+        pageContent = pageContent,
+    )
+}
+
 @Stable
-private class MainPagerState(
+internal class MainPagerState(
     val pagerState: PagerState,
     private val scope: CoroutineScope,
     private val rootTabBack: RootTabBackState,
@@ -1130,7 +1158,7 @@ private class MainPagerState(
     private var navigationJob: Job? = null
 
     fun animateToPage(target: Int) {
-        if (target == selectedPage) return
+        if (target !in 0 until pagerState.pageCount || target == selectedPage) return
         navigationJob?.cancel()
         selectedPage = target
         rootTabBack.targetPage.value = target
@@ -1138,20 +1166,7 @@ private class MainPagerState(
         navigationJob = scope.launch {
             val currentJob = coroutineContext.job
             try {
-                pagerState.scroll(MutatePriority.UserInput) {
-                    val distance = kotlin.math.abs(target - pagerState.currentPage).coerceAtLeast(2)
-                    val duration = 100 * distance + 100
-                    val pageSize = pagerState.layoutInfo.pageSize + pagerState.layoutInfo.pageSpacing
-                    val pages = target - pagerState.currentPage - pagerState.currentPageOffsetFraction
-                    val pixels = pages * pageSize
-                    var consumed = 0f
-                    animate(
-                        initialValue = 0f,
-                        targetValue = pixels,
-                        animationSpec = tween(durationMillis = duration, easing = EaseInOut),
-                    ) { value, _ -> consumed += scrollBy(value - consumed) }
-                }
-                if (pagerState.currentPage != target) pagerState.scrollToPage(target)
+                pagerState.springAnimateToPage(target)
             } finally {
                 if (navigationJob == currentJob) {
                     navigating = false

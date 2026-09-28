@@ -113,8 +113,15 @@ for a later build; this build manages paired devices from Android.
 
 ## Build from source
 
-The project uses Gradle 9.6.1, Android Gradle Plugin 9.3.1, Android SDK
+The project uses Gradle 9.7.1, Android Gradle Plugin 9.4.1, Android SDK
 Platform 37, NDK `29.0.14206865`, and Java 21.
+
+All Miuix modules build from the submodule at `2afdbb39`, based on 0.9.4
+with the subsequent pager gesture and navigation focus fixes. Tab navigation
+uses Miuix's spring animation and cross-axis pager gestures, with HyperLPA's
+coordinator retaining stable selection during rapid taps and Back navigation.
+Set `ANDROID_HOME` to your Android SDK, or set `sdk.dir` in both the root
+`local.properties` and `third_party/miuix/local.properties` for the composite build.
 
 ```shell
 git clone --recurse-submodules https://github.com/FreeTeaspoon/HyperLPA.git

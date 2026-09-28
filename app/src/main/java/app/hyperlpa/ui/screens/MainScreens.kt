@@ -45,12 +45,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -158,9 +160,8 @@ fun ProfilesScreen(
     // must not invalidate the home list while the bottom-sheet entrance animation is running.
     val profileActionsState = remember { mutableStateOf<ProfileInfo?>(null) }
     val profiles = state.profiles
-    // The view model serializes switch requests, so another profile stays tappable while the
-    // active eUICC command finishes its refresh and reconnect tail.
-    val profileSwitchLocked = state.lpa.operation is LpaOperation.Connecting
+    val profileSwitchLocked = state.lpa.operation !is LpaOperation.Idle ||
+        state.requestedProfileSwitchIccid != null
     val artworkLoadState = rememberProfileArtworkBitmaps(
         profiles = profiles,
         cloudIcons = state.operatorIcons,
@@ -215,19 +216,13 @@ fun ProfilesScreen(
     }
     // Keep the first presentation synchronized with artwork, then apply later artwork updates
     // in place without replacing the already-visible profile list with a loading state.
-    val pageState = profilesPageState(state.lpa, profiles, awaitInitialArtwork, refreshPending)
+    val pageState = profilesPageState(
+        state.lpa, profiles, awaitInitialArtwork, refreshPending,
+        awaitInitialContent = lastPageState.kind == PageStateKind.LOADING,
+    )
     SideEffect { lastPageState.kind = pageState }
-    val isRefreshing = refreshPending || state.lpa.operation is LpaOperation.Refreshing
+    val isRefreshing = refreshPending
     var hideStateDuringPull by remember { mutableStateOf(false) }
-    var headerPresented by remember { mutableStateOf(false) }
-    LaunchedEffect(pageState) {
-        if (pageState != PageStateKind.LOADING) headerPresented = true
-    }
-    // A reader switch keeps the reader selector and shows its progress below it.
-    val keepHeaderWhileLoading = headerPresented &&
-        pageState == PageStateKind.LOADING &&
-        state.lpa.readers.isNotEmpty() &&
-        (state.lpa.operation is LpaOperation.Connecting || awaitInitialArtwork)
     val stateModel = when (pageState) {
         PageStateKind.LOADING -> ProfilesStateModel(kind = PageStateKind.LOADING, title = loadingMessage)
         PageStateKind.ERROR -> ProfilesStateModel(
@@ -281,7 +276,7 @@ fun ProfilesScreen(
             onPullProgress = { hideStateDuringPull = it > 0.01f },
         ) {
             CenteredContent { sidePadding ->
-                if (pageState == PageStateKind.LOADING && !keepHeaderWhileLoading) {
+                if (pageState == PageStateKind.LOADING) {
                     // Same area as the list's state item, so loading lines up with what follows it.
                     LoadingState(
                         message = loadingMessage,
@@ -314,6 +309,7 @@ fun ProfilesScreen(
                         item(span = { GridItemSpan(maxLineSpan) }) {
                             ProfilesHeader(
                                 state = state,
+                                enabled = !profileSwitchLocked,
                                 onSearchChange = onSearchChange,
                                 onSelectReader = onSelectReader,
                                 onOpenEuiccDetails = onOpenEuiccDetails,
@@ -350,6 +346,7 @@ fun ProfilesScreen(
                         item(key = "header") {
                             ProfilesHeader(
                                 state = state,
+                                enabled = !profileSwitchLocked,
                                 onSearchChange = onSearchChange,
                                 onSelectReader = onSelectReader,
                                 onOpenEuiccDetails = onOpenEuiccDetails,
@@ -421,12 +418,18 @@ internal fun profilesPageState(
     profiles: List<ProfileInfo>,
     awaitInitialArtwork: Boolean = false,
     refreshPending: Boolean = false,
+    awaitInitialContent: Boolean = false,
 ): PageStateKind = when {
-    lpa.operation is LpaOperation.Connecting && !lpa.readerSnapshotPendingRefresh ->
+    lpa.operation is LpaOperation.Connecting && !lpa.readerSnapshotPendingRefresh &&
+        lpa.selectedReader == null ->
         PageStateKind.LOADING
     // A pull without a reader rediscovers readers; its indicator already shows that progress.
     refreshPending && lpa.operation is LpaOperation.DiscoveringReaders && lpa.profiles.isEmpty() ->
         PageStateKind.CONTENT
+    // Discovery can publish profiles before it finishes opening the reader. Keep the whole
+    // first result behind the loader until that operation finishes, including empty cards.
+    awaitInitialContent && lpa.operation !is LpaOperation.Idle &&
+        !lpa.readerSnapshotPendingRefresh -> PageStateKind.LOADING
     !lpa.initialized ||
         (lpa.operation is LpaOperation.DiscoveringReaders && lpa.profiles.isEmpty()) -> PageStateKind.LOADING
     awaitInitialArtwork && lpa.profiles.isNotEmpty() -> PageStateKind.LOADING
@@ -572,6 +575,7 @@ internal fun ProfileRenameDialog(
 @Composable
 private fun ProfilesHeader(
     state: HyperLpaUiState,
+    enabled: Boolean,
     onSearchChange: (String) -> Unit,
     onSelectReader: (String) -> Unit,
     onOpenEuiccDetails: () -> Unit,
@@ -605,7 +609,7 @@ private fun ProfilesHeader(
                     val selectedIndex = state.lpa.readers.indexOfFirst { it.id == shownReader?.id }
                     OverlayDropdownPreference(
                         title = stringResource(R.string.profiles_active_reader),
-                        enabled = state.lpa.operation is LpaOperation.Idle,
+                        enabled = enabled,
                         summary = shownReader?.detail
                             ?: stringResource(R.string.profiles_select_reader),
                         items = state.lpa.readers.map { it.name },
@@ -620,6 +624,7 @@ private fun ProfilesHeader(
                     ArrowPreference(
                         title = stringResource(R.string.euicc_eid),
                         summary = stringResource(R.string.euicc_eid_reading),
+                        enabled = false,
                     )
                 } else if (showEid && info != null) {
                     val redactedEid = redactIdentifier(
@@ -634,6 +639,7 @@ private fun ProfilesHeader(
                             stringResource(R.string.euicc_eid_named_summary, redactedEid)
                         },
                         onClick = onOpenEuiccDetails,
+                        enabled = enabled,
                     )
                 }
             }
@@ -644,6 +650,7 @@ private fun ProfilesHeader(
             Column {
                 TextField(
                     value = state.searchQuery,
+                    enabled = enabled,
                     onValueChange = { onSearchChange(it.take(MaxSearchQueryCharacters)) },
                     label = stringResource(R.string.profiles_search),
                     useLabelAsPlaceholder = true,
@@ -795,7 +802,8 @@ private fun ProfileCard(
             .defaultMinSize(minHeight = 48.dp)
             .semantics {
                 contentDescription = cardDescription
-                customActions = listOf(
+                if (!switchEnabled) disabled()
+                customActions = if (!switchEnabled) emptyList() else listOf(
                     CustomAccessibilityAction(profileActionsDescription) {
                         onLongPress()
                         true
@@ -805,11 +813,11 @@ private fun ProfileCard(
         cornerRadius = 16.dp,
         insideMargin = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
         pressFeedbackType = PressFeedbackType.Sink,
-        onClick = onOpen,
-        onLongPress = onLongPress,
+        onClick = onOpen.takeIf { switchEnabled },
+        onLongPress = onLongPress.takeIf { switchEnabled },
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().alpha(if (switchEnabled) 1f else 0.5f),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
