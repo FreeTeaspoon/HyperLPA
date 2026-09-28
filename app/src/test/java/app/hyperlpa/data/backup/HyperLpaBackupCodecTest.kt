@@ -46,6 +46,25 @@ class HyperLpaBackupCodecTest {
     }
 
     @Test
+    fun unprotectedExportCanBeImportedWithoutPassword() {
+        val encoded = encodeBackupForExport(sampleBackup, null)
+
+        assertFalse(isEncryptedBackup(encoded))
+        assertEquals(sampleBackup, decodeBackupForImport(encoded, null))
+    }
+
+    @Test
+    fun encryptedImportStillRequiresPassword() {
+        val password = "correct horse battery staple".toCharArray()
+        val encoded = encodeBackupForExport(sampleBackup, password)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            decodeBackupForImport(encoded, null)
+        }
+        assertEquals(sampleBackup, decodeBackupForImport(encoded, password))
+    }
+
+    @Test
     fun encryptedRoundTripRequiresMatchingPassword() {
         val password = "correct horse battery staple".toCharArray()
         val encrypted = encryptBackup(sampleBackup, password)

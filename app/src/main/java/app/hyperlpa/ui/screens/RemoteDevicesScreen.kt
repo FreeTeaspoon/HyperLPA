@@ -130,6 +130,10 @@ internal fun RemoteDevicesScreen(
     var dialogPeer by remember { mutableStateOf<RemotePeerUi?>(null) }
     var showPeerDialog by remember { mutableStateOf(false) }
     var removeRelay by remember { mutableStateOf(false) }
+    var editRelay by remember { mutableStateOf(false) }
+    var relayDraft by remember { mutableStateOf("") }
+    var relayEnrollment by remember { mutableStateOf("") }
+    var relayTested by remember { mutableStateOf(false) }
     val configured = state.loaded && state.relay.isNotBlank()
     LaunchedEffect(state.loaded, state.relay) {
         if (state.loaded) { address = state.relay; name = state.name; if (state.relay.isNotBlank()) enrollment = "" }
@@ -196,9 +200,16 @@ internal fun RemoteDevicesScreen(
                             checked = state.enabled,
                             onCheckedChange = devices::setEnabled,
                         )
-                        BasicComponent(
+                        ArrowPreference(
                             title = state.relay.removePrefix("https://"),
                             summary = stringResource(if (state.connected) R.string.remote_connected else R.string.remote_disconnected),
+                            onClick = {
+                                relayDraft = state.relay
+                                relayEnrollment = ""
+                                relayTested = false
+                                devices.clearError()
+                                editRelay = true
+                            },
                         )
                         ArrowPreference(
                             title = stringResource(R.string.remote_device_name),
@@ -297,6 +308,89 @@ internal fun RemoteDevicesScreen(
             editingName = false
         },
     )
+    OverlayDialog(
+        show = editRelay,
+        title = stringResource(R.string.remote_relay_address),
+        summary = stringResource(R.string.remote_relay_edit_summary),
+        onDismissRequest = {
+            editRelay = false
+            relayDraft = ""
+            relayEnrollment = ""
+            relayTested = false
+        },
+    ) {
+        Column {
+            TextField(
+                value = relayDraft,
+                onValueChange = {
+                    if (it.length <= 253) {
+                        relayDraft = it
+                        relayTested = false
+                    }
+                },
+                label = stringResource(R.string.remote_relay_address_hint),
+                useLabelAsPlaceholder = true,
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(12.dp))
+            TextField(
+                value = relayEnrollment,
+                onValueChange = { if (it.length <= 256) relayEnrollment = it },
+                label = stringResource(R.string.remote_enrollment_key),
+                useLabelAsPlaceholder = true,
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            state.error?.let { message ->
+                Text(
+                    text = message,
+                    color = MiuixTheme.colorScheme.error,
+                    style = MiuixTheme.textStyles.footnote1,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+            if (relayTested) {
+                Text(
+                    text = stringResource(R.string.remote_relay_test_success),
+                    color = OnlineColor,
+                    style = MiuixTheme.textStyles.footnote1,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            DialogActionRow(
+                onCancel = {
+                    editRelay = false
+                    relayDraft = ""
+                    relayEnrollment = ""
+                    relayTested = false
+                },
+                confirmText = stringResource(if (relayTested) R.string.remote_save_relay else R.string.remote_test_relay),
+                confirmEnabled = !state.busy && relayDraft.isNotBlank(),
+                onConfirm = {
+                    if (relayTested) {
+                        devices.setRelay(relayDraft, relayEnrollment) { success ->
+                            if (success) {
+                                editRelay = false
+                                relayDraft = ""
+                                relayEnrollment = ""
+                                relayTested = false
+                            }
+                        }
+                    } else {
+                        val testedAddress = relayDraft
+                        devices.testRelay(testedAddress) { success ->
+                            relayTested = success && editRelay && relayDraft == testedAddress
+                        }
+                    }
+                },
+            )
+        }
+    }
     TextInputDialog(
         show = enteringCode,
         title = stringResource(R.string.remote_enter_code),

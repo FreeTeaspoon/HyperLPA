@@ -12,6 +12,7 @@ import app.hyperlpa.data.metadata.ProfileMetadataStore
 import app.hyperlpa.data.settings.AppSettingsStore
 import app.hyperlpa.data.support.SupportReportBuilder
 import app.hyperlpa.provisioning.ProvisioningCoordinator
+import app.hyperlpa.ui.components.ProfileArtworkSnapshots
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -77,6 +78,7 @@ class HyperLpaApplication : Application() {
             getSharedPreferences(RuntimeUiPreferences, MODE_PRIVATE)
                 .getBoolean(PredictiveBackKey, true),
         )
+        applicationScope.launch { ProfileArtworkSnapshots.prewarm(this@HyperLpaApplication) }
         applicationScope.launch {
             // A temporarily unavailable Keystore must not prevent the app from
             // starting. The migration is idempotent and will be retried next launch.

@@ -11,13 +11,12 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -80,57 +79,70 @@ internal fun rememberProfileArtworkBitmap(
     }
 }
 
-/**
- * Resolves the artwork of a whole profile list. Artwork decoded before, for any list, is returned
- * in the first composition, so a card shown again never passes through placeholders.
- */
+/** Cached thumbnails are available in the same composition as their profile names. */
 @Composable
 internal fun rememberProfileArtworkBitmaps(
     profiles: List<ProfileInfo>,
     cloudIcons: Map<String, ByteArray>,
     enabled: Boolean,
+    readerId: String? = null,
+    cloudIconLookupEnabled: Boolean = false,
 ): ProfileArtworkLoadState {
     if (!enabled || profiles.isEmpty()) return ProfileArtworkLoadState.ReadyWithoutArtwork
     val context = LocalContext.current
-    val artworkInputs = remember(profiles, cloudIcons) {
-        profiles.map { profile -> profile.artworkInput(cloudIcons[profile.iccid]) }
-    }
-    val cachedArtwork = remember(artworkInputs) {
-        artworkInputs.mapNotNull { input -> ProfileArtworkCache.get(input)?.let { input.iccid to it } }.toMap()
-    }
-    val previousState = remember { mutableStateOf<ProfileArtworkLoadState?>(null) }
-    return key(artworkInputs) {
-        val cachedBitmaps = cachedArtwork.mapNotNull { (iccid, artwork) -> artwork.bitmap?.let { iccid to it } }.toMap()
-        val initialState = if (cachedArtwork.size == artworkInputs.size) {
-            ProfileArtworkLoadState(bitmaps = cachedBitmaps, ready = true)
-        } else {
-            // Keep the artwork a profile already shows until its replacement is decoded.
-            val carriedBitmaps = previousState.value?.bitmaps
-                ?.filterKeys { iccid -> iccid !in cachedArtwork && artworkInputs.any { it.iccid == iccid } }
-                .orEmpty()
-            ProfileArtworkLoadState(bitmaps = carriedBitmaps + cachedBitmaps, ready = false)
+    val inputs = remember(profiles, cloudIcons) {
+        profiles.associate { profile ->
+            profile.iccid to profile.artworkInput(cloudIcons[profile.iccid], ProfileThumbnailDimension)
         }
-        val loadState by produceState(initialValue = initialState) {
-            if (initialState.ready) {
-                previousState.value = initialState
-                return@produceState
-            }
-            val loaded = withContext(Dispatchers.IO) {
-                profiles.zip(artworkInputs)
-                    .filter { (_, input) -> input.iccid !in cachedArtwork }
-                    .mapNotNull { (profile, input) ->
-                        loadProfileArtworkBitmap(context, profile, cloudIcons[profile.iccid])
-                            .also { bitmap -> ProfileArtworkCache.put(input, bitmap) }
-                            ?.let { bitmap -> input.iccid to bitmap }
-                    }
-                    .toMap()
-            }
-            val readyState = ProfileArtworkLoadState(bitmaps = cachedBitmaps + loaded, ready = true)
-            previousState.value = readyState
-            value = readyState
-        }
-        loadState
     }
+    // Retain the current list independently of LRU eviction. A state change, reorder or search
+    // must not decode images that this page already owns, even for a very large card.
+    val retained = remember { RetainedProfileArtwork() }
+    return key(inputs) {
+        val carried = remember { retained.bitmaps.filterKeys(inputs::containsKey) }
+        val initial = remember {
+            profiles.mapNotNull { profile ->
+                val input = inputs.getValue(profile.iccid)
+                val useSnapshot = cloudIcons[profile.iccid] == null &&
+                    (cloudIconLookupEnabled || profile.customIconUri != null || profile.iconBase64 != null)
+                (retained.artwork[input] ?: ProfileArtworkCache.get(input)
+                    ?: ProfileArtworkSnapshots.get(readerId, profile)
+                        .takeIf { useSnapshot }?.let(::CachedProfileArtwork))
+                    ?.let { profile.iccid to it }
+            }.toMap()
+        }
+        val resolved by produceState(initialValue = initial) {
+            for (profile in profiles) {
+                if (profile.iccid in value) continue
+                val input = inputs.getValue(profile.iccid)
+                val artwork = withContext(Dispatchers.IO) {
+                    val useSnapshot = cloudIcons[profile.iccid] == null &&
+                        (cloudIconLookupEnabled || profile.customIconUri != null || profile.iconBase64 != null)
+                    ProfileArtworkCache.get(input) ?: CachedProfileArtwork(
+                        (if (useSnapshot) ProfileArtworkSnapshots.load(context, readerId, profile) else null)
+                            ?: loadProfileArtworkBitmap(context, profile, cloudIcons[profile.iccid], ProfileThumbnailDimension)
+                                ?.also { ProfileArtworkSnapshots.put(context, readerId, profile, it) },
+                    ).also { ProfileArtworkCache.put(input, it.bitmap) }
+                }
+                // Publish each result instead of waiting for every icon on the card.
+                value = value + (profile.iccid to artwork)
+            }
+        }
+        val bitmaps = inputs.keys.mapNotNull { iccid ->
+            val bitmap = if (iccid in resolved) resolved[iccid]?.bitmap else carried[iccid]
+            bitmap?.let { iccid to it }
+        }.toMap()
+        SideEffect {
+            retained.artwork = resolved.map { (iccid, artwork) -> inputs.getValue(iccid) to artwork }.toMap()
+            retained.bitmaps = bitmaps
+        }
+        ProfileArtworkLoadState(bitmaps = bitmaps, ready = resolved.size == inputs.size)
+    }
+}
+
+private class RetainedProfileArtwork {
+    var bitmaps: Map<String, Bitmap> = emptyMap()
+    var artwork: Map<ProfileArtworkInput, CachedProfileArtwork> = emptyMap()
 }
 
 internal data class ProfileArtworkLoadState(
@@ -199,22 +211,34 @@ internal fun ResolvedProfileArtwork(
 
 private const val MaxEmbeddedIconBase64Characters = 1_500_000
 private const val MaxRenderedProfileArtworkDimension = 512
+private const val ProfileThumbnailDimension = 128
 private const val ProfileArtworkCrossfadeMillis = 140
 
 private const val MaxCachedArtworkBytes = 24 * 1024 * 1024
 
 private data class ProfileArtworkInput(
-    val iccid: String,
+    val dimension: Int,
     val customIconUri: String?,
     val embeddedIcon: String?,
-    val cloudIconHash: Int?,
+    val cloudIcon: ProfileArtworkBytes?,
 )
 
-private fun ProfileInfo.artworkInput(cloudIcon: ByteArray?) = ProfileArtworkInput(
-    iccid = iccid,
+/** Hash collisions must not make different profiles share the wrong operator image. */
+private class ProfileArtworkBytes(private val bytes: ByteArray) {
+    private val hash = bytes.contentHashCode()
+    override fun hashCode(): Int = hash
+    override fun equals(other: Any?): Boolean = other is ProfileArtworkBytes &&
+        hash == other.hash && bytes.contentEquals(other.bytes)
+}
+
+private fun ProfileInfo.artworkInput(
+    cloudIcon: ByteArray?,
+    dimension: Int = MaxRenderedProfileArtworkDimension,
+) = ProfileArtworkInput(
+    dimension = dimension,
     customIconUri = customIconUri,
     embeddedIcon = iconBase64,
-    cloudIconHash = cloudIcon?.contentHashCode(),
+    cloudIcon = cloudIcon?.let(::ProfileArtworkBytes),
 )
 
 /** A decoded result, where a null [bitmap] records that the profile has no usable artwork. */
@@ -228,15 +252,20 @@ private object ProfileArtworkCache {
 
     fun get(input: ProfileArtworkInput): CachedProfileArtwork? = cached.get(input)
 
+    fun clearMemoryForTesting() = cached.evictAll()
+
     fun put(input: ProfileArtworkInput, bitmap: Bitmap?) {
         cached.put(input, CachedProfileArtwork(bitmap))
     }
 }
 
+internal fun clearProfileArtworkMemoryForTesting() = ProfileArtworkCache.clearMemoryForTesting()
+
 private fun loadProfileArtworkBitmap(
     context: android.content.Context,
     profile: ProfileInfo?,
     cloudIcon: ByteArray?,
+    dimension: Int = MaxRenderedProfileArtworkDimension,
 ): Bitmap? {
     val custom = profile?.customIconUri
         ?.let { uri -> runCatching { uri.toUri() }.getOrNull() }
@@ -247,8 +276,8 @@ private fun loadProfileArtworkBitmap(
                 ) { decoder, info, _ ->
                     decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
                     val longestEdge = maxOf(info.size.width, info.size.height)
-                    if (longestEdge > MaxRenderedProfileArtworkDimension) {
-                        val scale = MaxRenderedProfileArtworkDimension.toFloat() / longestEdge
+                    if (longestEdge > dimension) {
+                        val scale = dimension.toFloat() / longestEdge
                         decoder.setTargetSize(
                             (info.size.width * scale).toInt().coerceAtLeast(1),
                             (info.size.height * scale).toInt().coerceAtLeast(1),
@@ -262,22 +291,22 @@ private fun loadProfileArtworkBitmap(
     val embedded = profile?.iconBase64
         ?.takeIf { encoded -> encoded.length <= MaxEmbeddedIconBase64Characters }
         ?.let { encoded -> runCatching { Base64.decode(encoded, Base64.DEFAULT) }.getOrNull() }
-    val embeddedBitmap = embedded?.let(::decodeProfileBitmap)
+    val embeddedBitmap = embedded?.let { decodeProfileBitmap(it, dimension) }
     return when {
         embedded != null && embedded.size >= 2_048 && embeddedBitmap != null -> embeddedBitmap
-        cloudIcon != null -> decodeProfileBitmap(cloudIcon) ?: embeddedBitmap
+        cloudIcon != null -> decodeProfileBitmap(cloudIcon, dimension) ?: embeddedBitmap
         else -> embeddedBitmap
     }
 }
 
-private fun decodeProfileBitmap(bytes: ByteArray): Bitmap? {
+private fun decodeProfileBitmap(bytes: ByteArray, dimension: Int): Bitmap? {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
     if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
     var sampleSize = 1
     while (
-        bounds.outWidth / sampleSize > MaxRenderedProfileArtworkDimension ||
-            bounds.outHeight / sampleSize > MaxRenderedProfileArtworkDimension
+        bounds.outWidth / sampleSize > dimension ||
+            bounds.outHeight / sampleSize > dimension
     ) {
         sampleSize *= 2
     }
