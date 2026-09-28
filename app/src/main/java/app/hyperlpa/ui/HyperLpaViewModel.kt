@@ -335,7 +335,7 @@ class HyperLpaViewModel(
             requestedProfileSwitchEnabled = requestedSwitch?.enabled ?: false,
             profileEnrichmentReady = lpa.profiles.isEmpty() ||
                 (!settings.loadOperatorIcons && !settings.estimateProfileSize) ||
-                cloudData.input?.enrichmentKey == expectedEnrichmentKey,
+                (cloudData.complete && cloudData.input?.enrichmentKey == expectedEnrichmentKey),
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HyperLpaUiState())
 
@@ -405,8 +405,9 @@ class HyperLpaViewModel(
                     val refreshed = supervisorScope {
                         val icons = async {
                             if (!input.loadOperatorIcons) return@async emptyMap()
-                            val loaded = input.profiles.take(MaxUiOperatorIconEntries).map { profile ->
-                                async {
+                            var accumulated = cachedCloudProfileData(sourceKey)?.operatorIcons.orEmpty()
+                            input.profiles.take(MaxUiOperatorIconEntries).map { profile ->
+                                async<Unit> {
                                     val icon = cloudEnrichmentSemaphore.withPermit {
                                         try {
                                             cloudService.loadOperatorIcon(profile)
@@ -415,10 +416,25 @@ class HyperLpaViewModel(
                                             null
                                         }
                                     }
-                                    profile.iccid to icon
+                                    // These children resume on the ViewModel dispatcher. Keep
+                                    // cached icons while publishing each newly available result.
+                                    if (icon != null) {
+                                        accumulated = boundedOperatorIconMap(
+                                            (accumulated + (profile.iccid to icon)).toList(),
+                                        )
+                                        val partial = CloudProfileData(
+                                            input = input,
+                                            operatorIcons = accumulated,
+                                            profileSizePredictions = cachedCloudProfileData(sourceKey)
+                                                ?.profileSizePredictions.orEmpty(),
+                                            complete = false,
+                                        )
+                                        cacheCloudProfileData(sourceKey, partial)
+                                        cloudProfileData.value = partial
+                                    }
                                 }
                             }.awaitAll()
-                            boundedOperatorIconMap(loaded)
+                            accumulated
                         }
 
                         val sizes = async {
@@ -672,6 +688,9 @@ class HyperLpaViewModel(
         }
     }
     fun setProfileEnabled(iccid: String, enabled: Boolean) {
+        if (requestedProfileSwitch.value != null || dataMutationMutex.isLocked ||
+            repository.state.value.operation !is LpaOperation.Idle
+        ) return
         val profiles = state.value.profiles
         if (requiresLastEnabledProfileConfirmation(profiles, iccid, enabled)) {
             pendingProfileDisableConfirmation.value = iccid
@@ -1132,7 +1151,7 @@ class HyperLpaViewModel(
 
     @Synchronized
     fun prepareBackup(passphrase: String): Boolean {
-        if (passphrase.length !in MinBackupPasswordCharacters..MaxBackupPasswordCharacters) return false
+        if (passphrase.isNotEmpty() && passphrase.length !in MinBackupPasswordCharacters..MaxBackupPasswordCharacters) return false
         if (!_backupOperationInProgress.compareAndSet(expect = false, update = true)) return false
         pendingBackupPassword?.fill('\u0000')
         pendingBackupPassword = passphrase.toCharArray()
@@ -1163,7 +1182,7 @@ class HyperLpaViewModel(
                     repository.withExclusiveOperation {
                         withContext(Dispatchers.IO) {
                             val backup = backupManager.createBackup(
-                                passphrase = password,
+                                passphrase = password.takeIf { it.isNotEmpty() },
                             )
                             getApplication<Application>().contentResolver
                                 .openOutputStream(uri, "wt")
@@ -1214,7 +1233,7 @@ class HyperLpaViewModel(
                                 withContext(Dispatchers.IO) {
                                     backupManager.restoreBackup(
                                         rawBackup = rawBackup,
-                                        passphrase = password,
+                                        passphrase = password.takeIf { it.isNotEmpty() },
                                     )
                                 }
                             }
@@ -1672,6 +1691,7 @@ private data class CloudProfileEnrichmentKey(
 
 private data class CloudProfileData(
     val input: CloudInputs? = null,
+    val complete: Boolean = true,
     val operatorIcons: Map<String, ByteArray> = emptyMap(),
     val profileSizePredictions: Map<String, Long> = emptyMap(),
 )
@@ -1737,6 +1757,6 @@ private fun InputStream.readTextLimited(maxBytes: Int): String {
 
 private const val MaxBackupBytes = 48 * 1024 * 1024
 private const val MaxUiOperatorIconBytes = 8L * 1024 * 1024
-private const val MaxUiOperatorIconEntries = 32
+private const val MaxUiOperatorIconEntries = 256
 private const val MaxCloudProfileSnapshots = 8
 private const val MaxSearchQueryCharacters = 256

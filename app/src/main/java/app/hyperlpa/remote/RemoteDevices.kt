@@ -185,19 +185,23 @@ internal class RemoteDevices(
             notificationPeers = saved.notificationPeers) }
     }
 
-    private fun action(block: suspend () -> Unit) {
+    private fun action(onComplete: ((Boolean) -> Unit)? = null, block: suspend () -> Unit) {
         scope.launch {
             ready.await()
             actionMutex.withLock {
                 mutableUi.update { it.copy(busy = true, error = null) }
-                try { ensure(initialized, R.string.remote_storage_unavailable); block() }
+                var success = false
+                try { ensure(initialized, R.string.remote_storage_unavailable); block(); success = true }
                 catch (error: CancellationException) { throw error }
                 catch (error: Exception) {
                     // Other exception messages are English diagnostics, not text for the user.
                     val message = (error as? RemoteActionException)?.message ?: context.getString(R.string.remote_action_failed)
                     mutableUi.update { it.copy(error = message) }
                 }
-                finally { mutableUi.update { it.copy(busy = false) } }
+                finally {
+                    mutableUi.update { it.copy(busy = false) }
+                    if (onComplete != null) withContext(Dispatchers.Main) { onComplete(success) }
+                }
             }
         }
     }
@@ -229,6 +233,25 @@ internal class RemoteDevices(
         val next = config.copy(relay = relay, name = name.trim())
         relayRequest(R.string.remote_relay_rejected) { connection.register(next, enrollmentKey.trim()) }
         update { next }
+    }
+
+    /** Tests the candidate's public protocol endpoint without changing registration. */
+    fun testRelay(address: String, onComplete: (Boolean) -> Unit) = action(onComplete) {
+        val relay = runCatching { relayAddress(address) }
+            .getOrElse { throw RemoteActionException(context.getString(R.string.remote_relay_address_invalid)) }
+        relayRequest(R.string.remote_relay_test_failed) { connection.test(relay) }
+    }
+
+    fun setRelay(address: String, enrollmentKey: String, onComplete: (Boolean) -> Unit) = action(onComplete) {
+        ensure(!agent.busy && config.pending.isEmpty(), R.string.remote_operation_running)
+        val relay = runCatching { relayAddress(address) }
+            .getOrElse { throw RemoteActionException(context.getString(R.string.remote_relay_address_invalid)) }
+        if (relay == config.relay) return@action
+        ensure(enrollmentKey.isNotBlank(), R.string.remote_enrollment_key_required)
+        val next = config.copy(relay = relay, invitation = null)
+        relayRequest(R.string.remote_relay_rejected) { connection.register(next, enrollmentKey.trim()) }
+        update { next }
+        if (running) connection.start(next)
     }
 
     fun setName(name: String) = action {

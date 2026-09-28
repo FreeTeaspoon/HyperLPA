@@ -62,6 +62,19 @@ internal class RelayConnection(
         request(config, "/v1/register", body, enrollmentKey)
     }
 
+    /** Checks the public protocol endpoint without changing the device registration. */
+    fun test(address: String) {
+        val request = Request.Builder().url(relayAddress(address) + "/health").get().build()
+        client.newCall(request).execute().use { response ->
+            check(response.isSuccessful)
+            val source = requireNotNull(response.body).source()
+            source.request(8193)
+            check(source.buffer.size <= 8192)
+            val health = DeviceJson.decodeFromString(JsonObject.serializer(), source.readUtf8())
+            check(health["protocol"]?.jsonPrimitive?.content == "1")
+        }
+    }
+
     fun unregister(config: StoredDevices) { request(config, "/v1/unregister", "{}") }
 
     private fun request(config: StoredDevices, path: String, body: String, enrollmentKey: String? = null): JsonObject {

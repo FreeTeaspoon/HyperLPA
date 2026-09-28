@@ -36,6 +36,7 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.SideEffect
@@ -45,14 +46,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
-import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -73,6 +72,7 @@ import app.hyperlpa.domain.model.ProfileInfo
 import app.hyperlpa.domain.model.ProfileState
 import app.hyperlpa.domain.model.takeUnicodeCodePoints
 import app.hyperlpa.ui.HyperLpaUiState
+import app.hyperlpa.ui.LocalMiuixSnackbar
 import app.hyperlpa.ui.BluetoothReaderAvailability
 import app.hyperlpa.ui.BluetoothReaderUiState
 import app.hyperlpa.ui.adaptive.CenteredContent
@@ -89,6 +89,7 @@ import app.hyperlpa.ui.components.inlinePageStateItem
 import app.hyperlpa.ui.components.pageStateTransition
 import app.hyperlpa.ui.components.ResolvedProfileArtwork
 import app.hyperlpa.ui.components.SectionHeading
+import app.hyperlpa.ui.components.ValuePreference
 import app.hyperlpa.ui.components.DetailLazyScaffold
 import app.hyperlpa.ui.components.DialogActionRow
 import app.hyperlpa.ui.components.TextInputDialog
@@ -96,6 +97,7 @@ import app.hyperlpa.ui.components.formatProfileDisplayName
 import app.hyperlpa.ui.components.profileCountryFlag
 import app.hyperlpa.ui.components.redactIdentifier
 import app.hyperlpa.ui.components.rememberProfileArtworkBitmaps
+import app.hyperlpa.ui.components.ProfileArtworkSnapshots
 import app.hyperlpa.ui.navigation.AppRoute
 import app.hyperlpa.reminders.formatReminderDate
 import java.time.Instant
@@ -105,11 +107,15 @@ import java.time.format.FormatStyle
 import kotlinx.coroutines.delay
 import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
 import top.yukonga.miuix.kmp.basic.Card
+import top.yukonga.miuix.kmp.basic.DropdownEntry
+import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.PullToRefresh
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
+import top.yukonga.miuix.kmp.basic.SnackbarDuration
 import top.yukonga.miuix.kmp.basic.Switch
+import top.yukonga.miuix.kmp.basic.SwitchDefaults
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.icon.MiuixIcons
@@ -166,15 +172,11 @@ fun ProfilesScreen(
         profiles = profiles,
         cloudIcons = state.operatorIcons,
         enabled = state.settings.showProfileIconOnHome,
+        readerId = state.lpa.selectedReaderId,
+        cloudIconLookupEnabled = state.settings.loadOperatorIcons,
     )
-    val initialArtworkReady = artworkLoadState.ready && state.profileEnrichmentReady
-    // Artwork may hold back a list only while the page already shows loading, as on the first
-    // load or for a reader without a cached card. A visible list, such as a cached card after a
-    // reader switch, is replaced at once; its artwork is normally already in memory.
     val lastPageState = remember { LastPageState() }
-    val awaitInitialArtwork = state.lpa.profiles.isNotEmpty() &&
-        !initialArtworkReady &&
-        lastPageState.kind == PageStateKind.LOADING
+    val artworkWarmupReady by ProfileArtworkSnapshots.ready.collectAsState()
     val hasNoSearchResults = state.searchQuery.isNotBlank() &&
         state.lpa.profiles.isNotEmpty() &&
         profiles.isEmpty()
@@ -214,11 +216,12 @@ fun ProfilesScreen(
         )
         else -> stringResource(app.hyperlpa.R.string.reader_none_message)
     }
-    // Keep the first presentation synchronized with artwork, then apply later artwork updates
-    // in place without replacing the already-visible profile list with a loading state.
+    // Cold-start thumbnail warmup may finish behind the first loader; network enrichment does not.
     val pageState = profilesPageState(
-        state.lpa, profiles, awaitInitialArtwork, refreshPending,
+        state.lpa, profiles, refreshPending = refreshPending,
         awaitInitialContent = lastPageState.kind == PageStateKind.LOADING,
+        awaitInitialArtwork = state.settings.showProfileIconOnHome &&
+            lastPageState.kind == PageStateKind.LOADING && !artworkWarmupReady,
     )
     SideEffect { lastPageState.kind = pageState }
     val isRefreshing = refreshPending
@@ -416,9 +419,9 @@ fun ProfilesScreen(
 internal fun profilesPageState(
     lpa: LpaRepositoryState,
     profiles: List<ProfileInfo>,
-    awaitInitialArtwork: Boolean = false,
     refreshPending: Boolean = false,
     awaitInitialContent: Boolean = false,
+    awaitInitialArtwork: Boolean = false,
 ): PageStateKind = when {
     lpa.operation is LpaOperation.Connecting && !lpa.readerSnapshotPendingRefresh &&
         lpa.selectedReader == null ->
@@ -438,6 +441,7 @@ internal fun profilesPageState(
     // An empty list is unconfirmed until the refresh finishes; the pull-to-refresh indicator
     // already shows its progress, so no page state is drawn below the header meanwhile.
     lpa.operation is LpaOperation.Refreshing && lpa.profiles.isEmpty() -> PageStateKind.CONTENT
+    lpa.operation is LpaOperation.Connecting && lpa.profiles.isEmpty() -> PageStateKind.LOADING
     profiles.isEmpty() -> PageStateKind.EMPTY
     else -> PageStateKind.CONTENT
 }
@@ -594,6 +598,8 @@ private fun ProfilesHeader(
     // A reader without a cached card has no EID until it opens. Holding the row's place keeps
     // the rows and the loading state below it from shifting when the EID arrives.
     val connecting = state.lpa.operation is LpaOperation.Connecting
+    val showSnackbar = LocalMiuixSnackbar.current
+    val readerBusyMessage = stringResource(R.string.profiles_reader_switch_busy)
     Column(modifier = modifier.fillMaxWidth()) {
         val showEid = state.settings.showEidOnHome && (state.lpa.euiccInfo != null || connecting)
         val showReaderSelector = state.settings.showReaderSelectorOnHome && state.lpa.readers.isNotEmpty()
@@ -609,22 +615,27 @@ private fun ProfilesHeader(
                     val selectedIndex = state.lpa.readers.indexOfFirst { it.id == shownReader?.id }
                     OverlayDropdownPreference(
                         title = stringResource(R.string.profiles_active_reader),
-                        enabled = enabled,
                         summary = shownReader?.detail
                             ?: stringResource(R.string.profiles_select_reader),
-                        items = state.lpa.readers.map { it.name },
-                        selectedIndex = selectedIndex,
-                        onSelectedIndexChange = { index ->
-                            state.lpa.readers.getOrNull(index)?.id?.let(onSelectReader)
-                        },
+                        // The menu stays readable during card work. A conflicting choice gives
+                        // immediate feedback instead of silently doing nothing.
+                        entry = DropdownEntry(state.lpa.readers.mapIndexed { index, reader ->
+                            DropdownItem(
+                                text = reader.name,
+                                selected = index == selectedIndex,
+                                onClick = {
+                                    if (enabled) onSelectReader(reader.id)
+                                    else showSnackbar(readerBusyMessage, SnackbarDuration.Short)
+                                },
+                            )
+                        }),
                     )
                 }
                 val info = state.lpa.euiccInfo
                 if (showEid && info == null) {
-                    ArrowPreference(
+                    ValuePreference(
                         title = stringResource(R.string.euicc_eid),
-                        summary = stringResource(R.string.euicc_eid_reading),
-                        enabled = false,
+                        value = stringResource(R.string.euicc_eid_reading),
                     )
                 } else if (showEid && info != null) {
                     val redactedEid = redactIdentifier(
@@ -639,7 +650,6 @@ private fun ProfilesHeader(
                             stringResource(R.string.euicc_eid_named_summary, redactedEid)
                         },
                         onClick = onOpenEuiccDetails,
-                        enabled = enabled,
                     )
                 }
             }
@@ -650,7 +660,6 @@ private fun ProfilesHeader(
             Column {
                 TextField(
                     value = state.searchQuery,
-                    enabled = enabled,
                     onValueChange = { onSearchChange(it.take(MaxSearchQueryCharacters)) },
                     label = stringResource(R.string.profiles_search),
                     useLabelAsPlaceholder = true,
@@ -802,7 +811,6 @@ private fun ProfileCard(
             .defaultMinSize(minHeight = 48.dp)
             .semantics {
                 contentDescription = cardDescription
-                if (!switchEnabled) disabled()
                 customActions = if (!switchEnabled) emptyList() else listOf(
                     CustomAccessibilityAction(profileActionsDescription) {
                         onLongPress()
@@ -813,11 +821,11 @@ private fun ProfileCard(
         cornerRadius = 16.dp,
         insideMargin = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
         pressFeedbackType = PressFeedbackType.Sink,
-        onClick = onOpen.takeIf { switchEnabled },
+        onClick = onOpen,
         onLongPress = onLongPress.takeIf { switchEnabled },
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().alpha(if (switchEnabled) 1f else 0.5f),
+            modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -906,6 +914,14 @@ private fun ProfileCard(
                     checked = isEnabled,
                     onCheckedChange = onEnableChange,
                     enabled = switchEnabled,
+                    colors = SwitchDefaults.switchColors(
+                        disabledCheckedThumbColor = MiuixTheme.colorScheme.onPrimary,
+                        disabledUncheckedThumbColor = if (MiuixTheme.isDynamicColor) {
+                            MiuixTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                        } else MiuixTheme.colorScheme.onSecondary,
+                        disabledCheckedTrackColor = MiuixTheme.colorScheme.primary,
+                        disabledUncheckedTrackColor = MiuixTheme.colorScheme.secondary,
+                    ),
                     modifier = Modifier
                         .align(Alignment.CenterVertically)
                         .semantics {

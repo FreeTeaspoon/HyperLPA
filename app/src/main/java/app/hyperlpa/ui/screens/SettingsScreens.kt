@@ -1473,8 +1473,9 @@ fun BackupRestoreSettingsScreen(
             }
             Spacer(Modifier.height(12.dp))
             DialogActionRow(
-                confirmText = stringResource(R.string.backup_encrypt_save),
-                confirmEnabled = backupPassword.length >= 10 && backupPassword == backupPasswordConfirmation,
+                confirmText = stringResource(if (backupPassword.isEmpty()) R.string.backup_save_unprotected else R.string.backup_encrypt_save),
+                confirmEnabled = (backupPassword.isEmpty() && backupPasswordConfirmation.isEmpty()) ||
+                    (backupPassword.length >= 10 && backupPassword == backupPasswordConfirmation),
                 onCancel = {
                     showCreatePassword = false
                     backupPassword = ""
@@ -1525,7 +1526,6 @@ fun BackupRestoreSettingsScreen(
             Spacer(Modifier.height(12.dp))
             DialogActionRow(
                 confirmText = stringResource(R.string.backup_decrypt_restore),
-                confirmEnabled = restorePassword.isNotEmpty(),
                 onCancel = {
                     pendingRestoreUri = null
                     restorePassword = ""

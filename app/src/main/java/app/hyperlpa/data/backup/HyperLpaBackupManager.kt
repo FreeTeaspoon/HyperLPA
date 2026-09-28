@@ -51,7 +51,7 @@ class HyperLpaBackupManager(
     private val restoreMutex = Mutex()
 
     suspend fun createBackup(
-        passphrase: CharArray,
+        passphrase: CharArray?,
     ): String = withProfileReminderIsolation {
         // Read both stores directly while the caller holds its application-state mutation gate.
         // Combined UI state is intentionally not used: StateFlow collection can lag a committed
@@ -78,18 +78,18 @@ class HyperLpaBackupManager(
             providerIcons = metadata.providerIcons.mapValues { (_, uri) -> encodeIcon(uri) },
             euiccNames = metadata.euiccNames,
         )
-        encryptBackup(backup, passphrase)
+        encodeBackupForExport(backup, passphrase)
     }
 
     suspend fun restoreBackup(
         rawBackup: String,
-        passphrase: CharArray,
+        passphrase: CharArray?,
     ): RestoredHyperLpaBackup = restoreMutex.withLock {
         withProfileReminderIsolation {
         // Never stack a new restore on top of an interrupted cross-store commit.
         recoverInterruptedRestoreLocked()
 
-        val backup = decryptBackup(rawBackup, passphrase)
+        val backup = decodeBackupForImport(rawBackup, passphrase)
         val previousSettings = settingsStore.snapshotForRecovery()
         val previousMetadata = metadataStore.snapshot()
         val iconsDir = File(appContext.filesDir, IconsDirectory)
@@ -507,6 +507,24 @@ internal fun decodeBackup(rawBackup: String): HyperLpaBackup {
 }
 
 internal fun encodeBackup(backup: HyperLpaBackup): String = BackupJson.encodeToString(backup)
+
+internal fun encodeBackupForExport(backup: HyperLpaBackup, passphrase: CharArray?): String =
+    if (passphrase == null) {
+        encodeBackup(backup).also { encoded ->
+            require(encoded.toByteArray(StandardCharsets.UTF_8).size <= MaxBackupPlaintextBytes) {
+                "The backup is too large"
+            }
+        }
+    } else {
+        encryptBackup(backup, passphrase)
+    }
+
+internal fun decodeBackupForImport(rawBackup: String, passphrase: CharArray?): HyperLpaBackup =
+    if (isEncryptedBackup(rawBackup)) {
+        decryptBackup(rawBackup, requireNotNull(passphrase) { "This backup requires a password" })
+    } else {
+        decodeBackup(rawBackup)
+    }
 
 internal fun encryptBackup(
     backup: HyperLpaBackup,

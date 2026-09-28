@@ -35,7 +35,7 @@ class ProfilesPageStateTest {
     }
 
     @Test
-    fun uncachedReaderWaitsThroughSelectionAndArtwork() {
+    fun uncachedReaderWaitsOnlyForConnection() {
         val reader = ReaderInfo("reader", "Reader", ReaderKind.OMAPI)
         val lpa = LpaRepositoryState(
             readers = listOf(reader),
@@ -47,10 +47,6 @@ class ProfilesPageStateTest {
 
         assertEquals(PageStateKind.LOADING, profilesPageState(lpa, lpa.profiles, awaitInitialContent = true))
         val connected = lpa.copy(operation = LpaOperation.Idle)
-        assertEquals(
-            PageStateKind.LOADING,
-            profilesPageState(connected, connected.profiles, awaitInitialArtwork = true, awaitInitialContent = true),
-        )
         assertEquals(PageStateKind.CONTENT, profilesPageState(connected, connected.profiles, awaitInitialContent = true))
     }
 
@@ -161,6 +157,21 @@ class ProfilesPageStateTest {
     }
 
     @Test
+    fun remoteReaderWithNoProfilesYetShowsLoadingWhileConnecting() {
+        val reader = ReaderInfo("remote", "Remote reader", ReaderKind.REMOTE, deviceId = "phone")
+        val connecting = LpaRepositoryState(
+            readers = listOf(reader), selectedReaderId = reader.id,
+            operation = LpaOperation.Connecting(reader.name), initialized = true,
+            readerSnapshotPendingRefresh = true,
+        )
+        assertEquals(PageStateKind.LOADING, profilesPageState(connecting, emptyList()))
+        assertEquals(
+            PageStateKind.EMPTY,
+            profilesPageState(connecting.copy(operation = LpaOperation.Idle), emptyList()),
+        )
+    }
+
+    @Test
     fun idleEmptyListShowsTheEmptyState() {
         val reader = ReaderInfo("reader", "Reader", ReaderKind.OMAPI)
         val lpa = LpaRepositoryState(
@@ -201,7 +212,7 @@ class ProfilesPageStateTest {
     }
 
     @Test
-    fun firstPresentationWaitsForArtworkWithoutChangingLoadedStateRules() {
+    fun firstPresentationDoesNotWaitForOptionalArtwork() {
         val reader = ReaderInfo(
             id = "reader",
             name = "Reader",
@@ -225,8 +236,8 @@ class ProfilesPageStateTest {
         )
 
         assertEquals(
-            PageStateKind.LOADING,
-            profilesPageState(lpa, listOf(profile), awaitInitialArtwork = true),
+            PageStateKind.CONTENT,
+            profilesPageState(lpa, listOf(profile), awaitInitialContent = true),
         )
     }
 }
