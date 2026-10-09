@@ -2,7 +2,6 @@ package app.hyperlpa.ui.screens
 
 import app.hyperlpa.ui.components.MishkaPageContent
 import app.hyperlpa.ui.components.PageStart
-import android.graphics.Bitmap
 import android.os.Build
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -88,6 +87,7 @@ import app.hyperlpa.ui.components.RefreshHeaderTopGap
 import app.hyperlpa.ui.components.inlinePageStateItem
 import app.hyperlpa.ui.components.pageStateTransition
 import app.hyperlpa.ui.components.ResolvedProfileArtwork
+import app.hyperlpa.ui.components.ProfileArtworkState
 import app.hyperlpa.ui.components.SectionHeading
 import app.hyperlpa.ui.components.ValuePreference
 import app.hyperlpa.ui.components.DetailLazyScaffold
@@ -174,6 +174,7 @@ fun ProfilesScreen(
         enabled = state.settings.showProfileIconOnHome,
         readerId = state.lpa.selectedReaderId,
         cloudIconLookupEnabled = state.settings.loadOperatorIcons,
+        cloudIconLookupPending = state.settings.loadOperatorIcons && !state.profileEnrichmentReady,
     )
     val lastPageState = remember { LastPageState() }
     val artworkWarmupReady by ProfileArtworkSnapshots.ready.collectAsState()
@@ -321,7 +322,7 @@ fun ProfilesScreen(
                         items(profiles, key = ProfileInfo::iccid) { profile ->
                             ProfileCard(
                                 profile = profile,
-                                artworkBitmap = artworkLoadState.bitmaps[profile.iccid],
+                                artwork = artworkLoadState.artwork(profile.iccid),
                                 state = state,
                                 switchEnabled = !profileSwitchLocked,
                                 onOpen = { onOpenProfile(profile) },
@@ -359,7 +360,7 @@ fun ProfilesScreen(
                             items(profiles, key = ProfileInfo::iccid) { profile ->
                                 ProfileCard(
                                     profile = profile,
-                                    artworkBitmap = artworkLoadState.bitmaps[profile.iccid],
+                                    artwork = artworkLoadState.artwork(profile.iccid),
                                     state = state,
                                     switchEnabled = !profileSwitchLocked,
                                     onOpen = { onOpenProfile(profile) },
@@ -694,7 +695,7 @@ private val ProfilesFirstCardGap = 12.dp
 @Composable
 private fun ProfileCard(
     profile: ProfileInfo,
-    artworkBitmap: Bitmap?,
+    artwork: ProfileArtworkState,
     state: HyperLpaUiState,
     switchEnabled: Boolean,
     onOpen: () -> Unit,
@@ -832,7 +833,7 @@ private fun ProfileCard(
             if (state.settings.showProfileIconOnHome) {
                 ResolvedProfileArtwork(
                     profile = profile,
-                    bitmap = artworkBitmap,
+                    artwork = artwork,
                     isEnabled = isEnabled,
                 )
             }

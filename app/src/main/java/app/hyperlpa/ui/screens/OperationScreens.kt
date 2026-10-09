@@ -110,6 +110,7 @@ import app.hyperlpa.ui.components.ReaderStateIcon
 import app.hyperlpa.ui.components.inlinePageStateItem
 import app.hyperlpa.ui.components.MiuixDatePickerDialog
 import app.hyperlpa.ui.components.ResolvedProfileArtwork
+import app.hyperlpa.ui.components.ProfileArtworkState
 import app.hyperlpa.ui.components.SectionHeading
 import app.hyperlpa.ui.components.DetailLazyScaffold
 import app.hyperlpa.ui.components.FormattedProfileDisplayName
@@ -117,7 +118,7 @@ import app.hyperlpa.ui.components.formatProfileDisplayName
 import app.hyperlpa.ui.components.PrimaryPageButton
 import app.hyperlpa.ui.components.TipCard
 import app.hyperlpa.ui.components.ValuePreference
-import app.hyperlpa.ui.components.rememberProfileArtworkBitmap
+import app.hyperlpa.ui.components.rememberProfileArtwork
 import app.hyperlpa.ui.components.redactIdentifier
 import app.hyperlpa.ui.LocalMiuixSnackbar
 import app.hyperlpa.ui.components.effect.AccentGradientBackdrop
@@ -185,6 +186,7 @@ fun ProfileDetailsScreen(
     settings: AppSettings,
     suggestedTags: Set<String>,
     operatorIcon: ByteArray?,
+    iconLookupPending: Boolean = false,
     hasProfileIcon: Boolean,
     hasProviderIcon: Boolean,
     isProviderIconHidden: Boolean,
@@ -296,7 +298,11 @@ fun ProfileDetailsScreen(
             ).fullText
         }
     }
-    val artworkBitmap = rememberProfileArtworkBitmap(profile, operatorIcon)
+    val artwork = rememberProfileArtwork(
+        profile, operatorIcon, readerId = lpa.selectedReaderId,
+        cloudIconLookupEnabled = settings.loadOperatorIcons,
+        cloudIconLookupPending = iconLookupPending,
+    )
     val iccidDetails = remember(profile?.iccid) { profile?.iccid?.let(::analyzeIccid) }
     val collapsedTitle = displayName?.nameText
         ?.takeIf(String::isNotBlank)
@@ -325,7 +331,7 @@ fun ProfileDetailsScreen(
         collapsedTitle = collapsedTitle,
         collapsedBarRevealStart = 132.dp,
         background = if (profile == null) null else {
-            { ProfileGradientBackdrop(bitmap = artworkBitmap) }
+            { ProfileGradientBackdrop(bitmap = artwork.bitmap) }
         },
         pageState = when {
             profile != null -> PageStateKind.CONTENT
@@ -350,7 +356,7 @@ fun ProfileDetailsScreen(
                 ProfileHero(
                     profile = profile,
                     settings = settings,
-                    artworkBitmap = artworkBitmap,
+                    artwork = artwork,
                     displayName = requireNotNull(displayName),
                     onOpenIconOptions = { showIconOptions = true },
                     onOpenTags = openTagsEditor,
@@ -1300,7 +1306,8 @@ fun ProfileDownloadConfirmationScreen(
 ) {
     val profile = preview.profile
     val artworkProfile = if (cloudIcon != null) profile.copy(iconBase64 = null) else profile
-    val artworkBitmap = rememberProfileArtworkBitmap(artworkProfile, cloudIcon)
+    val artwork = rememberProfileArtwork(artworkProfile, cloudIcon, cloudIconLookupPending = enrichmentLoading)
+    val artworkBitmap = artwork.bitmap
     val displayName = profile.name.ifBlank { profile.providerName }
         .ifBlank { stringResource(R.string.profile_default_name) }
     val network = listOfNotNull(profile.mcc, profile.mnc)
@@ -1342,7 +1349,7 @@ fun ProfileDownloadConfirmationScreen(
             ) {
                 ResolvedProfileArtwork(
                     profile = artworkProfile,
-                    bitmap = artworkBitmap,
+                    artwork = artwork,
                     isEnabled = true,
                     size = 72.dp,
                     cornerRadius = 18.dp,
@@ -1592,7 +1599,8 @@ fun ProfileDownloadResultScreen(
     val displayName = profile.name.ifBlank { profile.providerName }
         .ifBlank { stringResource(R.string.profile_default_name) }
     val artworkProfile = if (cloudIcon != null) profile.copy(iconBase64 = null) else profile
-    val artworkBitmap = rememberProfileArtworkBitmap(artworkProfile, cloudIcon)
+    val artwork = rememberProfileArtwork(artworkProfile, cloudIcon)
+    val artworkBitmap = artwork.bitmap
 
     DetailLazyScaffold(
         title = "",
@@ -1615,7 +1623,7 @@ fun ProfileDownloadResultScreen(
             ) {
                 ResolvedProfileArtwork(
                     profile = artworkProfile,
-                    bitmap = artworkBitmap,
+                    artwork = artwork,
                     isEnabled = true,
                     size = 72.dp,
                     cornerRadius = 18.dp,
@@ -2760,7 +2768,7 @@ internal fun profileDeleteFinalSummaryRes(profileState: ProfileState?): Int =
 private fun ProfileHero(
     profile: ProfileInfo,
     settings: AppSettings,
-    artworkBitmap: Bitmap?,
+    artwork: ProfileArtworkState,
     displayName: FormattedProfileDisplayName,
     onOpenIconOptions: () -> Unit,
     onOpenTags: () -> Unit,
@@ -2787,7 +2795,7 @@ private fun ProfileHero(
     ) {
         ResolvedProfileArtwork(
             profile = profile,
-            bitmap = artworkBitmap,
+            artwork = artwork,
             isEnabled = profile.state == ProfileState.ENABLED,
             modifier = Modifier.clickable(
                 interactionSource = profileIconInteractionSource,

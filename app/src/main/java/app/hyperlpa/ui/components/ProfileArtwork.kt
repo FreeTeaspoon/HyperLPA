@@ -6,8 +6,6 @@ import android.graphics.ImageDecoder
 import androidx.core.net.toUri
 import android.util.Base64
 import android.util.LruCache
-import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -48,10 +46,10 @@ fun ProfileArtwork(
     size: Dp = 46.dp,
     cornerRadius: Dp = 12.dp,
 ) {
-    val bitmap = rememberProfileArtworkBitmap(profile, cloudIcon)
+    val artwork = rememberProfileArtwork(profile, cloudIcon)
     ResolvedProfileArtwork(
         profile = profile,
-        bitmap = bitmap,
+        artwork = artwork,
         isEnabled = isEnabled,
         modifier = modifier,
         size = size,
@@ -60,24 +58,60 @@ fun ProfileArtwork(
 }
 
 @Composable
-internal fun rememberProfileArtworkBitmap(
+internal fun rememberProfileArtwork(
     profile: ProfileInfo?,
     cloudIcon: ByteArray?,
-): Bitmap? {
+    readerId: String? = null,
+    cloudIconLookupEnabled: Boolean = false,
+    cloudIconLookupPending: Boolean = false,
+): ProfileArtworkState {
     val context = LocalContext.current
     val input = profile?.artworkInput(cloudIcon)
     val cached = input?.let(ProfileArtworkCache::get)
-    return key(input, cloudIcon?.contentHashCode()) {
-        val bitmap by produceState(initialValue = cached?.bitmap) {
-            if (cached != null) return@produceState
-            value = withContext(Dispatchers.IO) {
-                loadProfileArtworkBitmap(context, profile, cloudIcon)
-                    .also { bitmap -> input?.let { ProfileArtworkCache.put(it, bitmap) } }
-            }
-        }
-        bitmap
+    val useSnapshot = cloudIconLookupEnabled || profile?.customIconUri != null || profile?.iconBase64 != null
+    val snapshot = remember(readerId, profile?.iccid, input, useSnapshot) {
+        if (cached == null && useSnapshot) profile?.let { ProfileArtworkSnapshots.get(readerId, it) } else null
     }
+    val retained = remember(readerId, profile?.iccid) { RetainedProfileArtwork() }
+    val artwork = key(readerId, profile?.iccid, input, useSnapshot) {
+        val initial = remember {
+            ProfileArtworkState(
+                bitmap = if (cached != null) cached.bitmap else profile?.let {
+                    retained.bitmaps[it.iccid] ?: snapshot?.bitmap
+                },
+                ready = cached != null || profile == null,
+            )
+        }
+        val resolved by produceState(initialValue = initial) {
+            if (cached != null || profile == null || input == null) return@produceState
+            // A saved thumbnail can fill the hero immediately while its larger image decodes.
+            val thumbnail = snapshot ?: if (useSnapshot) {
+                withContext(Dispatchers.IO) {
+                    ProfileArtworkSnapshots.load(context, readerId, profile)
+                }
+            } else null
+            if (value.bitmap == null && thumbnail != null) value = ProfileArtworkState(thumbnail.bitmap, ready = false)
+            val loaded = withContext(Dispatchers.IO) {
+                loadProfileArtwork(context, profile, cloudIcon)
+            }
+            // A failed refresh must not discard a saved image for this exact profile/source.
+            val result = if (loaded.bitmap == null && thumbnail != null) {
+                CachedProfileArtwork(thumbnail.bitmap, isSnapshot = true)
+            } else loaded
+            ProfileArtworkCache.put(input, result)
+            value = ProfileArtworkState(result.bitmap, ready = true)
+        }
+        SideEffect {
+            retained.bitmaps = resolved.bitmap?.let { mapOf(requireNotNull(profile).iccid to it) }.orEmpty()
+        }
+        resolved
+    }
+    return artwork.copy(
+        ready = artwork.ready && (artwork.bitmap != null || !cloudIconLookupPending || cloudIcon != null),
+    )
 }
+
+internal data class ProfileArtworkState(val bitmap: Bitmap?, val ready: Boolean)
 
 /** Cached thumbnails are available in the same composition as their profile names. */
 @Composable
@@ -87,6 +121,7 @@ internal fun rememberProfileArtworkBitmaps(
     enabled: Boolean,
     readerId: String? = null,
     cloudIconLookupEnabled: Boolean = false,
+    cloudIconLookupPending: Boolean = false,
 ): ProfileArtworkLoadState {
     if (!enabled || profiles.isEmpty()) return ProfileArtworkLoadState.ReadyWithoutArtwork
     val context = LocalContext.current
@@ -97,17 +132,17 @@ internal fun rememberProfileArtworkBitmaps(
     }
     // Retain the current list independently of LRU eviction. A state change, reorder or search
     // must not decode images that this page already owns, even for a very large card.
-    val retained = remember { RetainedProfileArtwork() }
-    return key(inputs) {
+    val retained = remember(readerId) { RetainedProfileArtwork() }
+    return key(readerId, inputs, cloudIconLookupEnabled) {
         val carried = remember { retained.bitmaps.filterKeys(inputs::containsKey) }
         val initial = remember {
             profiles.mapNotNull { profile ->
                 val input = inputs.getValue(profile.iccid)
-                val useSnapshot = cloudIcons[profile.iccid] == null &&
-                    (cloudIconLookupEnabled || profile.customIconUri != null || profile.iconBase64 != null)
+                val useSnapshot = cloudIconLookupEnabled || profile.customIconUri != null || profile.iconBase64 != null
                 (retained.artwork[input] ?: ProfileArtworkCache.get(input)
                     ?: ProfileArtworkSnapshots.get(readerId, profile)
-                        .takeIf { useSnapshot }?.let(::CachedProfileArtwork))
+                        ?.takeIf { useSnapshot && (it.isCustom || cloudIcons[profile.iccid] == null) }
+                        ?.let { CachedProfileArtwork(it.bitmap, isCustom = it.isCustom, isSnapshot = true) })
                     ?.let { profile.iccid to it }
             }.toMap()
         }
@@ -116,13 +151,19 @@ internal fun rememberProfileArtworkBitmaps(
                 if (profile.iccid in value) continue
                 val input = inputs.getValue(profile.iccid)
                 val artwork = withContext(Dispatchers.IO) {
-                    val useSnapshot = cloudIcons[profile.iccid] == null &&
-                        (cloudIconLookupEnabled || profile.customIconUri != null || profile.iconBase64 != null)
-                    ProfileArtworkCache.get(input) ?: CachedProfileArtwork(
-                        (if (useSnapshot) ProfileArtworkSnapshots.load(context, readerId, profile) else null)
-                            ?: loadProfileArtworkBitmap(context, profile, cloudIcons[profile.iccid], ProfileThumbnailDimension)
-                                ?.also { ProfileArtworkSnapshots.put(context, readerId, profile, it) },
-                    ).also { ProfileArtworkCache.put(input, it.bitmap) }
+                    val useSnapshot = cloudIconLookupEnabled || profile.customIconUri != null || profile.iconBase64 != null
+                    ProfileArtworkCache.get(input) ?: run {
+                        val snapshot = if (useSnapshot) ProfileArtworkSnapshots.load(context, readerId, profile) else null
+                        val loaded = snapshot?.takeIf { it.isCustom || cloudIcons[profile.iccid] == null }
+                            ?.let { CachedProfileArtwork(it.bitmap, isCustom = it.isCustom, isSnapshot = true) } ?: loadProfileArtwork(
+                            context, profile, cloudIcons[profile.iccid], ProfileThumbnailDimension,
+                        ).also { artwork ->
+                            artwork.bitmap?.let {
+                                ProfileArtworkSnapshots.put(context, readerId, profile, it, isCustom = artwork.isCustom)
+                            }
+                        }
+                        loaded.also { ProfileArtworkCache.put(input, it) }
+                    }
                 }
                 // Publish each result instead of waiting for every icon on the card.
                 value = value + (profile.iccid to artwork)
@@ -133,10 +174,14 @@ internal fun rememberProfileArtworkBitmaps(
             bitmap?.let { iccid to it }
         }.toMap()
         SideEffect {
-            retained.artwork = resolved.map { (iccid, artwork) -> inputs.getValue(iccid) to artwork }.toMap()
+            retained.artwork = resolved.filterValues { !it.isSnapshot }
+                .map { (iccid, artwork) -> inputs.getValue(iccid) to artwork }.toMap()
             retained.bitmaps = bitmaps
         }
-        ProfileArtworkLoadState(bitmaps = bitmaps, ready = resolved.size == inputs.size)
+        val readyIccids = resolved.keys.filterTo(hashSetOf()) { iccid ->
+            resolved[iccid]?.bitmap != null || !cloudIconLookupPending || cloudIcons[iccid] != null
+        }
+        ProfileArtworkLoadState(bitmaps = bitmaps, ready = readyIccids.size == inputs.size, readyIccids = readyIccids)
     }
 }
 
@@ -148,7 +193,10 @@ private class RetainedProfileArtwork {
 internal data class ProfileArtworkLoadState(
     val bitmaps: Map<String, Bitmap>,
     val ready: Boolean,
+    val readyIccids: Set<String> = emptySet(),
 ) {
+    fun artwork(iccid: String) = ProfileArtworkState(bitmaps[iccid], iccid in readyIccids)
+
     companion object {
         val ReadyWithoutArtwork = ProfileArtworkLoadState(bitmaps = emptyMap(), ready = true)
     }
@@ -157,7 +205,7 @@ internal data class ProfileArtworkLoadState(
 @Composable
 internal fun ResolvedProfileArtwork(
     profile: ProfileInfo,
-    bitmap: Bitmap?,
+    artwork: ProfileArtworkState,
     isEnabled: Boolean,
     modifier: Modifier = Modifier,
     size: Dp = 46.dp,
@@ -165,20 +213,18 @@ internal fun ResolvedProfileArtwork(
 ) {
     val shape = RoundedCornerShape(cornerRadius)
     key(profile.iccid) {
-        Crossfade(
-            targetState = bitmap,
-            modifier = modifier.size(size),
-            animationSpec = tween(durationMillis = ProfileArtworkCrossfadeMillis),
-            label = "Profile artwork",
-        ) { resolvedBitmap ->
-            if (resolvedBitmap != null) {
+        Box(modifier = modifier.size(size), contentAlignment = Alignment.Center) {
+            val bitmap = artwork.bitmap
+            if (bitmap != null) {
+                // A cache/source replacement must stay opaque. Crossfading two copies of the
+                // same image exposes the card background and looks like a reload flash.
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     shape = shape,
                     color = MiuixTheme.colorScheme.secondaryContainer,
                 ) {
                     Image(
-                        bitmap = resolvedBitmap.asImageBitmap(),
+                        bitmap = bitmap.asImageBitmap(),
                         contentDescription = stringResource(
                             R.string.profile_artwork_description,
                             profile.providerName.ifBlank { stringResource(R.string.profile_default_name) },
@@ -188,22 +234,17 @@ internal fun ResolvedProfileArtwork(
                         modifier = Modifier.fillMaxSize().clip(shape),
                     )
                 }
-            } else {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = MiuixIcons.BankCards,
-                        contentDescription = null,
-                        modifier = Modifier.size(size * 0.52f),
-                        tint = if (isEnabled) {
-                            MiuixTheme.colorScheme.primary
-                        } else {
-                            MiuixTheme.colorScheme.onSurfaceVariantActions
-                        },
-                    )
-                }
+            } else if (artwork.ready) {
+                Icon(
+                    imageVector = MiuixIcons.BankCards,
+                    contentDescription = null,
+                    modifier = Modifier.size(size * 0.52f),
+                    tint = if (isEnabled) {
+                        MiuixTheme.colorScheme.primary
+                    } else {
+                        MiuixTheme.colorScheme.onSurfaceVariantActions
+                    },
+                )
             }
         }
     }
@@ -212,7 +253,6 @@ internal fun ResolvedProfileArtwork(
 private const val MaxEmbeddedIconBase64Characters = 1_500_000
 private const val MaxRenderedProfileArtworkDimension = 512
 private const val ProfileThumbnailDimension = 128
-private const val ProfileArtworkCrossfadeMillis = 140
 
 private const val MaxCachedArtworkBytes = 24 * 1024 * 1024
 
@@ -242,7 +282,11 @@ private fun ProfileInfo.artworkInput(
 )
 
 /** A decoded result, where a null [bitmap] records that the profile has no usable artwork. */
-private class CachedProfileArtwork(val bitmap: Bitmap?)
+private class CachedProfileArtwork(
+    val bitmap: Bitmap?,
+    val isCustom: Boolean = false,
+    val isSnapshot: Boolean = false,
+)
 
 private object ProfileArtworkCache {
     private val cached = object : LruCache<ProfileArtworkInput, CachedProfileArtwork>(MaxCachedArtworkBytes) {
@@ -250,23 +294,33 @@ private object ProfileArtworkCache {
             value.bitmap?.allocationByteCount?.coerceAtLeast(1) ?: 1
     }
 
-    fun get(input: ProfileArtworkInput): CachedProfileArtwork? = cached.get(input)
+    fun get(input: ProfileArtworkInput): CachedProfileArtwork? {
+        if (input.customIconUri == null && input.embeddedIcon == null && input.cloudIcon == null) return null
+        return input.customIconUri?.let { cached.get(input.copy(embeddedIcon = null, cloudIcon = null)) }
+            ?.takeIf { it.isCustom } ?: cached.get(input)
+    }
 
     fun clearMemoryForTesting() = cached.evictAll()
 
-    fun put(input: ProfileArtworkInput, bitmap: Bitmap?) {
-        cached.put(input, CachedProfileArtwork(bitmap))
+    fun put(input: ProfileArtworkInput, artwork: CachedProfileArtwork) {
+        // Snapshots belong to a reader and ICCID, not to a shared unresolved cloud source.
+        if (artwork.isSnapshot ||
+            (input.customIconUri == null && input.embeddedIcon == null && input.cloudIcon == null)
+        ) return
+        // A valid custom icon wins over both other sources. Cloud refreshes can reuse it.
+        val key = if (artwork.isCustom) input.copy(embeddedIcon = null, cloudIcon = null) else input
+        cached.put(key, artwork)
     }
 }
 
 internal fun clearProfileArtworkMemoryForTesting() = ProfileArtworkCache.clearMemoryForTesting()
 
-private fun loadProfileArtworkBitmap(
+private fun loadProfileArtwork(
     context: android.content.Context,
     profile: ProfileInfo?,
     cloudIcon: ByteArray?,
     dimension: Int = MaxRenderedProfileArtworkDimension,
-): Bitmap? {
+): CachedProfileArtwork {
     val custom = profile?.customIconUri
         ?.let { uri -> runCatching { uri.toUri() }.getOrNull() }
         ?.let { uri ->
@@ -286,17 +340,19 @@ private fun loadProfileArtworkBitmap(
                 }
             }.getOrNull()
         }
-    if (custom != null) return custom
+    if (custom != null) return CachedProfileArtwork(custom, isCustom = true)
 
     val embedded = profile?.iconBase64
         ?.takeIf { encoded -> encoded.length <= MaxEmbeddedIconBase64Characters }
         ?.let { encoded -> runCatching { Base64.decode(encoded, Base64.DEFAULT) }.getOrNull() }
     val embeddedBitmap = embedded?.let { decodeProfileBitmap(it, dimension) }
-    return when {
-        embedded != null && embedded.size >= 2_048 && embeddedBitmap != null -> embeddedBitmap
-        cloudIcon != null -> decodeProfileBitmap(cloudIcon, dimension) ?: embeddedBitmap
-        else -> embeddedBitmap
-    }
+    return CachedProfileArtwork(
+        when {
+            embedded != null && embedded.size >= 2_048 && embeddedBitmap != null -> embeddedBitmap
+            cloudIcon != null -> decodeProfileBitmap(cloudIcon, dimension) ?: embeddedBitmap
+            else -> embeddedBitmap
+        },
+    )
 }
 
 private fun decodeProfileBitmap(bytes: ByteArray, dimension: Int): Bitmap? {
