@@ -48,18 +48,29 @@ internal object ProfileArtworkSnapshots {
 
     internal fun clearMemoryForTesting() = warmed.evictAll()
 
-    fun get(readerId: String?, profile: ProfileInfo): Bitmap? =
-        readerId?.let { warmed.get(key(it, profile)) }
-
-    fun load(context: Context, readerId: String?, profile: ProfileInfo): Bitmap? {
-        val name = readerId?.let { key(it, profile) } ?: return null
-        warmed.get(name)?.let { return it }
-        return decode(File(directory(context), name))?.also { warmed.put(name, it) }
+    fun get(readerId: String?, profile: ProfileInfo): ProfileArtworkSnapshot? {
+        if (readerId == null) return null
+        if (profile.customIconUri != null) {
+            warmed.get(key(readerId, profile, isCustom = true))?.let { return ProfileArtworkSnapshot(it, isCustom = true) }
+        }
+        return warmed.get(key(readerId, profile))?.let { ProfileArtworkSnapshot(it, isCustom = false) }
     }
 
-    fun put(context: Context, readerId: String?, profile: ProfileInfo, bitmap: Bitmap) {
+    fun load(context: Context, readerId: String?, profile: ProfileInfo): ProfileArtworkSnapshot? {
+        if (readerId == null) return null
+        val kinds = if (profile.customIconUri != null) listOf(true, false) else listOf(false)
+        for (isCustom in kinds) {
+            val name = key(readerId, profile, isCustom)
+            val bitmap = warmed.get(name) ?: decode(File(directory(context), name))
+                ?.also { warmed.put(name, it) }
+            if (bitmap != null) return ProfileArtworkSnapshot(bitmap, isCustom)
+        }
+        return null
+    }
+
+    fun put(context: Context, readerId: String?, profile: ProfileInfo, bitmap: Bitmap, isCustom: Boolean = false) {
         if (readerId == null) return
-        val name = key(readerId, profile)
+        val name = key(readerId, profile, isCustom)
         warmed.put(name, bitmap)
         val directory = directory(context)
         if (!directory.isDirectory && !directory.mkdirs()) return
@@ -98,9 +109,15 @@ internal object ProfileArtworkSnapshots {
 
     private fun directory(context: Context) = File(context.cacheDir, "profile-artwork-snapshots")
 
-    private fun key(readerId: String, profile: ProfileInfo): String {
+    private fun key(readerId: String, profile: ProfileInfo, isCustom: Boolean = false): String {
         val digest = MessageDigest.getInstance("SHA-256")
-        listOf(readerId, profile.iccid, profile.customIconUri.orEmpty(), profile.iconBase64.orEmpty())
+        // Keep legacy filenames readable. A separate key records verified custom artwork so
+        // unrelated cloud updates can reuse it without decoding the original image again.
+        val parts = listOf(
+            readerId, profile.iccid, profile.customIconUri.orEmpty(),
+            if (isCustom) "" else profile.iconBase64.orEmpty(),
+        )
+        (if (isCustom) parts + "custom-artwork-v1" else parts)
             .forEach { value ->
                 val bytes = value.toByteArray(Charsets.UTF_8)
                 digest.update(byteArrayOf(
@@ -112,3 +129,5 @@ internal object ProfileArtworkSnapshots {
         return digest.digest().joinToString("") { "%02x".format(it) } + ".png"
     }
 }
+
+internal data class ProfileArtworkSnapshot(val bitmap: Bitmap, val isCustom: Boolean)

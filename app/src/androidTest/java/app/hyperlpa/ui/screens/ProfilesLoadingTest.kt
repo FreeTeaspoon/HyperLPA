@@ -57,6 +57,19 @@ class ProfilesLoadingTest {
     )
 
     @Test
+    fun artworkAndCloudLoadingLeaveBrowsingAndSwitchingEnabled() {
+        val state = mutableStateOf(loaded.copy(
+            settings = loaded.settings.copy(showProfileIconOnHome = true, loadOperatorIcons = true),
+            profileEnrichmentReady = false,
+            lpa = loaded.lpa.copy(profiles = listOf(profile.copy(customIconUri = "file:///missing-icon.png"))),
+        ))
+        show({ state.value })
+        assertControlsEnabled()
+        compose.runOnIdle { state.value = state.value.copy(profileEnrichmentReady = true) }
+        assertControlsEnabled()
+    }
+
+    @Test
     fun onlyConflictingOperationsStayLockedThroughTheSwitchTail() {
         val state = mutableStateOf(loaded)
         show({ state.value })

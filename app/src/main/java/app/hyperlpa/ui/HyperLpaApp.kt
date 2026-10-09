@@ -254,6 +254,8 @@ fun HyperLpaApp(
                     settings = currentState.value.settings,
                     suggestedTags = currentState.value.profiles.flatMap { it.tags }.toSet(),
                     operatorIcon = currentState.value.operatorIcons[route.iccid],
+                    iconLookupPending = currentState.value.settings.loadOperatorIcons &&
+                        !currentState.value.profileEnrichmentReady,
                     hasProfileIcon = currentState.value.metadata[route.iccid]?.iconUri != null,
                     isProviderIconHidden = currentState.value.metadata[route.iccid]
                         ?.isProviderIconHidden == true,
