@@ -60,7 +60,6 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
@@ -71,6 +70,7 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -201,6 +201,45 @@ fun NzbLiquidGlassNavigationBar(
     solidContainerColor: Color = MiuixTheme.colorScheme.surfaceContainer,
     badge: (Int) -> (@Composable () -> Unit)? = { null },
 ) {
+    val density = LocalDensity.current
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+        val preferredHorizontalPadding = if (showLabels) 44.dp else 60.dp
+        val horizontalPadding = preferredHorizontalPadding.coerceAtMost(
+            ((maxWidth - 48.dp * items.size - 8.dp) / 2).coerceAtLeast(0.dp),
+        )
+        // Resolve the pill geometry in this subcomposition. An onSizeChanged state
+        // update needs another composition and leaves the first draw unselected.
+        val totalWidthPx = (constraints.maxWidth - 2 * with(density) { horizontalPadding.roundToPx() }).toFloat()
+        LiquidGlassNavigationBarContent(
+            items = items,
+            selectedIndex = selectedIndex,
+            onItemClick = onItemClick,
+            backdrop = backdrop,
+            isBlurActive = isBlurActive,
+            isDark = isDark,
+            showLabels = showLabels,
+            solidContainerColor = solidContainerColor,
+            badge = badge,
+            horizontalPadding = horizontalPadding,
+            totalWidthPx = totalWidthPx,
+        )
+    }
+}
+
+@Composable
+private fun LiquidGlassNavigationBarContent(
+    items: List<NavigationItem>,
+    selectedIndex: Int,
+    onItemClick: (Int) -> Unit,
+    backdrop: LayerBackdrop?,
+    isBlurActive: Boolean,
+    isDark: Boolean,
+    showLabels: Boolean,
+    solidContainerColor: Color,
+    badge: (Int) -> (@Composable () -> Unit)?,
+    horizontalPadding: Dp,
+    totalWidthPx: Float,
+) {
     val pillShape = remember { CircleShape }
     val accentColor = MiuixTheme.colorScheme.primary
     val tabContentColor = MiuixTheme.colorScheme.onSurface
@@ -214,12 +253,11 @@ fun NzbLiquidGlassNavigationBar(
     val tabsCount = items.size
     val animationsEnabled = rememberSystemAnimationsEnabled()
 
-    var tabWidthPx by remember { mutableFloatStateOf(0f) }
-    var totalWidthPx by remember { mutableFloatStateOf(0f) }
+    val tabWidthPx = ((totalWidthPx - with(density) { 8.dp.toPx() }) / tabsCount).coerceAtLeast(0f)
 
     val offsetAnimation = remember { Animatable(0f) }
     val rubberBandPx = with(density) { 4.dp.toPx() }
-    val panelOffset by remember(rubberBandPx) {
+    val panelOffset by remember(rubberBandPx, totalWidthPx) {
         derivedStateOf {
             if (totalWidthPx == 0f) {
                 0f
@@ -242,7 +280,7 @@ fun NzbLiquidGlassNavigationBar(
             .coerceIn(0, tabsCount - 1)
     }
 
-    val dampedDrag = remember(animationScope, tabsCount, density, isLtr) {
+    val dampedDrag = remember(animationScope, tabsCount, density, isLtr, totalWidthPx) {
         DampedDragAnimation(
             animationScope = animationScope,
             initialValue = selectedIndex.toFloat(),
@@ -336,7 +374,6 @@ fun NzbLiquidGlassNavigationBar(
     }
     val containerHeight = if (showLabels) 62.dp else 56.dp
     val indicatorHeight = if (showLabels) 54.dp else 48.dp
-    val preferredHorizontalPadding = if (showLabels) 44.dp else 60.dp
 
     val tabsContent: @Composable RowScope.() -> Unit = {
         val tabScale = LocalIosTabScale.current
@@ -394,15 +431,12 @@ fun NzbLiquidGlassNavigationBar(
         }
     }
 
-    Column(modifier = modifier.fillMaxWidth()) {
-        BoxWithConstraints(
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Box(
             modifier = Modifier
                 .padding(bottom = bottomPaddingValue)
                 .fillMaxWidth(),
         ) {
-            val horizontalPadding = preferredHorizontalPadding.coerceAtMost(
-                ((maxWidth - 48.dp * tabsCount - 8.dp) / 2).coerceAtLeast(0.dp),
-            )
             Box(
                 modifier = Modifier
                     .padding(horizontal = horizontalPadding)
@@ -413,11 +447,6 @@ fun NzbLiquidGlassNavigationBar(
                     Row(
                         modifier = Modifier
                             .selectableGroup()
-                            .onSizeChanged { coords ->
-                                totalWidthPx = coords.width.toFloat()
-                                val contentWidthPx = totalWidthPx - with(density) { 8.dp.toPx() }
-                                tabWidthPx = (contentWidthPx / tabsCount).coerceAtLeast(0f)
-                            }
                             .graphicsLayer { translationX = panelOffset }
                             .dropShadow(
                                 shape = pillShape,

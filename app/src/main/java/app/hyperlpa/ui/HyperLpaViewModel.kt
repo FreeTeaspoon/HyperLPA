@@ -86,6 +86,7 @@ import java.time.Instant
 
 data class HyperLpaUiState(
     val settingsLoaded: Boolean = false,
+    val initialDataLoaded: Boolean = false,
     val settings: AppSettings = AppSettings(),
     val lpa: LpaRepositoryState = LpaRepositoryState(),
     val selectedTab: AppTab = AppTab.PROFILES,
@@ -216,6 +217,7 @@ class HyperLpaViewModel(
     private val notificationHistoryStore: NotificationHistoryStore,
     private val supportReportBuilder: SupportReportBuilder,
     private val provisioningCoordinator: ProvisioningCoordinator,
+    initialSettings: AppSettings,
 ) : AndroidViewModel(application) {
     internal val remoteDevices = (application as app.hyperlpa.HyperLpaApplication).remoteDevices
     private val backupManager = HyperLpaBackupManager(application, settingsStore, metadataStore)
@@ -232,8 +234,7 @@ class HyperLpaViewModel(
     // which the repository cannot guarantee once the refresh waits for a lock or a paired device.
     var profileRefreshPending by mutableStateOf(false)
         private set
-    var startRouteResolved by mutableStateOf(false)
-        private set
+    private var startRouteResolved = false
     private val selectedTab = MutableStateFlow(AppTab.PROFILES)
     private val searchQuery = MutableStateFlow("")
     private val activationCodeDraft = MutableStateFlow("")
@@ -315,6 +316,7 @@ class HyperLpaViewModel(
         }
         HyperLpaUiState(
             settingsLoaded = true,
+            initialDataLoaded = true,
             settings = settings,
             lpa = lpa,
             selectedTab = values[2] as AppTab,
@@ -337,23 +339,19 @@ class HyperLpaViewModel(
                 (!settings.loadOperatorIcons && !settings.estimateProfileSize) ||
                 (cloudData.complete && cloudData.input?.enrichmentKey == expectedEnrichmentKey),
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HyperLpaUiState())
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5_000),
+        HyperLpaUiState(
+            settingsLoaded = true,
+            settings = initialSettings,
+            lpa = repository.state.value,
+        ),
+    )
 
     init {
         viewModelScope.launch {
             settingsStore.settings.collect { settings ->
-                if (!startRouteResolved) {
-                    if (shouldOpenCompatibilityWizard(
-                            settingsLoaded = true,
-                            wizardCompleted = settings.compatibilityWizardCompleted,
-                            activationCodeDraft = activationCodeDraft.value,
-                            currentRoute = backStack.singleOrNull() as? AppRoute,
-                        )
-                    ) {
-                        backStack[0] = AppRoute.FirstRunSetup
-                    }
-                    startRouteResolved = true
-                }
                 repository.updateSettings(settings)
                 if (!repository.state.value.initialized) {
                     repository.discoverReaders(autoConnect = settings.autoLoadProfiles)
@@ -608,6 +606,20 @@ class HyperLpaViewModel(
         selectedTab = selectedTab.value.name,
         route = backStack.lastOrNull().toPersistedRoute(),
     )
+
+    fun resolveStartRoute(settings: AppSettings) {
+        if (startRouteResolved) return
+        if (shouldOpenCompatibilityWizard(
+                settingsLoaded = true,
+                wizardCompleted = settings.compatibilityWizardCompleted,
+                activationCodeDraft = activationCodeDraft.value,
+                currentRoute = backStack.singleOrNull() as? AppRoute,
+            )
+        ) {
+            backStack[0] = AppRoute.FirstRunSetup
+        }
+        startRouteResolved = true
+    }
 
     fun restoreNavigation(snapshot: NavigationSnapshot) {
         selectedTab.value = AppTab.entries.firstOrNull { it.name == snapshot.selectedTab }
@@ -1493,6 +1505,7 @@ class HyperLpaViewModel(
         private val notificationHistoryStore: NotificationHistoryStore,
         private val supportReportBuilder: SupportReportBuilder,
         private val provisioningCoordinator: ProvisioningCoordinator,
+        private val initialSettings: AppSettings,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T = HyperLpaViewModel(
@@ -1504,6 +1517,7 @@ class HyperLpaViewModel(
             notificationHistoryStore = notificationHistoryStore,
             supportReportBuilder = supportReportBuilder,
             provisioningCoordinator = provisioningCoordinator,
+            initialSettings = initialSettings,
         ) as T
     }
 }

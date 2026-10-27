@@ -223,6 +223,8 @@ fun HyperLpaApp(
                     rootTabBack = rootTabBack,
                     isRootRoute = backStack.size == 1 && backStack.lastOrNull() == AppRoute.Shell,
                 )
+                // Draw the saved start page and its loader immediately. The combined
+                // data flow must not hold the whole page at zero opacity during startup.
                 NavDisplay(
                 backStack = backStack,
                 onBack = viewModel::navigateBack,
