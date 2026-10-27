@@ -2,6 +2,7 @@ package app.hyperlpa.ui.screens
 
 import app.hyperlpa.data.LpaRepositoryState
 import app.hyperlpa.domain.model.LpaOperation
+import app.hyperlpa.domain.model.EuiccInfo
 import app.hyperlpa.domain.model.ProfileClass
 import app.hyperlpa.domain.model.ProfileInfo
 import app.hyperlpa.domain.model.ProfileState
@@ -12,6 +13,30 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ProfilesPageStateTest {
+    @Test
+    fun cachedEmptyCardDoesNotReturnToTheLoaderOnSelection() {
+        val reader = ReaderInfo("reader", "Reader", ReaderKind.OMAPI)
+        val lpa = LpaRepositoryState(
+            readers = listOf(reader), selectedReaderId = reader.id,
+            euiccInfo = EuiccInfo("89049032000000000000000000000001"),
+            operation = LpaOperation.Connecting(reader.name),
+            initialized = true, readerSnapshotPendingRefresh = true,
+        )
+        assertEquals(PageStateKind.EMPTY, profilesPageState(lpa, emptyList(), awaitInitialContent = true))
+    }
+
+    @Test
+    fun cachedProfilesDoNotWaitForArtworkWarmupOnSelection() {
+        val reader = ReaderInfo("reader", "Reader", ReaderKind.REMOTE, deviceId = "phone")
+        val lpa = LpaRepositoryState(
+            readers = listOf(reader), selectedReaderId = reader.id, profiles = listOf(profile()),
+            operation = LpaOperation.Connecting(reader.name),
+            initialized = true, readerSnapshotPendingRefresh = true,
+        )
+        assertEquals(PageStateKind.CONTENT, profilesPageState(lpa, lpa.profiles,
+            awaitInitialContent = true, awaitInitialArtwork = true))
+    }
+
     @Test
     fun firstDiscoveryDoesNotRevealAnEarlyReaderResult() {
         val reader = ReaderInfo("reader", "Reader", ReaderKind.OMAPI)

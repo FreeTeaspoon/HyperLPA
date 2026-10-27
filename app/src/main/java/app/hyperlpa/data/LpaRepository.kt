@@ -139,6 +139,7 @@ internal fun LpaRepositoryState.withReaderSnapshot(
 
 /** A reader the user chose whose session has not opened yet, and its cached card if any. */
 private data class ConnectionPreview(
+    val sequence: Long,
     val readerId: String,
     val readerName: String,
     val snapshot: ReaderSnapshot?,
@@ -236,6 +237,7 @@ class LpaRepository(
     private val deviceController = MutableStateFlow<RemoteDevices?>(null)
     // A chosen reader is shown at once, even while its session waits for a deferred card read.
     private val connectionPreview = MutableStateFlow<ConnectionPreview?>(null)
+    private val connectionSequence = java.util.concurrent.atomic.AtomicLong()
     private val presentationState = MutableStateFlow(LpaRepositoryState())
     val state: StateFlow<LpaRepositoryState>
         get() = if (deviceController.value == null) mutableState.asStateFlow() else presentationState.asStateFlow()
@@ -562,11 +564,12 @@ class LpaRepository(
         // the choice is shown before waiting for it. Showing it first also means releasing a
         // remote reader never falls back to the local reader that was selected before it.
         val preview = mutableState.value.readers.firstOrNull { it.id == readerId }?.let { reader ->
-            ConnectionPreview(reader.id, reader.name, synchronized(readerSnapshots) { readerSnapshots[reader.id] })
+            ConnectionPreview(connectionSequence.incrementAndGet(), reader.id, reader.name,
+                synchronized(readerSnapshots) { readerSnapshots[reader.id] })
         }
         connectionPreview.value = preview
         try {
-            if (devices?.isSelected == true && !devices.deselect()) return remoteOperationRunning(devices)
+            if (devices?.isSelected == true && !devices.deselectForReaderSelection()) return remoteOperationRunning(devices)
             return operationMutex.withLock {
                 val endpoint = endpointById[readerId]
                     ?: throw IllegalArgumentException(appContext.getString(R.string.failure_reader_unavailable))
@@ -1553,7 +1556,9 @@ class LpaRepository(
         } catch (error: Throwable) {
             if (session === opened) session = null
             opened?.close()
-            if (!reconnectingSelectedReader) {
+            val hasCachedCard = mutableState.value.selectedReaderId == endpoint.info.id &&
+                mutableState.value.euiccInfo != null
+            if (!reconnectingSelectedReader && !hasCachedCard) {
                 mutableState.value = mutableState.value.copy(
                     selectedReaderId = null,
                     profiles = emptyList(),
@@ -1563,7 +1568,7 @@ class LpaRepository(
                     readerSnapshotPendingRefresh = false,
                 )
             } else {
-                mutableState.value = mutableState.value.copy(readerSnapshotPendingRefresh = false)
+                mutableState.value = mutableState.value.copy(readerSnapshotPendingRefresh = true)
             }
             throw error
         }
