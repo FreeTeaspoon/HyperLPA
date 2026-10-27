@@ -106,16 +106,20 @@ private fun SystemBarsEffect(isDark: Boolean) {
     if (view.isInEditMode) return
     DisposableEffect(isDark) {
         (view.context.findActivity() as? ComponentActivity)?.let { activity ->
-            val barStyle = SystemBarStyle.auto(
-                android.graphics.Color.TRANSPARENT,
-                android.graphics.Color.TRANSPARENT,
-            ) { isDark }
-            activity.enableEdgeToEdge(statusBarStyle = barStyle, navigationBarStyle = barStyle)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                activity.window.isNavigationBarContrastEnforced = false
-            }
+            activity.applyHyperLpaSystemBars(isDark)
         }
         onDispose {}
+    }
+}
+
+internal fun ComponentActivity.applyHyperLpaSystemBars(isDark: Boolean) {
+    val barStyle = SystemBarStyle.auto(
+        android.graphics.Color.TRANSPARENT,
+        android.graphics.Color.TRANSPARENT,
+    ) { isDark }
+    enableEdgeToEdge(statusBarStyle = barStyle, navigationBarStyle = barStyle)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        window.isNavigationBarContrastEnforced = false
     }
 }
 

@@ -6,6 +6,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.res.Configuration
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -21,13 +22,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
-import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import app.hyperlpa.data.settings.AppSettings
+import app.hyperlpa.data.settings.ThemeMode
 import app.hyperlpa.reminders.hasProfileReminderPermission
 import app.hyperlpa.reminders.showTestProfileReminder
 import app.hyperlpa.ui.HyperLpaApp
@@ -35,17 +35,23 @@ import app.hyperlpa.ui.BluetoothReaderUiState
 import app.hyperlpa.ui.HyperLpaViewModel
 import app.hyperlpa.ui.NavigationSnapshot
 import app.hyperlpa.ui.theme.HyperLpaTheme
+import app.hyperlpa.ui.theme.applyHyperLpaSystemBars
 import io.github.g00fy2.quickie.QRResult
 import io.github.g00fy2.quickie.ScanCustomCode
 import io.github.g00fy2.quickie.config.BarcodeFormat
 import io.github.g00fy2.quickie.config.ScannerConfig
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import top.yukonga.miuix.kmp.basic.SnackbarDuration
 import top.yukonga.miuix.kmp.basic.SnackbarHostState
 
 class MainActivity : ComponentActivity() {
     private val applicationGraph: HyperLpaApplication
         get() = application as HyperLpaApplication
+
+    private lateinit var initialSettings: AppSettings
 
     private val viewModel by viewModels<HyperLpaViewModel> {
         HyperLpaViewModel.Factory(
@@ -57,6 +63,7 @@ class MainActivity : ComponentActivity() {
             notificationHistoryStore = applicationGraph.notificationHistoryStore,
             supportReportBuilder = applicationGraph.supportReportBuilder,
             provisioningCoordinator = applicationGraph.provisioningCoordinator,
+            initialSettings = initialSettings,
         )
     }
 
@@ -78,8 +85,23 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        val splashScreen = installSplashScreen()
+        // Compose the saved theme and navigation on the first traversal. Waiting
+        // for the combined UI flow delays the platform's normal launch handoff.
+        initialSettings = runBlocking(Dispatchers.IO) {
+            applicationGraph.settingsStore.settings.first()
+        }
+        if (applicationGraph.isPredictiveBackEnabled() != initialSettings.predictiveBack) {
+            applicationGraph.setPredictiveBackEnabled(initialSettings.predictiveBack)
+        }
         super.onCreate(savedInstanceState)
+        applyHyperLpaSystemBars(
+            isDark = when (initialSettings.themeMode) {
+                ThemeMode.SYSTEM -> resources.configuration.uiMode and
+                    Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+                ThemeMode.LIGHT -> false
+                ThemeMode.DARK -> true
+            },
+        )
         savedInstanceState?.let { state ->
             viewModel.restoreNavigation(
                 NavigationSnapshot(
@@ -88,8 +110,6 @@ class MainActivity : ComponentActivity() {
                 ),
             )
         }
-        var startupLayoutReady = false
-        splashScreen.setKeepOnScreenCondition { !startupLayoutReady }
 
         permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
             viewModel.completeRuntimePermissionRequest()
@@ -125,17 +145,11 @@ class MainActivity : ComponentActivity() {
         }
         refreshBluetoothState()
 
+        intent?.let(::consumeActivationIntent)
+        viewModel.resolveStartRoute(initialSettings)
+
         setContent {
             val state = viewModel.state.collectAsStateWithLifecycle().value
-            LaunchedEffect(state.settingsLoaded, viewModel.startRouteResolved) {
-                if (state.settingsLoaded && viewModel.startRouteResolved) {
-                    // The flow can be ready before the stored theme/navigation geometry has
-                    // been laid out. Let that composition and its inset traversal finish before
-                    // releasing the launch window, so the centered loader never draws mid-layout.
-                    repeat(2) { withFrameNanos { } }
-                    startupLayoutReady = true
-                }
-            }
             var firstReaderConfiguration by remember { mutableStateOf(true) }
             LaunchedEffect(
                 state.lpa.initialized,
@@ -158,8 +172,8 @@ class MainActivity : ComponentActivity() {
                 }
             }
             LaunchedEffect(state.settingsLoaded, state.settings.predictiveBack) {
-                // The initial UI state contains defaults, not the persisted preference. Applying
-                // it can recreate twice during startup and strand the launch-window handoff.
+                // Startup already applies the saved flag before onCreate. Recreate only
+                // when the preference changes while this activity is running.
                 if (state.settingsLoaded &&
                     applicationGraph.isPredictiveBackEnabled() != state.settings.predictiveBack
                 ) {
@@ -201,8 +215,6 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
-
-        intent?.let(::consumeActivationIntent)
     }
 
     override fun onStart() {
