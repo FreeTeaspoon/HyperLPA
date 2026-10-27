@@ -68,6 +68,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
@@ -237,6 +239,7 @@ class HyperLpaViewModel(
     private var startRouteResolved = false
     private val selectedTab = MutableStateFlow(AppTab.PROFILES)
     private val searchQuery = MutableStateFlow("")
+    private var readerConnectionJob: Job? = null
     private val activationCodeDraft = MutableStateFlow("")
     private val cloudProfileData = MutableStateFlow(CloudProfileData())
     private val cloudRefreshToken = MutableStateFlow(0)
@@ -290,7 +293,9 @@ class HyperLpaViewModel(
     ) { values ->
         val settings = values[0] as AppSettings
         val lpa = values[1] as LpaRepositoryState
-        val remote = (values[15] as DeviceSnapshot?).takeIf { lpa.selectedReader?.deviceId != null }
+        val remote = (values[15] as DeviceSnapshot?).takeIf {
+            lpa.selectedReader?.deviceId != null && it?.lpa?.selectedReaderId == lpa.selectedReaderId
+        }
         val metadata = remote?.metadata ?: values[5] as Map<String, ProfileMetadata>
         val refreshToken = values[7] as Int
         val previewCloudData = values[9] as DownloadPreviewCloudData
@@ -383,7 +388,9 @@ class HyperLpaViewModel(
                     estimateProfileSize = settings.estimateProfileSize,
                     profiles = lpa.profiles,
                     eid = lpa.euiccInfo?.eid,
-                    metadata = remote?.metadata?.takeIf { lpa.selectedReader?.deviceId != null } ?: metadata,
+                    metadata = remote?.metadata?.takeIf {
+                        lpa.selectedReader?.deviceId != null && remote.lpa.selectedReaderId == lpa.selectedReaderId
+                    } ?: metadata,
                     refreshToken = refreshToken,
                 )
             }
@@ -684,11 +691,23 @@ class HyperLpaViewModel(
         }
     }
     fun connectReader(readerId: String) {
-        // Do not queue a reader change behind a mutation while the screen still shows its old card.
-        if (dataMutationMutex.isLocked || repository.state.value.operation !is LpaOperation.Idle) return
-        launch {
-            if (repository.connect(readerId) is OperationOutcome.Success) {
-                settingsStore.setLastReaderId(readerId)
+        val operation = repository.state.value.operation
+        if (dataMutationMutex.isLocked || requestedProfileSwitch.value != null ||
+            singleDownloadActive.value || batchDownloadState.value.running ||
+            operation !is LpaOperation.Idle && operation !is LpaOperation.Connecting
+        ) return
+        readerConnectionJob?.cancel()
+        // Publish the target before yielding. Connections can be replaced; card mutations cannot.
+        readerConnectionJob = viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                if (repository.connect(readerId) is OperationOutcome.Success) {
+                    coroutineContext.ensureActive()
+                    settingsStore.setLastReaderId(readerId)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                repository.reportFailure(error)
             }
         }
     }
@@ -700,7 +719,8 @@ class HyperLpaViewModel(
         }
     }
     fun setProfileEnabled(iccid: String, enabled: Boolean) {
-        if (requestedProfileSwitch.value != null || dataMutationMutex.isLocked ||
+        if (requestedProfileSwitch.value != null || dataMutationMutex.isLocked || readerConnectionJob?.isActive == true ||
+            repository.state.value.readerSnapshotPendingRefresh ||
             repository.state.value.operation !is LpaOperation.Idle
         ) return
         val profiles = state.value.profiles
@@ -731,7 +751,8 @@ class HyperLpaViewModel(
     }
     fun deleteProfile(iccid: String) = readerAction { repository.deleteProfile(iccid) }
     fun renameProfile(iccid: String, nickname: String) = readerAction { repository.renameProfile(iccid, nickname) }
-    fun downloadProfile(request: DownloadRequest): Boolean = provisioningCoordinator.startSingleDownload(request)
+    fun downloadProfile(request: DownloadRequest): Boolean = readerConnectionJob?.isActive != true &&
+        provisioningCoordinator.startSingleDownload(request)
     fun startBatchDownload(requests: List<DownloadRequest>) {
         provisioningCoordinator.startBatchDownload(requests)
     }
@@ -1435,11 +1456,15 @@ class HyperLpaViewModel(
     private fun readerAction(block: suspend () -> Unit) = readerAction(onRejected = {}, block = block)
 
     private fun readerAction(onRejected: () -> Unit, block: suspend () -> Unit) {
+        if (readerConnectionJob?.isActive == true) {
+            onRejected()
+            return
+        }
         val selected = repository.state.value.selectedReaderId
         val affinity = repository.selectedReaderAffinitySnapshot()
         launch {
             // Revocation or reader removal must never redirect queued work onto a local SIM.
-            if (selected == repository.state.value.selectedReaderId &&
+            if (readerConnectionJob?.isActive != true && selected == repository.state.value.selectedReaderId &&
                 affinity == repository.selectedReaderAffinitySnapshot()) block() else onRejected()
         }
     }

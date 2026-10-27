@@ -5,11 +5,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.onRoot
 import androidx.test.core.app.ApplicationProvider
@@ -158,7 +161,7 @@ class ProfilesLoadingTest {
     }
 
     @Test
-    fun busyReaderMenuStaysUsableAndExplainsTheOperationLock() {
+    fun readerMenuCanReplaceAConnectionWithoutAWaitMessage() {
         val other = ReaderInfo("other", "Other reader", ReaderKind.OMAPI)
         val state = mutableStateOf(loaded.copy(lpa = loaded.lpa.copy(
             readers = listOf(reader, other), operation = LpaOperation.Connecting(reader.name),
@@ -170,8 +173,29 @@ class ProfilesLoadingTest {
         compose.onNodeWithText("Active reader").assertIsEnabled().performClick()
         compose.onNodeWithText("Other reader").assertIsEnabled().performClick()
         compose.runOnIdle {
+            assertEquals(other.id, selected)
+            assertEquals(null, message)
+        }
+    }
+
+    @Test
+    fun cardMutationDisablesReaderChangesWithoutAWaitMessage() {
+        val other = ReaderInfo("other", "Other reader", ReaderKind.OMAPI)
+        val state = mutableStateOf(loaded.copy(lpa = loaded.lpa.copy(readers = listOf(reader, other))))
+        var selected: String? = null
+        var message: String? = null
+        show({ state.value }, onSelectReader = { selected = it }, onSnackbar = { message = it })
+        assertControlsEnabled()
+        compose.runOnIdle {
+            state.value = state.value.copy(lpa = state.value.lpa.copy(
+                operation = LpaOperation.Switching(profile.iccid, false),
+            ))
+        }
+        compose.onNodeWithText("Active reader").assertHasNoClickAction().performTouchInput { click() }
+        compose.onNodeWithText("Other reader").assertDoesNotExist()
+        compose.runOnIdle {
             assertEquals(null, selected)
-            assertEquals("Wait for the current operation to finish before changing readers.", message)
+            assertEquals(null, message)
         }
     }
 
@@ -206,7 +230,6 @@ class ProfilesLoadingTest {
     }
 
     private fun assertControlsDisabled() {
-        compose.onNodeWithText("Active reader").assertIsEnabled()
         compose.onNodeWithText("EID").assertIsEnabled()
         compose.onNodeWithText("Test profile", substring = true).assertIsEnabled()
         compose.onNode(hasSetTextAction()).assertIsEnabled()

@@ -71,7 +71,6 @@ import app.hyperlpa.domain.model.ProfileInfo
 import app.hyperlpa.domain.model.ProfileState
 import app.hyperlpa.domain.model.takeUnicodeCodePoints
 import app.hyperlpa.ui.HyperLpaUiState
-import app.hyperlpa.ui.LocalMiuixSnackbar
 import app.hyperlpa.ui.BluetoothReaderAvailability
 import app.hyperlpa.ui.BluetoothReaderUiState
 import app.hyperlpa.ui.adaptive.CenteredContent
@@ -113,7 +112,6 @@ import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.PullToRefresh
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
-import top.yukonga.miuix.kmp.basic.SnackbarDuration
 import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.SwitchDefaults
 import top.yukonga.miuix.kmp.basic.Text
@@ -166,8 +164,10 @@ fun ProfilesScreen(
     // must not invalidate the home list while the bottom-sheet entrance animation is running.
     val profileActionsState = remember { mutableStateOf<ProfileInfo?>(null) }
     val profiles = state.profiles
-    val profileSwitchLocked = state.lpa.operation !is LpaOperation.Idle ||
+    val profileSwitchLocked = state.lpa.operation !is LpaOperation.Idle || state.lpa.readerSnapshotPendingRefresh ||
         state.requestedProfileSwitchIccid != null
+    val readerSelectionEnabled = state.requestedProfileSwitchIccid == null &&
+        (state.lpa.operation is LpaOperation.Idle || state.lpa.operation is LpaOperation.Connecting)
     val artworkLoadState = rememberProfileArtworkBitmaps(
         profiles = profiles,
         cloudIcons = state.operatorIcons,
@@ -313,7 +313,7 @@ fun ProfilesScreen(
                         item(span = { GridItemSpan(maxLineSpan) }) {
                             ProfilesHeader(
                                 state = state,
-                                enabled = !profileSwitchLocked,
+                                enabled = readerSelectionEnabled,
                                 onSearchChange = onSearchChange,
                                 onSelectReader = onSelectReader,
                                 onOpenEuiccDetails = onOpenEuiccDetails,
@@ -350,7 +350,7 @@ fun ProfilesScreen(
                         item(key = "header") {
                             ProfilesHeader(
                                 state = state,
-                                enabled = !profileSwitchLocked,
+                                enabled = readerSelectionEnabled,
                                 onSearchChange = onSearchChange,
                                 onSelectReader = onSelectReader,
                                 onOpenEuiccDetails = onOpenEuiccDetails,
@@ -436,13 +436,14 @@ internal fun profilesPageState(
         !lpa.readerSnapshotPendingRefresh -> PageStateKind.LOADING
     !lpa.initialized ||
         (lpa.operation is LpaOperation.DiscoveringReaders && lpa.profiles.isEmpty()) -> PageStateKind.LOADING
-    awaitInitialArtwork && lpa.profiles.isNotEmpty() -> PageStateKind.LOADING
+    awaitInitialArtwork && !lpa.readerSnapshotPendingRefresh && lpa.profiles.isNotEmpty() -> PageStateKind.LOADING
     lpa.readers.isEmpty() -> PageStateKind.ERROR
     lpa.selectedReader == null -> PageStateKind.EMPTY
     // An empty list is unconfirmed until the refresh finishes; the pull-to-refresh indicator
     // already shows its progress, so no page state is drawn below the header meanwhile.
     lpa.operation is LpaOperation.Refreshing && lpa.profiles.isEmpty() -> PageStateKind.CONTENT
-    lpa.operation is LpaOperation.Connecting && lpa.profiles.isEmpty() -> PageStateKind.LOADING
+    lpa.operation is LpaOperation.Connecting && lpa.profiles.isEmpty() &&
+        lpa.euiccInfo == null -> PageStateKind.LOADING
     profiles.isEmpty() -> PageStateKind.EMPTY
     else -> PageStateKind.CONTENT
 }
@@ -599,8 +600,6 @@ private fun ProfilesHeader(
     // A reader without a cached card has no EID until it opens. Holding the row's place keeps
     // the rows and the loading state below it from shifting when the EID arrives.
     val connecting = state.lpa.operation is LpaOperation.Connecting
-    val showSnackbar = LocalMiuixSnackbar.current
-    val readerBusyMessage = stringResource(R.string.profiles_reader_switch_busy)
     Column(modifier = modifier.fillMaxWidth()) {
         val showEid = state.settings.showEidOnHome && (state.lpa.euiccInfo != null || connecting)
         val showReaderSelector = state.settings.showReaderSelectorOnHome && state.lpa.readers.isNotEmpty()
@@ -618,15 +617,14 @@ private fun ProfilesHeader(
                         title = stringResource(R.string.profiles_active_reader),
                         summary = shownReader?.detail
                             ?: stringResource(R.string.profiles_select_reader),
-                        // The menu stays readable during card work. A conflicting choice gives
-                        // immediate feedback instead of silently doing nothing.
+                        enabled = enabled,
                         entry = DropdownEntry(state.lpa.readers.mapIndexed { index, reader ->
                             DropdownItem(
                                 text = reader.name,
+                                enabled = enabled,
                                 selected = index == selectedIndex,
                                 onClick = {
                                     if (enabled) onSelectReader(reader.id)
-                                    else showSnackbar(readerBusyMessage, SnackbarDuration.Short)
                                 },
                             )
                         }),
