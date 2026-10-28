@@ -1,7 +1,7 @@
 # HyperLPA relay
 
-Connect two HyperLPA phones across networks and use the eUICC reader on one from
-the other. The relay runs in your Cloudflare account. Both phones connect out over
+Connect HyperLPA phones and trusted browsers across networks. The relay runs in
+your Cloudflare account. Devices connect out over
 HTTPS and WebSocket, so there is no server to maintain or port to forward.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/FreeTeaspoon/HyperLPA/tree/main/relay)
@@ -20,7 +20,7 @@ appear in **Active reader** as `SIM1 on Device name` and `SIM2 on Device name`.
 
 1. Select **Deploy to Cloudflare** above and sign in to Cloudflare and GitHub. Cloudflare creates a copy of the `relay` directory in your GitHub account, provisions the Durable Object, and deploys the Worker. Review the Worker name and account before deploying.
 2. When asked for `ENROLLMENT_KEY`, enter the key you saved. Cloudflare stores it as a Worker secret. The field must not be left blank.
-3. Copy the deployed HTTPS `workers.dev` address. Open `<your address>/health` and check for `{"protocol":1}`.
+3. Copy the deployed HTTPS `workers.dev` address. Open `<your address>/health` and check for `{"protocol":1,"groups":1}`.
 
 Use the relay address as an origin such as `https://hyperlpa-relay.example.workers.dev`.
 Do not include `/health`, a trailing path, a query, or credentials. A custom Worker
@@ -70,6 +70,29 @@ an APK, Git, or public logs.
    **Active reader**. Use the existing profile and notification screens.
 
 ## What you can do
+
+### Web trusted group
+
+The [web dashboard](../web/README.md) runs as a static Vite app on Vercel. Deploy
+the updated relay and Android app, then set `WEB_ORIGINS` on the Worker to the exact
+frontend origin. Browser HTTP and WebSocket requests from other origins are
+rejected. Native Android connections do not send an Origin header.
+
+Create one owner browser using the deployment enrollment key. Pair each phone with
+that owner and explicitly approve its owner authority on the phone. Additional
+browsers use a one-use ten-minute invitation, receive owner approval once, and get
+per-phone profile/notification permissions. They do not need the enrollment key.
+The owner provisions distinct phone/browser pair secrets through encrypted
+messages and encrypted relay packages. The relay receives no plaintext pair keys.
+Ordinary phone pairing below remains separate and does not confer group authority.
+
+Keep an encrypted owner recovery export and its separate recovery key. There is
+no password reset or second owner. The owner must be connected to change group
+membership; already approved controllers can operate while it is offline. Relay
+revocation blocks a member immediately. Offline phones apply key removals when
+the owner and phone reconnect. See the web guide for setup, recovery, and limits.
+
+### Native phone workflows
 
 The remote reader supports the same profile workflow as a local reader: refresh,
 download with preview and progress, enable or disable, rename, and delete. You can
@@ -136,15 +159,15 @@ a new key. It has not undergone an independent security audit.
 
 Rotating `ENROLLMENT_KEY` prevents new registrations with the old enrollment key.
 It does not revoke existing relay tokens or device pairings. To retire a phone,
-remove its pairings on its peers and unregister it when possible. There is no
-public relay administration or multi-user account system in this build.
+remove its pairings on its peers and unregister it when possible. The trusted
+group owner can also revoke enrolled members through the web dashboard. There is
+no multi-user account system in this build.
 
 ## For developers
 
 [PROTOCOL.md](PROTOCOL.md) describes the HTTPS/WebSocket contract. Android has no
 Cloudflare SDK or account identifier. Another backend can implement the contract;
-this repository ships the Cloudflare backend. There is no browser controller in
-this release.
+this repository ships the Cloudflare backend and the [browser controller](../web/README.md).
 
 For local relay development, copy `.dev.vars.example` to the ignored `.dev.vars`,
 replace the empty `ENROLLMENT_KEY` with a disposable key, and run `npm run dev`.

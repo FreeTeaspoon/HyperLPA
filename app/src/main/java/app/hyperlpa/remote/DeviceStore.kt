@@ -37,6 +37,8 @@ internal data class StoredDevices(
     val notificationApps: Set<String> = emptySet(),
     val allowedNotificationApps: Set<String> = emptySet(),
     val notificationPeers: Set<String> = emptySet(),
+    val groupOwnerId: String = "",
+    val groupRevision: Long = 0,
 )
 
 /** One atomic, Keystore-encrypted journal. Pair secrets never enter app settings or backups. */

@@ -1,8 +1,10 @@
 import { DurableObject } from "cloudflare:workers";
+import { Groups } from "./groups";
 
 export interface Env {
   RELAY: DurableObjectNamespace<Relay>;
   ENROLLMENT_KEY: string;
+  WEB_ORIGINS?: string;
 }
 
 const MAX_FRAME = 1_500_000;
@@ -44,13 +46,31 @@ const randomSecret = () => btoa(String.fromCharCode(...crypto.getRandomValues(ne
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    if (new URL(request.url).pathname === "/health") return json({ protocol: 1 });
-    return env.RELAY.getByName("hyperlpa-v1").fetch(request);
+    const origin = request.headers.get("Origin");
+    const allowed = (env.WEB_ORIGINS ?? "").split(",").map(s => s.trim()).filter(Boolean);
+    if (origin && !allowed.includes(origin)) return json({ error: "origin_denied" }, 403);
+    if (request.method === "OPTIONS") {
+      if (!origin) return json({ error: "origin_required" }, 403);
+      return new Response(null, { status: 204, headers: {
+        "Access-Control-Allow-Origin": origin, "Vary": "Origin",
+        "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Device-Id, X-Enrollment-Key",
+        "Access-Control-Max-Age": "600",
+      } });
+    }
+    const response = new URL(request.url).pathname === "/health" ? json({ protocol: 1, groups: 1 })
+      : await env.RELAY.getByName("hyperlpa-v1").fetch(request);
+    if (!origin || response.status === 101) return response;
+    const headers = new Headers(response.headers);
+    headers.set("Access-Control-Allow-Origin", origin);
+    headers.set("Vary", "Origin");
+    return new Response(response.body, { status: response.status, headers });
   },
 };
 
 /** Stores only routing metadata, hashed relay credentials, and opaque ciphertext. */
 export class Relay extends DurableObject<Env> {
+  private groups: Groups;
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.storage.sql.exec(`
@@ -61,6 +81,7 @@ export class Relay extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS rates (key TEXT PRIMARY KEY, count INTEGER NOT NULL, expires INTEGER NOT NULL);
     `);
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+    this.groups = new Groups(ctx);
   }
 
   private limited(key: string, limit: number): boolean {
@@ -75,6 +96,7 @@ export class Relay extends DurableObject<Env> {
 
   private async authenticated(request: Request): Promise<string | null> {
     const id = request.headers.get("X-Device-Id") ?? "";
+    if (this.groups.revoked(id)) return null;
     const token = request.headers.get("Authorization")?.replace(/^Bearer /, "") ?? "";
     if (!ID.test(id) || !SECRET.test(token)) return null;
     const hashed = await digest(token);
@@ -90,7 +112,7 @@ export class Relay extends DurableObject<Env> {
       const row = SECRET.test(token) ? this.ctx.storage.sql.exec<{ device: string; expires: number }>(
         "SELECT device, expires FROM tickets WHERE token = ?", ticketHash,
       ).toArray()[0] : undefined;
-      if (!row || row.expires <= Date.now() ||
+      if (!row || row.expires <= Date.now() || this.groups.revoked(row.device) ||
         !this.ctx.storage.sql.exec("SELECT id FROM devices WHERE id = ?", row.device).toArray().length)
         return json({ error: "unauthorized" }, 401);
       // No await between checking and consuming a one-use ticket.
@@ -108,7 +130,8 @@ export class Relay extends DurableObject<Env> {
       return new Response(null, { status: 101, webSocket: client });
     }
     if (request.method !== "POST") return json({ error: "not_found" }, 404);
-    if (Number(request.headers.get("Content-Length") ?? 0) > 4096) return json({ error: "too_large" }, 413);
+    const bodyLimit = path === "/v1/group/publish" ? 2_000_000 : 4096;
+    if (Number(request.headers.get("Content-Length") ?? 0) > bodyLimit) return json({ error: "too_large" }, 413);
     let raw = "";
     try {
       const reader = request.body?.getReader();
@@ -119,7 +142,7 @@ export class Relay extends DurableObject<Env> {
           const chunk = await reader.read();
           if (chunk.done) break;
           size += chunk.value.length;
-          if (size > 4096) { await reader.cancel(); return json({ error: "too_large" }, 413); }
+          if (size > bodyLimit) { await reader.cancel(); return json({ error: "too_large" }, 413); }
           raw += decoder.decode(chunk.value, { stream: true });
         }
         raw += decoder.decode();
@@ -128,6 +151,10 @@ export class Relay extends DurableObject<Env> {
     let body: Record<string, string>;
     try { body = JSON.parse(raw || "{}"); } catch { return json({ error: "invalid_json" }, 400); }
     if (!body || typeof body !== "object" || Array.isArray(body)) return json({ error: "invalid_request" }, 400);
+    if (path === "/v1/group/join") {
+      if (this.limited("group-join", 30)) return json({ error: "rate_limited" }, 429);
+      return this.groups.join(body);
+    }
     if (path === "/v1/register") {
       // Bound this table using one global counter as well as the edge-supplied source address.
       if (this.limited("enroll", 60) || this.limited("enroll:" + (request.headers.get("CF-Connecting-IP") ?? "local"), 10))
@@ -135,7 +162,9 @@ export class Relay extends DurableObject<Env> {
       const supplied = request.headers.get("X-Enrollment-Key") ?? "";
       if (!this.env.ENROLLMENT_KEY || supplied.length > 256 ||
         await digest(supplied) !== await digest(this.env.ENROLLMENT_KEY)) return json({ error: "unauthorized" }, 401);
-      if (!ID.test(body.id ?? "") || !SECRET.test(body.token ?? "")) return json({ error: "invalid_device" }, 400);
+      if (typeof body.id !== "string" || typeof body.token !== "string" || !ID.test(body.id) || !SECRET.test(body.token))
+        return json({ error: "invalid_device" }, 400);
+      if (this.groups.revoked(body.id)) return json({ error: "revoked" }, 403);
       const token = await digest(body.token);
       const existing = this.ctx.storage.sql.exec<{ token: string }>("SELECT token FROM devices WHERE id = ?", body.id).toArray()[0];
       if (existing) return existing.token === token ? json({ protocol: 1 }) : json({ error: "conflict" }, 409);
@@ -147,6 +176,8 @@ export class Relay extends DurableObject<Env> {
     const device = await this.authenticated(request);
     if (!device) return json({ error: "unauthorized" }, 401);
     if (this.limited("http:" + device, 60)) return json({ error: "rate_limited" }, 429);
+    if (path.startsWith("/v1/group/")) return this.groups.handle(path, body, device,
+      request.headers.get("X-Enrollment-Key") ?? "", this.env.ENROLLMENT_KEY);
     if (path === "/v1/session") {
       const ticket = randomSecret();
       const hashed = await digest(ticket);
@@ -157,6 +188,7 @@ export class Relay extends DurableObject<Env> {
       return json({ ticket });
     }
     if (path === "/v1/unregister") {
+      if (this.groups.owner() === device) return json({ error: "owner_requires_recovery" }, 409);
       this.ctx.storage.sql.exec("DELETE FROM devices WHERE id = ?", device);
       this.ctx.storage.sql.exec("DELETE FROM tickets WHERE device = ?", device);
       this.ctx.storage.sql.exec("DELETE FROM messages WHERE sender = ? OR recipient = ?", device, device);
@@ -169,7 +201,7 @@ export class Relay extends DurableObject<Env> {
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
     const device = ws.deserializeAttachment()?.device as string;
     if (!device || typeof raw !== "string" || raw.length > MAX_FRAME) { ws.close(1009, "Invalid frame"); return; }
-    if (!this.ctx.storage.sql.exec("SELECT id FROM devices WHERE id = ?", device).toArray().length) { ws.close(1008, "Unregistered device"); return; }
+    if (this.groups.revoked(device) || !this.ctx.storage.sql.exec("SELECT id FROM devices WHERE id = ?", device).toArray().length) { ws.close(1008, "Unregistered device"); return; }
     if (this.limited("ws:" + device, 2048)) { ws.close(1008, "Rate limit"); return; }
     let frame;
     try { frame = JSON.parse(raw); } catch { ws.close(1007, "Invalid JSON"); return; }
@@ -181,6 +213,7 @@ export class Relay extends DurableObject<Env> {
       ws.send(JSON.stringify({ type: "error", code: "invalid_message" })); return;
     }
     const e = frame.message as Envelope;
+    if (!this.groups.allowed(device, e.to)) { ws.send(JSON.stringify({ type: "error", id: e.id, code: "group_access_denied" })); return; }
     this.ctx.storage.sql.exec("DELETE FROM messages WHERE expires <= ?", Date.now());
     const known = this.ctx.storage.sql.exec("SELECT id FROM devices WHERE id = ?", e.to).toArray().length > 0;
     const pending = this.ctx.storage.sql.exec<{ n: number; bytes: number }>(
@@ -211,6 +244,6 @@ export class Relay extends DurableObject<Env> {
       await this.ctx.storage.setAlarm(Date.now() + 120_000);
   }
 
-  webSocketClose(ws: WebSocket, code: number): void { ws.close(code === 1006 ? 1001 : code); }
+  webSocketClose(ws: WebSocket, code: number): void { ws.close(code === 1005 ? 1000 : code === 1006 ? 1001 : code); }
   webSocketError(ws: WebSocket): void { ws.close(1011, "Connection interrupted"); }
 }

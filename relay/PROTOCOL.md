@@ -9,7 +9,7 @@ All responses use `Cache-Control: no-store`. All device connections require TLS.
 
 | Request | Authentication | Body / result |
 | --- | --- | --- |
-| `GET /health` | None | `{"protocol":1}` |
+| `GET /health` | None | `{"protocol":1,"groups":1}` |
 | `POST /v1/register` | `X-Enrollment-Key` | Body has `id` and `token`. Result has `protocol`. |
 | `POST /v1/session` | `X-Device-Id` and `Authorization: Bearer <token>` | Returns a random, single-use `ticket`, valid for 30 seconds. |
 | `GET /v1/socket?ticket=…` | Ticket | WebSocket upgrade. Replaces the device's previous socket. |
@@ -19,6 +19,81 @@ IDs are lowercase UUID strings. Tokens are random 32-byte values encoded as
 unpadded base64url. Registration with the same ID and token is idempotent;
 changing a registered token is rejected. Registration bodies are limited to 4 KiB.
 The enrollment key is not retained by the Android app after registration.
+
+### Browser origins and trusted groups
+
+`WEB_ORIGINS` is an exact comma-separated Origin allowlist for HTTP, CORS
+preflight, and WebSocket upgrades. No wildcard or suffix matching is performed.
+Native clients without an Origin header retain token authentication. Origin
+checking is an additional browser boundary, not a replacement for credentials.
+
+Each deployment optionally has one owner identity. All endpoints below are POST
+and use device ID/bearer authentication unless stated otherwise. Bodies are JSON.
+
+| Endpoint | Body | Authority and result |
+| --- | --- | --- |
+| `/v1/group/create` | `{}` | Registered device plus deployment `X-Enrollment-Key`; establishes the sole owner. Idempotent for that owner. |
+| `/v1/group/invite` | `hash` | Owner; SHA-256 hex digest of a random 32-byte ticket. Replaces the previous invitation; expires in ten minutes. |
+| `/v1/group/join` | `id`, `token`, `ticket` | One-use ticket, no prior device auth. Registers a pending controller atomically. |
+| `/v1/group/approve` | `id` | Owner; activates a pending controller. Does not itself grant phone keys. |
+| `/v1/group/add-phone` | `id` | Owner; records an already registered phone after encrypted owner approval. Idempotent for an active phone. |
+| `/v1/group/state` | `{}` | Returns `owner`, `members`, own encrypted `package`, and `revision`. Only owner sees the roster; other members see only their own row. |
+| `/v1/group/publish` | `id`, `revision`, `package` | Owner; stores an opaque package for an active controller or the owner. Revision must strictly increase. |
+| `/v1/group/revoke` | `id` | Owner; blocks a member other than the owner, deletes registration/tickets/queued ciphertext/package, closes sockets with 4003. Keeps a revocation tombstone. |
+
+Pending controllers can exchange ciphertext only with the owner. Active
+controllers can exchange it only with the owner and active group phones. Legacy
+native pairings otherwise retain their routing behavior. The phone enforces
+decrypted group permissions. A revoked ID is rejected by registration, HTTP,
+WebSocket admission, and message routing. The owner cannot unregister itself;
+`owner_requires_recovery` prevents accidental loss of ownership.
+
+Ordinary bodies are limited to 4 KiB. Package publication accepts 2 MB bodies,
+with at most 1,900,000 base64url characters in the package. Invitations and stored
+relay tokens are hashed. The member roster, roles, status, revisions, and routing
+metadata are visible to the relay; device names and grants are encrypted.
+
+Browser invitations use `hyperlpa-group:` plus base64url JSON with the phone
+invitation fields and a random `ticket`. The owner/browser pair secret and ticket
+are separate random 32-byte values. An encrypted `pair` proves possession to the
+owner, which asks for explicit approval. New browsers start with no phone grants.
+
+Controller packages contain `{ "phones": [...] }` with each allowed phone's ID,
+name, distinct `pair`/`secret`, and boolean profile/notification grants. Derive an
+AES-256-GCM key with HKDF-SHA256, decoded owner/controller pair secret as input,
+UTF-8 `HyperLPA/group-package/v1` as salt, and `<owner>/<recipient>` as info.
+Use a random 12-byte nonce and the UTF-8 AAD `<owner>\n<recipient>\n<revision>`.
+The package is unpadded base64url of nonce followed by ciphertext and 16-byte tag.
+Recipient and revision are authenticated. Controllers only accept increasing
+revisions and validated phone records.
+
+The owner's own package uses the same format, owner as both endpoints, and its
+random relay token as HKDF input. Its plaintext is the owner identity, grants,
+and pending-operation journal. The relay stores only the token hash and cannot
+derive that key. It supports refreshing an old encrypted owner export after
+restore. It is not an account recovery service and does not rotate a lost token.
+
+### Phone group provisioning
+
+`pair` can carry `groupOwner: true`. Updated Android displays the requested owner
+authority before approval and stores at most one owner. `paired` and `hello_reply`
+advertise `groupVersion: 1`; the web owner rejects phones without this support.
+Existing v1 peers ignore these optional fields.
+
+The approved owner sends encrypted `group_sync` with `groupSync` containing a
+monotonic positive `revision` and a full replacement `peers` list. Each peer has
+`id`, `name`, `pair`, `secret`, `canManageProfiles`, and `canViewNotifications`.
+The phone validates all records before applying the update and replies
+`group_synced` with the applied revision. An identical revision is idempotent.
+Only peers managed by that owner are replaced. Ordinary pairings cannot be
+overwritten. The list has at most 31 controllers and all pairings together at most
+32 peers. The owner creates a unique secret per phone/controller relation.
+
+Profile commands and positive installation decisions require `canManageProfiles`.
+Notification access requires the controller grant, source sharing enabled, and
+source consent for both the controller and its group owner. Removing the owner
+locally also removes all peers managed by it. The relay blocks revoked members
+immediately; an offline phone learns key changes only on a later owner sync.
 
 ## WebSocket mailbox
 

@@ -75,7 +75,14 @@ internal data class PairedDevice(
     val secret: String,
     val approved: Boolean = false,
     val incoming: Boolean = false,
+    val groupOwner: Boolean = false,
+    val managedBy: String = "",
+    val canManageProfiles: Boolean = true,
+    val canViewNotifications: Boolean = false,
 )
+
+@Serializable
+internal data class GroupSync(val revision: Long, val peers: List<PairedDevice> = emptyList())
 
 @Serializable
 internal enum class DeviceAction {
@@ -129,6 +136,9 @@ internal data class DeviceMessage(
     val phoneNotifications: List<PhoneNotificationEntry> = emptyList(),
     val phoneNotificationsAvailable: Boolean = false,
     val notificationId: String = "",
+    val groupOwner: Boolean = false,
+    val groupVersion: Int = 0,
+    val groupSync: GroupSync? = null,
 )
 
 @Serializable

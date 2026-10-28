@@ -1,3 +1,5 @@
 # Generate a unique value with: openssl rand -hex 32
 # The Deploy to Cloudflare form asks for this as a secret.
 ENROLLMENT_KEY=
+# Exact web origins, comma separated. Never use a wildcard.
+WEB_ORIGINS=http://127.0.0.1:5173,http://localhost:5173
