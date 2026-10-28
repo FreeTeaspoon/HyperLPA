@@ -46,7 +46,7 @@ function envelope(from: Device, to: Device): Envelope {
 
 beforeEach(async () => {
   await runInDurableObject(env.RELAY.getByName("hyperlpa-v1"), async (_instance, state) => {
-    for (const table of ["devices", "tickets", "messages", "rates"]) state.storage.sql.exec(`DELETE FROM ${table}`);
+    for (const table of ["devices", "tickets", "messages", "rates", "group_owner", "group_members", "group_invites"]) state.storage.sql.exec(`DELETE FROM ${table}`);
   });
 });
 afterEach(() => { sockets.splice(0).forEach(ws => ws.close(1000)); });

@@ -38,7 +38,8 @@ import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
-data class RemotePeerUi(val id: String, val name: String, val approved: Boolean, val incoming: Boolean, val online: Boolean)
+data class RemotePeerUi(val id: String, val name: String, val approved: Boolean, val incoming: Boolean, val online: Boolean,
+    val groupOwner: Boolean = false)
 data class RemoteDevicesUiState(
     val loaded: Boolean = false,
     val relay: String = "",
@@ -183,7 +184,7 @@ internal class RemoteDevices(
         mutableUi.update { it.copy(loaded = true, relay = saved.relay, name = saved.name,
             enabled = saved.enabled, connected = connected,
             peers = saved.peers.map { RemotePeerUi(it.id, it.name, it.approved, it.incoming,
-                connected && now - (livePeers[it.id] ?: 0) < 60_000) },
+                connected && now - (livePeers[it.id] ?: 0) < 60_000, it.groupOwner) },
             invitation = saved.invitation?.takeIf { it.expires > now }?.let(DeviceCrypto::invitationCode),
             pendingOperations = saved.pending.size, sharePhoneNotifications = saved.sharePhoneNotifications,
             notificationApps = saved.notificationApps, allowedNotificationApps = saved.allowedNotificationApps,
@@ -305,6 +306,10 @@ internal class RemoteDevices(
         update { it.copy(notificationPeers = if (enabled) it.notificationPeers + id else it.notificationPeers - id) }
         send(requireNotNull(peer(id)), if (enabled && config.sharePhoneNotifications)
             DeviceMessage("phone_notifications_changed") else DeviceMessage("phone_notifications"))
+        if (id == config.groupOwnerId) config.peers.filter { it.managedBy == id }.forEach {
+            send(it, if (TrustedGroup.canViewNotifications(config, it))
+                DeviceMessage("phone_notifications_changed") else DeviceMessage("phone_notifications"))
+        }
     }
 
     fun recordPhoneNotification(packageName: String, notificationKey: String, title: String, text: String, timestamp: Long, appLabel: String = "") {
@@ -420,8 +425,10 @@ internal class RemoteDevices(
     fun approve(id: String) = action {
         val device = peer(id) ?: return@action
         check(device.incoming && !device.approved)
-        update { it.copy(peers = it.peers.map { p -> if (p.id == id) p.copy(approved = true) else p }) }
-        send(device, DeviceMessage("paired", name = config.name))
+        check(!device.groupOwner || config.groupOwnerId.isEmpty() || config.groupOwnerId == id)
+        update { it.copy(peers = it.peers.map { p -> if (p.id == id) p.copy(approved = true) else p },
+            groupOwnerId = if (device.groupOwner) id else it.groupOwnerId) }
+        send(device, DeviceMessage("paired", name = config.name, groupVersion = 1))
         discover()
     }
 
@@ -432,6 +439,11 @@ internal class RemoteDevices(
     }
 
     private fun removePeer(id: String) {
+        if (config.groupOwnerId == id) {
+            val managed = config.peers.filter { it.managedBy == id }.map { it.id }
+            update { it.copy(groupOwnerId = "", groupRevision = 0) }
+            managed.forEach(::removePeer)
+        }
         if (agent.isBusyWith(id)) agent.cancelPendingConfirmation()
         config.pending.filter { it.peer == id }.forEach { pending ->
             requestResults[pending.id]?.complete(DeviceMessage("result", requestId = pending.id,
@@ -521,11 +533,13 @@ internal class RemoteDevices(
             } else decoded
             if (existing == null) {
                 if (message.kind != "pair" || message.name.length !in 1..80 || config.peers.size >= 32) return@withLock
-                val incoming = PairedDevice(envelope.from, message.name, envelope.pair, secret, incoming = true)
+                if (message.groupOwner && config.groupOwnerId.isNotEmpty()) return@withLock
+                val incoming = PairedDevice(envelope.from, message.name, envelope.pair, secret, incoming = true,
+                    groupOwner = message.groupOwner)
                 update { it.copy(invitation = null, peers = it.peers + incoming) }
                 send(incoming, DeviceMessage("pair_pending", name = config.name))
             } else when (message.kind) {
-                "pair" -> if (existing.incoming) send(existing, DeviceMessage(if (existing.approved) "paired" else "pair_pending", name = config.name))
+                "pair" -> if (existing.incoming) send(existing, DeviceMessage(if (existing.approved) "paired" else "pair_pending", name = config.name, groupVersion = 1))
                 "paired" -> if (!existing.incoming) {
                     update { it.copy(peers = it.peers.map { p -> if (p.id == existing.id) p.copy(approved = true) else p }) }
                     discover()
@@ -543,14 +557,25 @@ internal class RemoteDevices(
                                     } else it
                                 }
                             }
-                            send(existing, DeviceMessage("hello_reply", name = config.name))
+                            send(existing, DeviceMessage("hello_reply", name = config.name, groupVersion = 1))
                             if (mutableReaders.value.none { it.deviceId == existing.id }) requestCatalog(existing)
                         }
                         "hello_reply" -> if (mutablePhoneView.value.deviceId == existing.id) refreshPhoneNotifications(existing.id)
+                        "group_sync" -> {
+                            val sync = requireNotNull(message.groupSync)
+                            val previous = config.peers.filter { it.managedBy == existing.id }.map { it.id }.toSet()
+                            val next = TrustedGroup.apply(config, existing.id, sync)
+                            (previous - next.peers.map { it.id }.toSet()).forEach(::removePeer)
+                            update { TrustedGroup.apply(it, existing.id, sync) }
+                            send(existing, DeviceMessage("group_synced", revision = config.groupRevision, groupVersion = 1))
+                            config.peers.filter { it.managedBy == existing.id }.forEach {
+                                send(it, DeviceMessage("hello", name = config.name, groupVersion = 1))
+                            }
+                        }
                         "phone_notifications_request" -> send(existing, DeviceMessage("phone_notifications",
-                            phoneNotifications = if (config.sharePhoneNotifications && existing.id in config.notificationPeers)
+                            phoneNotifications = if (TrustedGroup.canViewNotifications(config, existing))
                                 phoneNotifications.list().map { it.copy(notificationKey = "") } else emptyList(),
-                            phoneNotificationsAvailable = config.sharePhoneNotifications && existing.id in config.notificationPeers))
+                            phoneNotificationsAvailable = TrustedGroup.canViewNotifications(config, existing)))
                         "phone_notifications_changed" -> if (mutablePhoneView.value.deviceId == existing.id)
                             refreshPhoneNotifications(existing.id)
                         "phone_notifications" -> if (mutablePhoneView.value.deviceId == existing.id) {
@@ -561,18 +586,21 @@ internal class RemoteDevices(
                                         (it.title.isNotBlank() || it.text.isNotBlank())
                                 } else emptyList(), message.phoneNotificationsAvailable, loaded = true)
                         }
-                        "phone_notifications_delete" -> if (config.sharePhoneNotifications && existing.id in config.notificationPeers &&
+                        "phone_notifications_delete" -> if (TrustedGroup.canViewNotifications(config, existing) &&
                             message.notificationId.length == 36) {
                             phoneNotifications.delete(message.notificationId)
                             publishPhoneNotifications()
                         }
-                        "phone_notifications_clear" -> if (config.sharePhoneNotifications && existing.id in config.notificationPeers) {
+                        "phone_notifications_clear" -> if (TrustedGroup.canViewNotifications(config, existing)) {
                             phoneNotifications.clear()
                             publishPhoneNotifications()
                         }
-                        "command" -> agent.accept(existing, message, envelope.expires)
-                        "status" -> agent.status(existing, message.requestId)
-                        "decision" -> agent.decision(existing.id, message.requestId, message.confirmed)
+                        "command" -> if (existing.managedBy.isEmpty() || existing.canManageProfiles)
+                            agent.accept(existing, message, envelope.expires)
+                        "status" -> if (existing.managedBy.isEmpty() || existing.canManageProfiles)
+                            agent.status(existing, message.requestId)
+                        "decision" -> if (!message.confirmed || existing.managedBy.isEmpty() || existing.canManageProfiles)
+                            agent.decision(existing.id, message.requestId, message.confirmed)
                         "cancel" -> agent.decision(existing.id, message.requestId, false)
                         "result" -> receiveResult(existing, message)
                         "missing" -> {

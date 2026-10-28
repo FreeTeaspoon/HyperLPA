@@ -25,3 +25,10 @@ relay/node_modules/
 relay/.wrangler/
 relay/.dev.vars
 relay/.env*
+web/node_modules/
+web/dist/
+web/.vercel/
+web/test-results/
+web/playwright-report/
+web/*.tsbuildinfo
+web/.env*

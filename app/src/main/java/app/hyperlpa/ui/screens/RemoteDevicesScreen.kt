@@ -412,7 +412,8 @@ internal fun RemoteDevicesScreen(
         show = showPeerDialog && peer != null,
         title = if (peer?.incoming == true) stringResource(R.string.remote_incoming_request) else peer?.name,
         summary = peer?.let {
-            stringResource(if (it.incoming) R.string.remote_incoming_summary else R.string.remote_outgoing_summary, it.name)
+            stringResource(if (it.incoming && it.groupOwner) R.string.remote_group_owner_summary
+                else if (it.incoming) R.string.remote_incoming_summary else R.string.remote_outgoing_summary, it.name)
         },
         onDismissRequest = { showPeerDialog = false },
     ) {

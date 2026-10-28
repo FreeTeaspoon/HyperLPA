@@ -100,8 +100,10 @@ viewers request them over the existing encrypted relay and do not save an archiv
 Android can hide sensitive notification contents from ordinary listeners. This
 feature does not read SMS directly or override Android's notification restrictions.
 The phone holding the SIM performs downloads and other card operations. The
-relay forwards encrypted commands and results. A web management UI is planned
-for a later build; this build manages paired devices from Android.
+relay forwards encrypted commands and results. The [web dashboard](web/README.md)
+can run on Vercel with the same Cloudflare relay. Enroll each phone with a trusted
+group owner once, then approve additional browsers and assign per-phone permissions
+without accounts or passwords. Install the updated app and relay together.
 
 - Android 9 / API 28 or newer.
 - A compatible eUICC and at least one usable reader backend.

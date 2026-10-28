@@ -27,6 +27,29 @@ class RemoteDevicesIntegrationTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
 
     @Test
+    fun trustedGroupGrantsAndRevocationSurviveEncryptedJournalReload() {
+        val isolated = isolatedContext()
+        val store = DeviceStore(isolated)
+        val owner = PairedDevice(newDeviceId(), "Owner browser", newDeviceId(), DeviceCrypto.secret(), approved = true, groupOwner = true)
+        val browser = PairedDevice(newDeviceId(), "Viewer", newDeviceId(), DeviceCrypto.secret(),
+            canManageProfiles = false, canViewNotifications = true)
+        try {
+            val initial = StoredDevices(peers = listOf(owner), groupOwnerId = owner.id,
+                sharePhoneNotifications = true, notificationPeers = setOf(owner.id))
+            store.write(TrustedGroup.apply(initial, owner.id, GroupSync(1, listOf(browser))))
+            val restored = store.read()
+            val viewer = restored.peers.single { it.id == browser.id }
+            assertFalse(viewer.canManageProfiles)
+            assertTrue(TrustedGroup.canViewNotifications(restored, viewer))
+            val file = File(isolated.noBackupFilesDir, "remote-devices.v1")
+            assertFalse(file.readText(Charsets.ISO_8859_1).contains(browser.secret))
+            store.write(TrustedGroup.apply(restored, owner.id, GroupSync(2)))
+            assertEquals(listOf(owner), store.read().peers)
+            assertFalse(browser.id in store.read().notificationPeers)
+        } finally { isolated.noBackupFilesDir.deleteRecursively() }
+    }
+
+    @Test
     fun foregroundRelayConnectionSurvivesActivityStop() = runBlocking {
         val configFile = File(context.filesDir, "remote-test-config.json")
         assumeTrue("Supply the ignored live relay test configuration", configFile.exists())

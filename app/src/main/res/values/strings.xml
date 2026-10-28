@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
+    <string name="remote_group_owner_summary">Trust %1$s as this phone’s group owner? It can approve other browsers, grant profile access, and remove their access. Notification access still requires your permission on this phone.</string>
     <string name="app_name">HyperLPA</string>
     <string name="about_title">About</string>
     <string name="about_info">Info</string>
