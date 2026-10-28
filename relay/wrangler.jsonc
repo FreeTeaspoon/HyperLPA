@@ -3,6 +3,7 @@
   "name": "hyperlpa-relay",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-01",
+  "vars": { "WEB_ORIGINS": "https://hyperlpa.example.com" },
   "durable_objects": {
     "bindings": [{ "name": "RELAY", "class_name": "Relay" }]
   },
