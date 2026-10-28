@@ -31,8 +31,8 @@ ordinary phone pairing, but cannot approve a web trusted-group owner.
 5. Check `<relay>/health` returns `{"protocol":1,"groups":1}`. Open the frontend,
    enter the relay origin and enrollment key, and create the group owner.
 
-For CLI-managed origin configuration, add this top-level field to
-`relay/wrangler.jsonc` before deploying:
+The checked-in `relay/wrangler.jsonc` already contains this public origin. For a
+custom domain, replace it before deploying:
 
 ```json
 "vars": { "WEB_ORIGINS": "https://hyperlpa.example.com" }
