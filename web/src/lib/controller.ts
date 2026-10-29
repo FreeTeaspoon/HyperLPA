@@ -313,6 +313,30 @@ export class Controller {
     }
     return requestId;
   }
+  /** Runs a browser-side queue. Each item is still journaled as an individual phone operation;
+   * the next item is never sent until the previous result is committed. */
+  async batchDownload(id: string, readerId: string, eid: string, requests: Command[], onProgress?: (index: number) => void) {
+    if (!requests.length || requests.length > 32) throw new Error("Add between 1 and 32 activation codes.");
+    for (let index = 0; index < requests.length; index++) {
+      const requestId = await this.command(id, { ...requests[index], action: "DOWNLOAD", readerId, eid });
+      const deadline = Date.now() + 30 * 60_000;
+      while (Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 750));
+        const pending = this.identity.pending.find(p => p.id === requestId);
+        const snapshot = this.state.snapshots[`${id}/${readerId}`];
+        if (pending && snapshot?.lpa.pendingProfileDownload) {
+          await this.decision(id, requestId, true);
+        } else if (!pending) {
+          const activity = this.state.activities.find(item => item.id === requestId);
+          if (activity?.status === "Completed") break;
+          if (activity?.status === "Failed" || activity?.status === "Outcome unverified") throw new Error(activity.detail ?? "A batch item failed.");
+        }
+        await this.queryPending(requestId);
+      }
+      if (this.identity.pending.some(p => p.id === requestId)) throw new Error("A batch item did not finish before timeout.");
+      onProgress?.(index + 1);
+    }
+  }
   async decision(id: string, requestId: string, confirmed: boolean) {
     if (!this.identity.pending.some(p => p.peer === id && p.id === requestId && p.action === "DOWNLOAD")) throw new Error("The download is no longer awaiting confirmation.");
     await this.send(this.peer(id), { kind: "decision", requestId, confirmed });

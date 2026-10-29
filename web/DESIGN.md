@@ -19,9 +19,13 @@ The dashboard uses compact controls, neutral colors, and locally bundled fonts.
 
 ## Dashboard adaptations
 
-The main navigation follows actual work: Devices, Profiles, Notifications, Group,
-and Activity. The page has no sidebar or decorative hero. Device tiles open a
-phone's readers; profile tools stay alongside the selected phone and reader.
+The main navigation follows actual work: Devices, Profiles, Notifications, History,
+Tools, Group, and Activity. The page has no sidebar or decorative hero. Device tiles
+open a phone's readers; profile tools stay alongside the selected phone and reader.
+History exposes the phone's eUICC notification audit trail. Tools groups eUICC
+details, discovery, safe preference toggles, and destructive reset behind the same
+reader selection. Batch downloads use the same compact modal form and keep one
+operation in flight.
 Rare device edits live in one Manage mode. Identifiers have adjacent copy buttons.
 
 On narrow screens the shell has 20px gutters, fields use 16px text, controls grow

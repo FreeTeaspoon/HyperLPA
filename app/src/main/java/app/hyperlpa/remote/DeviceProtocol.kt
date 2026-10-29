@@ -3,6 +3,7 @@ package app.hyperlpa.remote
 import app.hyperlpa.data.LpaRepositoryState
 import app.hyperlpa.data.history.NotificationHistoryEntry
 import app.hyperlpa.data.metadata.ProfileMetadata
+import app.hyperlpa.domain.model.ActivityLogEntry
 import app.hyperlpa.domain.model.DownloadRequest
 import app.hyperlpa.domain.model.OperationOutcome
 import kotlinx.serialization.KSerializer
@@ -88,8 +89,35 @@ internal data class GroupSync(val revision: Long, val peers: List<PairedDevice> 
 internal enum class DeviceAction {
     READERS, REFRESH, SWITCH, DELETE, RENAME, DOWNLOAD, PROCESS_NOTIFICATION,
     DELETE_NOTIFICATION, RESEND_NOTIFICATION, DELETE_HISTORY, RESET, SET_SMDP, DISCOVER,
-    TAGS, PIN, EUICC_NAME, REMINDER, ICON, HIDE_PROVIDER_ICON, APPLY_PROVIDER_ICON,
+    TAGS, PIN, EUICC_NAME, REMINDER, ICON, HIDE_PROVIDER_ICON, APPLY_PROVIDER_ICON, SETTINGS,
 }
+
+/** Settings that are safe to expose to an approved trusted-group owner. Credentials and
+ * device identifiers intentionally stay on the phone. */
+@Serializable
+internal data class RemoteSettings(
+    val autoLoadProfiles: Boolean = true,
+    val autoLoadRemoteReaders: Boolean = false,
+    val enableNBridge: Boolean = true,
+    val enableOmapi: Boolean = true,
+    val enableTelephony: Boolean = false,
+    val enableUsbCcid: Boolean = true,
+    val enableBle: Boolean = false,
+    val enableRemote: Boolean = false,
+    val notificationInitialLoad: Boolean = true,
+    val notificationAfterSwitch: Boolean = true,
+    val notificationAfterDelete: Boolean = true,
+    val notificationBeforeDownload: Boolean = true,
+    val notificationAfterDownload: Boolean = true,
+    val notificationAutoSend: Boolean = true,
+    val notificationAutoRemove: Boolean = true,
+    val scheduledReminders: Boolean = true,
+    val loadOperatorIcons: Boolean = false,
+    val estimateProfileSize: Boolean = false,
+    val hideProfileDeletion: Boolean = false,
+    val hideEuiccMemoryReset: Boolean = false,
+    val apduLogging: Boolean = false,
+)
 
 @Serializable
 internal data class DeviceCommand(
@@ -103,6 +131,7 @@ internal data class DeviceCommand(
     val tags: Set<String> = emptySet(),
     val download: DownloadRequest? = null,
     val history: NotificationHistoryEntry? = null,
+    val settings: RemoteSettings? = null,
     val confirmed: Boolean = false,
     val confirmBeforeInstall: Boolean = true,
     val applyToProvider: Boolean = false,
@@ -118,6 +147,8 @@ internal data class DeviceSnapshot(
     val history: List<NotificationHistoryEntry> = emptyList(),
     val images: Map<String, String> = emptyMap(),
     val artworkIncluded: Boolean = true,
+    val settings: RemoteSettings? = null,
+    val logs: List<ActivityLogEntry> = emptyList(),
 )
 
 @Serializable
