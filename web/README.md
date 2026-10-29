@@ -5,10 +5,15 @@ your existing Cloudflare Worker and Durable Object handle connections and truste
 group membership. There is no account, password database, Convex project, or Vercel
 server function to configure.
 
-The dashboard supports reader discovery, profile refresh, enable/disable, delete,
-rename, tags, pinning, downloads with a separate installation confirmation, eUICC
-notification processing, and Android phone notification mirrors. The phone performs
-all card operations. The native app retains its other reader and administration tools.
+The dashboard supports reader discovery, profile refresh, profile details,
+enable/disable, delete, rename, tags, pinning, single and sequential batch
+downloads with an installation confirmation for each item, eUICC notification
+processing and history, safe phone settings, eUICC details/discovery/reset, and
+Android phone notification mirrors. The phone performs all card operations.
+Bluetooth and USB permissions, remote-reader endpoint credentials, Android backup
+files, support-report export, and device-local display settings still belong in
+the native app because the browser cannot grant those Android permissions or read
+its private stores.
 
 ## Deploy
 
@@ -80,6 +85,13 @@ Messages shown here are Android notification mirrors. There is no direct SMS inb
 SMS sending, or cloud message archive. Android may redact sensitive contents. The
 source keeps up to 150 entries for seven days; the web app keeps snapshots in memory
 and clears them on disconnection or permission removal.
+
+Batch downloads are browser-orchestrated. Enter one activation code per line. If a
+carrier requires a confirmation code, append `| confirmation-code` to that line.
+The controller sends one activation code,
+waits for its durable phone result, confirms that profile, and then sends the next
+code. Closing the browser does not resume the queue, and an uncertain item must be
+resolved manually before starting another mutation.
 
 ## Recovery and removal
 

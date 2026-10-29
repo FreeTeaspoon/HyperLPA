@@ -175,3 +175,10 @@ reporting completion. Duplicate request IDs can retrieve the stored result only
 when their fingerprint matches. After process restart, unfinished records become
 unverified. Hardware mutation and flash storage cannot be one atomic transaction,
 so callers must display this uncertainty and refresh rather than resubmit.
+
+The trusted-group web controller may also send `SETTINGS`. Its payload contains
+only non-secret reader, notification, reminder, artwork, and logging preferences.
+Remote-reader URLs, bearer credentials, IMEI, and Android permission grants are
+never included in that payload. The phone applies the settings to its local
+DataStore and returns them in the next snapshot. Reader permissions and endpoint
+credentials still require the native Android settings screens.

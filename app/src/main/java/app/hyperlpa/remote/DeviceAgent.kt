@@ -265,6 +265,7 @@ internal class DeviceAgent(
         }
         if (command.action in setOf(DeviceAction.DELETE, DeviceAction.RESET, DeviceAction.DELETE_NOTIFICATION, DeviceAction.DELETE_HISTORY))
             check(command.confirmed) { context.getString(R.string.remote_confirmation_required) }
+        if (command.action == DeviceAction.SETTINGS) check(command.settings != null) { "Settings are required" }
         if (command.action != DeviceAction.REFRESH) require(command.eid.matches(Regex("[0-9]{32}")))
     }
 
@@ -334,6 +335,30 @@ internal class DeviceAgent(
                         metadata.setProviderIconAndClearProfileOverrides(provider, uri,
                             state.profiles.filter { providerIconKey(it.providerName) == provider }.map { it.iccid })
                     }
+                    DeviceAction.SETTINGS -> {
+                        val value = requireNotNull(command.settings)
+                        settings.setAutoLoadProfiles(value.autoLoadProfiles)
+                        settings.setAutoLoadRemoteReaders(value.autoLoadRemoteReaders)
+                        settings.setEnableNBridge(value.enableNBridge)
+                        settings.setEnableOmapi(value.enableOmapi)
+                        settings.setEnableTelephony(value.enableTelephony)
+                        settings.setEnableUsbCcid(value.enableUsbCcid)
+                        settings.setEnableBle(value.enableBle)
+                        settings.setEnableRemote(value.enableRemote)
+                        settings.setNotificationInitialLoad(value.notificationInitialLoad)
+                        settings.setNotificationAfterSwitch(value.notificationAfterSwitch)
+                        settings.setNotificationAfterDelete(value.notificationAfterDelete)
+                        settings.setNotificationBeforeDownload(value.notificationBeforeDownload)
+                        settings.setNotificationAfterDownload(value.notificationAfterDownload)
+                        settings.setNotificationAutoSend(value.notificationAutoSend)
+                        settings.setNotificationAutoRemove(value.notificationAutoRemove)
+                        settings.setScheduledReminders(value.scheduledReminders)
+                        settings.setLoadOperatorIcons(value.loadOperatorIcons)
+                        settings.setEstimateProfileSize(value.estimateProfileSize)
+                        settings.setHideProfileDeletion(value.hideProfileDeletion)
+                        settings.setHideEuiccMemoryReset(value.hideEuiccMemoryReset)
+                        settings.setApduLogging(value.apduLogging)
+                    }
                     else -> error("Unsupported operation")
                 }
                 OperationOutcome.Success
@@ -357,6 +382,7 @@ internal class DeviceAgent(
                 key
             }.getOrNull()
         }
+        val currentSettings = settings.settings.first()
         return DeviceSnapshot(
             lpa = state.copy(logs = state.logs.takeLast(30), profiles = state.profiles.map {
                 if (includeArtwork) it else it.copy(iconBase64 = null)
@@ -365,6 +391,30 @@ internal class DeviceAgent(
             providerIcons = providers.mapNotNull { (key, uri) -> image(uri)?.let { key to it } }.toMap(),
             euiccNames = metadata.euiccNames.first().filterKeys { it == state.euiccInfo?.eid },
             history = if (includeArtwork) history.history.value.filter { it.eid == state.euiccInfo?.eid } else emptyList(), images = images,
+            settings = RemoteSettings(
+                autoLoadProfiles = currentSettings.autoLoadProfiles,
+                autoLoadRemoteReaders = currentSettings.autoLoadRemoteReaders,
+                enableNBridge = currentSettings.enableNBridge,
+                enableOmapi = currentSettings.enableOmapi,
+                enableTelephony = currentSettings.enableTelephony,
+                enableUsbCcid = currentSettings.enableUsbCcid,
+                enableBle = currentSettings.enableBle,
+                enableRemote = currentSettings.enableRemote,
+                notificationInitialLoad = currentSettings.notificationInitialLoad,
+                notificationAfterSwitch = currentSettings.notificationAfterSwitch,
+                notificationAfterDelete = currentSettings.notificationAfterDelete,
+                notificationBeforeDownload = currentSettings.notificationBeforeDownload,
+                notificationAfterDownload = currentSettings.notificationAfterDownload,
+                notificationAutoSend = currentSettings.notificationAutoSend,
+                notificationAutoRemove = currentSettings.notificationAutoRemove,
+                scheduledReminders = currentSettings.scheduledReminders,
+                loadOperatorIcons = currentSettings.loadOperatorIcons,
+                estimateProfileSize = currentSettings.estimateProfileSize,
+                hideProfileDeletion = currentSettings.hideProfileDeletion,
+                hideEuiccMemoryReset = currentSettings.hideEuiccMemoryReset,
+                apduLogging = currentSettings.apduLogging,
+            ),
+            logs = state.logs.takeLast(50),
             artworkIncluded = includeArtwork,
         )
     }
