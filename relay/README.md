@@ -13,7 +13,7 @@ appear in **Active reader** as `SIM1 on Device name` and `SIM2 on Device name`.
 ## Before you start
 
 - Install [HyperLPA](https://github.com/FreeTeaspoon/HyperLPA/releases) on both phones. The phone with the eUICC needs a reader that already works locally.
-- Have a Cloudflare account that can use Workers and SQLite Durable Objects. Check the [Workers limits](https://developers.cloudflare.com/workers/platform/limits/) and [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/). The relay uses [WebSocket hibernation](https://developers.cloudflare.com/durable-objects/best-practices/websockets/), but heartbeats and operations still use requests and storage.
+- Have a Cloudflare account that can use Workers and SQLite Durable Objects. Check the [Workers limits](https://developers.cloudflare.com/workers/platform/limits/) and [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/). The relay uses [WebSocket hibernation](https://developers.cloudflare.com/durable-objects/best-practices/websockets/), but application presence checks still use requests, and rate reservations and operations use storage. Updated clients send presence without storing ciphertext; see [temporary presence delivery](PROTOCOL.md#temporary-presence-delivery).
 - Make a unique enrollment key and save it in your password manager. `openssl rand -hex 32` generates one with 32 random bytes. You will enter the same key on both phones.
 
 ## Deploy to Cloudflare

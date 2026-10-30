@@ -182,3 +182,36 @@ Remote-reader URLs, bearer credentials, IMEI, and Android permission grants are
 never included in that payload. The phone applies the settings to its local
 DataStore and returns them in the next snapshot. Reader permissions and endpoint
 credentials still require the native Android settings screens.
+
+
+### Temporary presence delivery
+
+A relay advertising `signals: true` in its WebSocket `ready` frame accepts
+`{ "type": "signal", "message": <encrypted envelope> }`. It applies the same
+authentication, group routing, size, expiry, and rate limits as `send`, but
+forwards only to currently connected recipients. It does not store ciphertext,
+schedule cleanup, or replay on reconnect. `sent` means accepted, not received.
+Recipients still receive ordinary `message` frames and can acknowledge them;
+an acknowledgement without a stored message changes no rows.
+
+Updated clients use this only for `hello` and `hello_reply`, falling back to
+`send` when the capability is absent. Commands, results, pairing, group grants,
+and notification data retain durable delivery. Deploy the relay first, then
+update browsers and phones. Older clients remain compatible but still store
+presence traffic.
+
+Rate limits remain 2,048 WebSocket frames and 60 authenticated HTTP requests
+per device per minute. Live sockets reserve up to 128 frame credits or 16 HTTP
+credits in SQLite and consume them from serialized WebSocket attachments.
+These survive Durable Object hibernation. Normal socket close and replacement refund unused credits once; an interrupted
+cleanup conservatively loses them. Database reservations prevent reconnecting
+from resetting the limit.
+Expired windows renew, and rejected requests do not increment exhausted counters.
+
+This reduces idle SQL writes; it does not remove Cloudflare's account-wide daily
+quota. Writes still occur for rate-window reservations, session tickets, device
+and group changes, and durable messages. Updating all clients is necessary for
+the full reduction. Android also skips reader-catalog requests to browser
+owners and their provisioned browser controllers, and the web owner resends
+group grants only while the phone has not acknowledged the current revision.
+A quota already exhausted resets on Cloudflare's schedule.

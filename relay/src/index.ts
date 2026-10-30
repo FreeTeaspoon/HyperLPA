@@ -84,14 +84,48 @@ export class Relay extends DurableObject<Env> {
     this.groups = new Groups(ctx);
   }
 
-  private limited(key: string, limit: number): boolean {
+  private limited(key: string, limit: number, socket?: WebSocket): boolean {
     const now = Date.now();
-    this.ctx.storage.sql.exec("DELETE FROM rates WHERE expires < ?", now);
+    // Reserve credits durably, then consume them from the hibernation-safe
+    // attachment. Reconnects never reset the count of consumed credits.
+    const attachment = socket?.deserializeAttachment();
+    const credit = attachment?.rates?.[key];
+    if (credit?.expires > now && credit.remaining > 0) {
+      credit.remaining--;
+      socket!.serializeAttachment(attachment);
+      return false;
+    }
+    this.ctx.storage.sql.exec("DELETE FROM rates WHERE expires <= ?", now);
+    const row = this.ctx.storage.sql.exec<{ count: number; expires: number }>(
+      "SELECT count, expires FROM rates WHERE key = ?", key,
+    ).toArray()[0];
+    if (row && row.count >= limit) return true;
+    const amount = Math.min(socket ? (key.startsWith("ws:") ? 128 : 16) : 1, limit - (row?.count ?? 0));
+    const expires = row?.expires ?? now + 60_000;
     this.ctx.storage.sql.exec(
-      "INSERT INTO rates VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE SET count = count + 1",
-      key, now + 60_000,
+      "INSERT INTO rates VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET count = count + excluded.count",
+      key, amount, expires,
     );
-    return this.ctx.storage.sql.exec<{ count: number }>("SELECT count FROM rates WHERE key = ?", key).one().count > limit;
+    if (socket) {
+      attachment.rates ??= {};
+      attachment.rates[key] = { remaining: amount - 1, expires };
+      socket.serializeAttachment(attachment);
+    }
+    return false;
+  }
+
+  private releaseCredits(ws: WebSocket): void {
+    const attachment = ws.deserializeAttachment();
+    if (!attachment?.rates) return;
+    const credits = attachment.rates as Record<string, { remaining: number; expires: number }>;
+    // Clear first so close/error/replacement cannot refund the same credits twice.
+    delete attachment.rates;
+    ws.serializeAttachment(attachment);
+    for (const [key, credit] of Object.entries(credits)) {
+      if (credit.remaining > 0 && credit.expires > Date.now())
+        this.ctx.storage.sql.exec("UPDATE rates SET count = max(0, count - ?) WHERE key = ? AND expires = ?",
+          credit.remaining, key, credit.expires);
+    }
   }
 
   private async authenticated(request: Request): Promise<string | null> {
@@ -117,13 +151,15 @@ export class Relay extends DurableObject<Env> {
         return json({ error: "unauthorized" }, 401);
       // No await between checking and consuming a one-use ticket.
       this.ctx.storage.sql.exec("DELETE FROM tickets WHERE token = ?", ticketHash);
-      this.ctx.getWebSockets(row.device).forEach(ws => ws.close(4001, "Replaced by a new connection"));
+      this.ctx.getWebSockets(row.device).forEach(ws => {
+        this.releaseCredits(ws); ws.close(4001, "Replaced by a new connection");
+      });
       const pair = new WebSocketPair();
       const [client, server] = Object.values(pair);
       this.ctx.acceptWebSocket(server, [row.device]);
       server.serializeAttachment({ device: row.device });
       this.ctx.storage.sql.exec("DELETE FROM messages WHERE expires <= ?", Date.now());
-      server.send(JSON.stringify({ type: "ready", protocol: 1 }));
+      server.send(JSON.stringify({ type: "ready", protocol: 1, signals: true }));
       for (const message of this.ctx.storage.sql.exec<{ payload: string }>(
         "SELECT payload FROM messages WHERE recipient = ? ORDER BY expires", row.device,
       )) server.send(JSON.stringify({ type: "message", message: JSON.parse(message.payload) }));
@@ -175,7 +211,7 @@ export class Relay extends DurableObject<Env> {
     }
     const device = await this.authenticated(request);
     if (!device) return json({ error: "unauthorized" }, 401);
-    if (this.limited("http:" + device, 60)) return json({ error: "rate_limited" }, 429);
+    if (this.limited("http:" + device, 60, this.ctx.getWebSockets(device).find(ws => ws.readyState === WebSocket.OPEN))) return json({ error: "rate_limited" }, 429);
     if (path.startsWith("/v1/group/")) return this.groups.handle(path, body, device,
       request.headers.get("X-Enrollment-Key") ?? "", this.env.ENROLLMENT_KEY);
     if (path === "/v1/session") {
@@ -199,21 +235,34 @@ export class Relay extends DurableObject<Env> {
   }
 
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
+    if (ws.readyState !== WebSocket.OPEN) return;
     const device = ws.deserializeAttachment()?.device as string;
     if (!device || typeof raw !== "string" || raw.length > MAX_FRAME) { ws.close(1009, "Invalid frame"); return; }
     if (this.groups.revoked(device) || !this.ctx.storage.sql.exec("SELECT id FROM devices WHERE id = ?", device).toArray().length) { ws.close(1008, "Unregistered device"); return; }
-    if (this.limited("ws:" + device, 2048)) { ws.close(1008, "Rate limit"); return; }
+    if (this.limited("ws:" + device, 2048, ws)) { ws.close(1008, "Rate limit"); return; }
     let frame;
     try { frame = JSON.parse(raw); } catch { ws.close(1007, "Invalid JSON"); return; }
     if (frame?.type === "ack" && ID.test(frame.id ?? "")) {
       this.ctx.storage.sql.exec("DELETE FROM messages WHERE id = ? AND recipient = ?", frame.id, device);
       return;
     }
-    if (frame?.type !== "send" || !validEnvelope(frame.message, device, Date.now())) {
+    if (!["send", "signal"].includes(frame?.type) || !validEnvelope(frame.message, device, Date.now())) {
       ws.send(JSON.stringify({ type: "error", code: "invalid_message" })); return;
     }
     const e = frame.message as Envelope;
     if (!this.groups.allowed(device, e.to)) { ws.send(JSON.stringify({ type: "error", id: e.id, code: "group_access_denied" })); return; }
+    if (frame.type === "signal") {
+      // The sender explicitly opts out of persistence. Never infer message
+      // semantics from opaque ciphertext; legacy sends remain durable.
+      if (!this.ctx.storage.sql.exec("SELECT id FROM devices WHERE id = ?", e.to).toArray().length) {
+        ws.send(JSON.stringify({ type: "error", id: e.id, code: "unknown_device" })); return;
+      }
+      for (const recipient of this.ctx.getWebSockets(e.to))
+        if (recipient.readyState === WebSocket.OPEN)
+          recipient.send(JSON.stringify({ type: "message", message: e }));
+      ws.send(JSON.stringify({ type: "sent", id: e.id }));
+      return;
+    }
     this.ctx.storage.sql.exec("DELETE FROM messages WHERE expires <= ?", Date.now());
     const known = this.ctx.storage.sql.exec("SELECT id FROM devices WHERE id = ?", e.to).toArray().length > 0;
     const pending = this.ctx.storage.sql.exec<{ n: number; bytes: number }>(
@@ -244,6 +293,6 @@ export class Relay extends DurableObject<Env> {
       await this.ctx.storage.setAlarm(Date.now() + 120_000);
   }
 
-  webSocketClose(ws: WebSocket, code: number): void { ws.close(code === 1005 ? 1000 : code === 1006 ? 1001 : code); }
-  webSocketError(ws: WebSocket): void { ws.close(1011, "Connection interrupted"); }
+  webSocketClose(ws: WebSocket, code: number): void { this.releaseCredits(ws); ws.close(code === 1005 ? 1000 : code === 1006 ? 1001 : code); }
+  webSocketError(ws: WebSocket): void { this.releaseCredits(ws); ws.close(1011, "Connection interrupted"); }
 }

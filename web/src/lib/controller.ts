@@ -141,7 +141,7 @@ export class Controller {
   }
   private async send(peer: Peer, message: Message) {
     const e = await encrypt(peer.secret, this.identity.id, peer.id, peer.pair, message);
-    this.connection?.send(e);
+    this.connection?.send(e, message.kind === "hello" || message.kind === "hello_reply");
   }
   async addPhone(code: string) {
     return this.queue(async () => {
@@ -415,7 +415,7 @@ export class Controller {
     this.emit({ online: { ...this.state.online, [peer.id]: Date.now() } });
     if (message.kind === "hello") {
       await this.send(peer, { kind: "hello_reply", name: this.identity.name });
-      if (peer.kind === "phone" && this.identity.role === "owner") await this.syncPhone(peer);
+      if (peer.kind === "phone" && this.identity.role === "owner" && this.state.phoneRevisions[peer.id] !== this.identity.revision) await this.syncPhone(peer);
     }
     if (message.kind === "hello_reply" && peer.kind === "phone" && this.identity.role === "owner" && this.state.phoneRevisions[peer.id] !== this.identity.revision)
       await this.syncPhone(peer);

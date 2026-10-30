@@ -91,6 +91,8 @@ internal class RelayConnection(
         }
     }
 
+    @Volatile private var signals = false
+
     fun start(config: StoredDevices) {
         stop()
         val owner = generation
@@ -112,7 +114,7 @@ internal class RelayConnection(
                             if (text == "pong") return
                             val frame = runCatching { DeviceJson.decodeFromString(RelayFrame.serializer(), text) }.getOrNull() ?: return
                             when (frame.type) {
-                                "ready" -> ready.complete(Unit)
+                                "ready" -> { signals = frame.signals; ready.complete(Unit) }
                                 "message" -> frame.message?.let(onEnvelope)
                                 "error" -> onRejected(frame.id, frame.code ?: "relay_error")
                             }
@@ -139,9 +141,9 @@ internal class RelayConnection(
         }
     }
 
-    fun send(envelope: DeviceEnvelope): Boolean {
+    fun send(envelope: DeviceEnvelope, ephemeral: Boolean = false): Boolean {
         val target = socket ?: return false
-        val frame = DeviceJson.encodeToString(RelayFrame.serializer(), RelayFrame("send", envelope))
+        val frame = DeviceJson.encodeToString(RelayFrame.serializer(), RelayFrame(if (ephemeral && signals) "signal" else "send", envelope))
         if (queuedBytes.addAndGet(frame.length.toLong()) > 32_000_000) {
             queuedBytes.addAndGet(-frame.length.toLong())
             return false
@@ -153,5 +155,5 @@ internal class RelayConnection(
         return true
     }
     fun acknowledge(id: String) { socket?.send(DeviceJson.encodeToString(RelayFrame.serializer(), RelayFrame("ack", id = id))) }
-    fun stop() { generation++; job?.cancel(); job = null; socket?.cancel(); socket = null; onConnection(false) }
+    fun stop() { signals = false; generation++; job?.cancel(); job = null; socket?.cancel(); socket = null; onConnection(false) }
 }
