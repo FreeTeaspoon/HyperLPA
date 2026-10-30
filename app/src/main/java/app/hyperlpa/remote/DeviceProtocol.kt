@@ -55,6 +55,7 @@ internal data class RelayFrame(
     val message: DeviceEnvelope? = null,
     val id: String? = null,
     val code: String? = null,
+    val signals: Boolean = false,
 )
 
 @Serializable

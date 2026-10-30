@@ -23,12 +23,13 @@ export class RelayConnection {
   private generation = 0;
   private failures = 0;
   private stopped = true;
+  private signals = false;
   constructor(private identity: () => Identity, private onEnvelope: (e: Envelope) => Promise<void>,
     private onState: (connected: boolean) => void, private onError: (message: string) => void,
     private onRejected: (id: string, code: string) => void) {}
   start() { this.stop(); this.stopped = false; void this.connect(this.generation); }
   stop() {
-    this.stopped = true; this.generation++; clearTimeout(this.retry); clearInterval(this.heartbeat);
+    this.stopped = true; this.signals = false; this.generation++; clearTimeout(this.retry); clearInterval(this.heartbeat);
     this.socket?.close(1000); this.socket = undefined; this.onState(false);
   }
   private async connect(generation: number) {
@@ -48,6 +49,7 @@ export class RelayConnection {
         receiving = receiving.then(async () => {
           const frame = JSON.parse(event.data);
           if (frame.type === "ready") {
+            this.signals = frame.signals === true;
             this.failures = 0; this.onState(true);
             this.heartbeat = setInterval(() => { if (socket.readyState === WebSocket.OPEN) socket.send("ping"); }, 25_000);
           } else if (frame.type === "message") await this.onEnvelope(frame.message);
@@ -79,9 +81,9 @@ export class RelayConnection {
     const delay = Math.min(30_000, 1000 * 2 ** this.failures++) + Math.random() * 500;
     this.retry = setTimeout(() => void this.connect(generation), delay);
   }
-  send(e: Envelope) {
+  send(e: Envelope, ephemeral = false) {
     if (this.socket?.readyState !== WebSocket.OPEN) throw new Error("The relay is disconnected. Reconnect before sending a command.");
-    this.socket.send(JSON.stringify({ type: "send", message: e }));
+    this.socket.send(JSON.stringify({ type: ephemeral && this.signals ? "signal" : "send", message: e }));
   }
   ack(id: string) { if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify({ type: "ack", id })); }
 }

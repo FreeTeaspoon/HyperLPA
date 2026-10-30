@@ -506,7 +506,8 @@ internal class RemoteDevices(
         if (!connected) return false
         return runCatching {
             DevicePackets.encode(message).all { plaintext ->
-                connection.send(DeviceCrypto.encrypt(device.secret, config.id, device.id, device.pair, plaintext))
+                connection.send(DeviceCrypto.encrypt(device.secret, config.id, device.id, device.pair, plaintext),
+                    ephemeral = message.kind == "hello" || message.kind == "hello_reply")
             }
         }.getOrDefault(false)
     }
@@ -627,6 +628,9 @@ internal class RemoteDevices(
     fun discover() { scope.launch { config.peers.filter { it.approved }.forEach { requestCatalog(it) } } }
 
     private fun requestCatalog(device: PairedDevice) {
+        // Trusted-group owners and their provisioned controllers are browsers.
+        // They cannot host readers; polling them creates unanswered durable commands.
+        if (device.groupOwner || device.managedBy.isNotEmpty()) return
         if (!connected || catalogRequests.containsValue(device.id)) return
         val id = newDeviceId()
         catalogRequests[id] = device.id

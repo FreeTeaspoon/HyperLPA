@@ -52,6 +52,91 @@ beforeEach(async () => {
 afterEach(() => { sockets.splice(0).forEach(ws => ws.close(1000)); });
 
 describe("relay authorization and durable delivery", () => {
+  it("delivers live signals without persistence or offline replay", async () => {
+    const a = await register(), b = await register();
+    const sender = await connect(a);
+    sender.ws.send(JSON.stringify({ type: "signal", message: envelope(a, b) }));
+    expect((await sender.next()).type).toBe("sent");
+    const recipient = await connect(b);
+    const live = envelope(a, b);
+    sender.ws.send(JSON.stringify({ type: "signal", message: live }));
+    expect((await recipient.next()).message.id).toBe(live.id);
+    expect((await sender.next()).type).toBe("sent");
+    await runInDurableObject(env.RELAY.getByName("hyperlpa-v1"), async (_instance, state) => {
+      expect(state.storage.sql.exec("SELECT id FROM messages").toArray()).toHaveLength(0);
+    });
+  });
+
+  it("keeps credits in serialized attachments, bounds reconnects, and renews expired windows", async () => {
+    const a = await register(), b = await register();
+    await runInDurableObject(env.RELAY.getByName("hyperlpa-v1"), async (instance, state) => {
+      let closed = false;
+      const socket = () => {
+        let attachment: any = { device: a.id };
+        return {
+          readyState: WebSocket.OPEN,
+          deserializeAttachment: () => structuredClone(attachment),
+          serializeAttachment: (value: unknown) => { attachment = structuredClone(value); },
+          send: () => {},
+          close: () => { closed = true; },
+        } as unknown as WebSocket;
+      };
+      const send = (ws: WebSocket) => instance.webSocketMessage(ws,
+        JSON.stringify({ type: "signal", message: envelope(a, b) }));
+      const ws = socket();
+      await send(ws);
+      const changes = () => state.storage.sql.exec<{ n: number }>("SELECT total_changes() n").one().n;
+      const before = changes();
+      for (let i = 0; i < 127; i++) await send(ws);
+      expect(changes()).toBe(before);
+      for (let i = 0; i < 15; i++) await send(socket());
+      expect(closed).toBe(false);
+      await send(socket());
+      expect(closed).toBe(true);
+      state.storage.sql.exec("UPDATE rates SET expires = ? WHERE key = ?", Date.now() - 1, "ws:" + a.id);
+      closed = false;
+      await send(socket());
+      expect(closed).toBe(false);
+    });
+  });
+
+  it("preserves HTTP limits while batching polling credits on the live socket", async () => {
+    const d = await register();
+    await connect(d); // The session request consumes one of the 60 credits.
+    for (let i = 0; i < 59; i++)
+      expect((await post("/v1/unknown", {}, d)).status).toBe(404);
+    expect((await post("/v1/unknown", {}, d)).status).toBe(429);
+  });
+
+  it("refunds unused credits on socket replacement without resetting consumed HTTP requests", async () => {
+    const d = await register();
+    await connect(d);
+    for (let i = 0; i < 30; i++)
+      expect((await post("/v1/unknown", {}, d)).status).toBe(404);
+    await connect(d);
+    for (let i = 0; i < 28; i++)
+      expect((await post("/v1/unknown", {}, d)).status).toBe(404);
+    expect((await post("/v1/unknown", {}, d)).status).toBe(429);
+  });
+
+  it("validates signal senders and destinations just like durable messages", async () => {
+    const a = await register(), b = await register();
+    const sender = await connect(a);
+    sender.ws.send(JSON.stringify({ type: "signal", message: envelope(b, a) }));
+    expect((await sender.next()).code).toBe("invalid_message");
+    sender.ws.send(JSON.stringify({ type: "signal", message: envelope(a, device()) }));
+    expect((await sender.next()).code).toBe("unknown_device");
+  });
+
+  it("preserves the removal close code when refunding attachment credits", async () => {
+    const d = await register();
+    const connection = await connect(d);
+    await post("/v1/unknown", {}, d);
+    const closed = new Promise<number>(resolve => connection.ws.addEventListener("close", event => resolve(event.code)));
+    expect((await post("/v1/unregister", {}, d)).status).toBe(200);
+    expect(await closed).toBe(4003);
+  });
+
   it("requires an enrollment key, and never returns another device's token", async () => {
     const d = device();
     expect((await post("/v1/register", d)).status).toBe(401);
