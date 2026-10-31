@@ -13,6 +13,8 @@ The foundation remains ID Vault `07d7092b3286a057fd1397643d63c6e34388c1c6`, with
 
 Only the web dashboard adopts these rules. Phone management, recovery, profiles, permissions and relay behavior are preserved. The root scrollbar gutter is paired with Radix scroll-lock compensation.
 
+Verification for this rollout: the production build, TypeScript check, eight unit tests and both existing Playwright workflow tests pass. The browser workflow uses a synthetic local relay and phone, covering pairing, profiles, recovery, permissions, narrow layouts and axe checks. Shared-control checks also cover focus, press feedback, reduced motion, touch targets, forced colors and menu/dialog scroll stability. Dialog measurements cover short and overflowing pages at scroll position 300px, a measured 15px classic scrollbar, and frame-by-frame bounds through exit in both themes at 1280px and 390px. No private phone or carrier account was used.
+
 The dashboard uses compact controls, neutral colors, and locally bundled fonts.
 
 ## Shared rules
