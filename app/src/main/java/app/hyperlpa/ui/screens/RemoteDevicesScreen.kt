@@ -61,33 +61,35 @@ import app.hyperlpa.remote.RemoteDevices
 import app.hyperlpa.remote.RemotePeerUi
 import app.hyperlpa.remote.detectOtp
 import app.hyperlpa.ui.LocalMiuixSnackbar
+import app.hyperlpa.ui.components.appLabel
+import app.hyperlpa.ui.components.cachedAppLabel
+import app.hyperlpa.ui.components.ExpandingPreferenceGroup
+import app.hyperlpa.ui.components.FieldError
+import app.hyperlpa.ui.components.PrimaryPageButton
 import app.hyperlpa.ui.components.AppIcon
 import app.hyperlpa.ui.components.DetailLazyScaffold
 import app.hyperlpa.ui.components.DialogActionRow
 import app.hyperlpa.ui.components.EmptyState
 import app.hyperlpa.ui.components.ErrorCard
+import app.hyperlpa.ui.components.lazyGroup
 import app.hyperlpa.ui.components.GroupedCard
 import app.hyperlpa.ui.components.LoadingState
 import app.hyperlpa.ui.components.PageStart
 import app.hyperlpa.ui.components.PageStateKind
 import app.hyperlpa.ui.components.SectionHeading
 import app.hyperlpa.ui.components.TextInputDialog
-import app.hyperlpa.ui.components.TipCard
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
-import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.DropdownEntry
 import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
-import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.SnackbarDuration
 import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Copy
@@ -127,6 +129,7 @@ internal fun RemoteDevicesScreen(
     var refreshing by remember { mutableStateOf(false) }
     var editingName by remember { mutableStateOf(false) }
     var enteringCode by remember { mutableStateOf(false) }
+    var configuring by remember { mutableStateOf(false) }
     var dialogPeer by remember { mutableStateOf<RemotePeerUi?>(null) }
     var showPeerDialog by remember { mutableStateOf(false) }
     var removeRelay by remember { mutableStateOf(false) }
@@ -143,6 +146,9 @@ internal fun RemoteDevicesScreen(
         title = stringResource(R.string.remote_title),
         onBack = onBack,
         isRefreshing = refreshing,
+        pageState = if (state.loaded) PageStateKind.CONTENT else PageStateKind.LOADING,
+        pageStateContent = { LoadingState(stringResource(R.string.common_loading), Modifier.fillMaxSize()) },
+        refreshEnabled = state.loaded && !state.busy,
         onRefresh = if (configured) {
             {
                 if (!refreshing) scope.launch {
@@ -153,50 +159,44 @@ internal fun RemoteDevicesScreen(
         } else null,
     ) { _ ->
         when {
-            !state.loaded -> item(contentType = PageStart.Viewport) {
-                LoadingState(stringResource(R.string.common_loading), Modifier.fillParentMaxSize())
-            }
+            !state.loaded -> Unit
             !configured -> {
                 state.error?.let { message -> item(contentType = PageStart.Inset) { ErrorCard(message) } }
-                item(contentType = PageStart.Inset) { RemoteSetupTip() }
-                item { SmallTitle(stringResource(R.string.remote_relay_address)) }
+
+                item { SectionHeading(stringResource(R.string.remote_relay_address)) }
                 item {
                     FormField(address, { if (it.length <= 253) address = it },
                         stringResource(R.string.remote_relay_address_hint), keyboardType = KeyboardType.Uri)
+                    RemoteSetupGuidance()
                 }
-                item { SmallTitle(stringResource(R.string.remote_enrollment_key)) }
+                item { SectionHeading(stringResource(R.string.remote_enrollment_key)) }
                 item {
                     FormField(enrollment, { if (it.length <= 256) enrollment = it },
                         stringResource(R.string.remote_enrollment_key_hint), keyboardType = KeyboardType.Password,
                         visualTransformation = PasswordVisualTransformation())
                 }
-                item { SmallTitle(stringResource(R.string.remote_device_name)) }
+                item { SectionHeading(stringResource(R.string.remote_device_name)) }
                 item {
                     FormField(name, { if (it.length <= 80) name = it },
                         stringResource(R.string.remote_device_name_hint), last = true)
                 }
                 item {
-                    TextButton(
+                    PrimaryPageButton(
                         text = stringResource(R.string.remote_save),
-                        onClick = { devices.configure(address, enrollment, name) },
+                        onClick = { configuring = true; devices.configure(address, enrollment, name) { configuring = false } },
+                        busy = configuring,
                         enabled = !state.busy && address.isNotBlank() && enrollment.isNotBlank() && name.isNotBlank(),
-                        colors = ButtonDefaults.textButtonColorsPrimary(),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp)
-                            .padding(bottom = 12.dp),
+
                     )
                 }
             }
             else -> {
                 state.error?.let { message -> item(contentType = PageStart.Inset) { ErrorCard(message) } }
-                item(contentType = PageStart.Inset) { TipCard(stringResource(R.string.remote_background_tip)) }
-                if (state.pendingOperations > 0) item { TipCard(stringResource(R.string.remote_pending_operations)) }
                 item {
                     GroupedCard {
                         SwitchPreference(
                             title = stringResource(R.string.remote_access),
-                            summary = stringResource(R.string.remote_access_summary),
+                            summary = stringResource(R.string.remote_access_summary) + if (state.pendingOperations > 0) "\n" + stringResource(R.string.remote_pending_operations) else "",
                             checked = state.enabled,
                             onCheckedChange = devices::setEnabled,
                         )
@@ -230,28 +230,21 @@ internal fun RemoteDevicesScreen(
                 }
                 if (state.peers.isNotEmpty()) {
                     item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.remote_peers)) }
-                    item {
-                        GroupedCard {
-                            state.peers.forEach { peer ->
-                                key(peer.id) {
-                                    PeerRow(
-                                        peer = peer,
-                                        sharing = state.sharePhoneNotifications && peer.id in state.notificationPeers,
-                                        onOpen = {
-                                            if (peer.approved) onOpenDevice(peer.id)
-                                            else { dialogPeer = peer; showPeerDialog = true }
-                                        },
-                                        onSharingChange = { share ->
-                                            if (share && !state.sharePhoneNotifications) devices.setPhoneNotificationSharing(true)
-                                            devices.setNotificationPeer(peer.id, share)
-                                        },
-                                    )
-                                }
-                            }
-                        }
+                    lazyGroup(state.peers, key = { it.id }, contentType = "peer") { peer ->
+                        PeerRow(
+                            peer = peer,
+                            sharing = state.sharePhoneNotifications && peer.id in state.notificationPeers,
+                            onOpen = {
+                                if (peer.approved) onOpenDevice(peer.id)
+                                else { dialogPeer = peer; showPeerDialog = true }
+                            },
+                            onSharingChange = { share ->
+                                if (share && !state.sharePhoneNotifications) devices.setPhoneNotificationSharing(true)
+                                devices.setNotificationPeer(peer.id, share)
+                            },
+                        )
                     }
                 }
-                item(contentType = PageStart.Inset) { TipCard(stringResource(R.string.remote_pairing_tip)) }
                 item {
                     GroupedCard {
                         ArrowPreference(
@@ -310,13 +303,11 @@ internal fun RemoteDevicesScreen(
     )
     OverlayDialog(
         show = editRelay,
+        onDismissFinished = { if (!editRelay) { relayDraft = ""; relayEnrollment = ""; relayTested = false } },
         title = stringResource(R.string.remote_relay_address),
         summary = stringResource(R.string.remote_relay_edit_summary),
         onDismissRequest = {
             editRelay = false
-            relayDraft = ""
-            relayEnrollment = ""
-            relayTested = false
         },
     ) {
         Column {
@@ -346,12 +337,7 @@ internal fun RemoteDevicesScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
             state.error?.let { message ->
-                Text(
-                    text = message,
-                    color = MiuixTheme.colorScheme.error,
-                    style = MiuixTheme.textStyles.footnote1,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
+                FieldError(message)
             }
             if (relayTested) {
                 Text(
@@ -365,9 +351,6 @@ internal fun RemoteDevicesScreen(
             DialogActionRow(
                 onCancel = {
                     editRelay = false
-                    relayDraft = ""
-                    relayEnrollment = ""
-                    relayTested = false
                 },
                 confirmText = stringResource(if (relayTested) R.string.remote_save_relay else R.string.remote_test_relay),
                 confirmEnabled = !state.busy && relayDraft.isNotBlank(),
@@ -376,9 +359,6 @@ internal fun RemoteDevicesScreen(
                         devices.setRelay(relayDraft, relayEnrollment) { success ->
                             if (success) {
                                 editRelay = false
-                                relayDraft = ""
-                                relayEnrollment = ""
-                                relayTested = false
                             }
                         }
                     } else {
@@ -393,6 +373,8 @@ internal fun RemoteDevicesScreen(
     }
     TextInputDialog(
         show = enteringCode,
+        confirmEnabled = !state.busy,
+        error = state.error,
         title = stringResource(R.string.remote_enter_code),
         summary = stringResource(R.string.remote_enter_code_summary),
         label = codeLabel,
@@ -403,8 +385,7 @@ internal fun RemoteDevicesScreen(
         visualTransformation = PasswordVisualTransformation(),
         onDismiss = { enteringCode = false },
         onConfirm = { code ->
-            devices.pair(code)
-            enteringCode = false
+            devices.pair(code) { success -> if (success) enteringCode = false }
         },
     )
     val peer = dialogPeer
@@ -450,15 +431,13 @@ internal fun RemoteDevicesScreen(
 }
 
 @Composable
-private fun RemoteSetupTip() {
+private fun RemoteSetupGuidance() {
     val tip = stringResource(R.string.remote_setup_tip)
     val guide = stringResource(R.string.remote_setup_guide)
     val linkStyle = TextLinkStyles(SpanStyle(color = MiuixTheme.colorScheme.primary))
-    TipCard {
+    Column(Modifier.padding(horizontal = 12.dp).padding(bottom = 6.dp)) {
         Text(
             text = buildAnnotatedString {
-                append(tip)
-                append(" ")
                 withLink(LinkAnnotation.Url(RemoteSetupGuideUrl, linkStyle)) { append(guide) }
             },
             fontSize = 13.sp,
@@ -543,10 +522,10 @@ internal fun PhoneNotificationSettingsScreen(devices: RemoteDevices, onBack: () 
         "adb shell cmd appops set --user 0 ${context.packageName} RECEIVE_SENSITIVE_NOTIFICATIONS allow"
     }
     val notificationApps = state.notificationApps
-    val apps by produceState(emptyList<Pair<String, String>>(), notificationApps) {
+    val apps by produceState(notificationApps.map { it to cachedAppLabel(it) }, notificationApps) {
         value = withContext(Dispatchers.IO) {
             val messagesApp = runCatching { Telephony.Sms.getDefaultSmsPackage(context) }.getOrNull()
-            notificationApps.map { it to (installedAppLabel(context, it) ?: it) }
+            notificationApps.map { it to (appLabel(context, it)) }
                 .sortedWith(compareBy({ it.first != messagesApp }, { it.second.lowercase() }))
         }
     }
@@ -562,7 +541,7 @@ internal fun PhoneNotificationSettingsScreen(devices: RemoteDevices, onBack: () 
                     checked = state.sharePhoneNotifications,
                     onCheckedChange = devices::setPhoneNotificationSharing,
                 )
-                if (state.sharePhoneNotifications) {
+                ExpandingPreferenceGroup(state.sharePhoneNotifications) {
                     ArrowPreference(
                         title = stringResource(R.string.phone_notifications_access),
                         summary = stringResource(if (listenerGranted) R.string.phone_notifications_access_granted
@@ -583,10 +562,8 @@ internal fun PhoneNotificationSettingsScreen(devices: RemoteDevices, onBack: () 
                 )
             }
         }
-        if (state.sharePhoneNotifications) {
-            item(contentType = PageStart.Inset) { TipCard(stringResource(R.string.phone_notifications_apps_tip)) }
-            items(appGroups, key = { it.first().first }) { group ->
-                GroupedCard {
+            items(appGroups, key = { it.first().first }, contentType = { "notification-sources" }) { group ->
+                ExpandingPreferenceGroup(state.sharePhoneNotifications) { GroupedCard {
                     group.forEach { (packageName, label) ->
                         key(packageName) {
                             SwitchPreference(
@@ -638,6 +615,8 @@ internal fun PhoneNotificationHistoryScreen(devices: RemoteDevices, deviceId: St
     val local = deviceId == LocalHistory
     val peer = state.peers.firstOrNull { it.id == deviceId }
     var clearRequested by remember { mutableStateOf(false) }
+    var clearAfterExit by remember { mutableStateOf(false) }
+    var removeAfterExit by remember { mutableStateOf(false) }
     var removeRequested by remember { mutableStateOf(false) }
     LaunchedEffect(deviceId) {
         if (!local) devices.refreshPhoneNotifications(deviceId)
@@ -648,6 +627,9 @@ internal fun PhoneNotificationHistoryScreen(devices: RemoteDevices, deviceId: St
             devices.clearError()
         }
     }
+    var localRefreshing by remember { mutableStateOf(false) }
+    var clearingPopupLocked by remember { mutableStateOf(false) }
+    val refreshScope = rememberCoroutineScope()
     val view = phoneView.takeIf { it.deviceId == deviceId }
     val entries = if (local) localNotifications else view?.entries.orEmpty()
     val available = local || view?.available == true
@@ -677,10 +659,17 @@ internal fun PhoneNotificationHistoryScreen(devices: RemoteDevices, deviceId: St
                 }
             }
         },
-        isRefreshing = view?.refreshing == true,
-        onRefresh = if (local) null else ({ devices.refreshPhoneNotifications(deviceId, userInitiated = true) }),
+        isRefreshing = if (local) localRefreshing else view?.refreshing == true,
+        refreshEnabled = !firstLoad && view?.clearing != true && !clearingPopupLocked,
+        onRefresh = if (local) ({
+            if (!localRefreshing) {
+                localRefreshing = true
+                refreshScope.launch { try { devices.reloadLocalPhoneNotifications().join() } finally { localRefreshing = false } }
+            }
+        }) else ({ devices.refreshPhoneNotifications(deviceId, userInitiated = true) }),
         pageState = when {
             firstLoad -> PageStateKind.LOADING
+            !available && entries.isEmpty() -> PageStateKind.ERROR
             available && entries.isEmpty() -> PageStateKind.EMPTY
             else -> PageStateKind.CONTENT
         },
@@ -688,29 +677,36 @@ internal fun PhoneNotificationHistoryScreen(devices: RemoteDevices, deviceId: St
             if (kind == PageStateKind.LOADING) {
                 LoadingState(stringResource(R.string.common_loading), Modifier.fillMaxSize())
             } else {
-                EmptyState(
-                    title = stringResource(R.string.phone_notifications_empty),
-                    message = "",
-                    icon = MiuixIcons.Community,
-                    modifier = Modifier.fillMaxSize(),
-                )
+                if (kind == PageStateKind.ERROR) {
+                    app.hyperlpa.ui.components.ErrorState(
+                        title = stringResource(R.string.phone_notifications_unavailable_title),
+                        message = view?.error ?: stringResource(R.string.phone_notifications_unavailable),
+                        actionText = stringResource(R.string.common_retry),
+                        onAction = { devices.refreshPhoneNotifications(deviceId, userInitiated = true) },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    EmptyState(title = stringResource(R.string.phone_notifications_empty), message = "",
+                        showMessage = false, icon = MiuixIcons.Community, modifier = Modifier.fillMaxSize())
+                }
             }
         },
     ) { _ ->
-        state.error?.let { message -> item(contentType = PageStart.Inset) { ErrorCard(message) } }
+        (view?.error ?: state.error)?.let { message -> item(contentType = PageStart.Inset) { ErrorCard(message) } }
         when {
             firstLoad -> Unit
-            !available -> item(contentType = PageStart.Inset) {
-                TipCard(stringResource(R.string.phone_notifications_unavailable))
-            }
+            !available -> Unit
             entries.isEmpty() -> Unit
-            else -> items(entries.asReversed(), key = { it.id }) { entry ->
+            else -> items(entries.asReversed(), key = { it.id }, contentType = { "phone-notification" }) { entry ->
                 PhoneNotificationRow(entry, Modifier.animateItem(), onCopyCode = copyCode)
             }
         }
     }
+    app.hyperlpa.ui.components.CompactProgressDialog(
+        stringResource(R.string.phone_notifications_clear).takeIf { view?.clearing == true }) { clearingPopupLocked = it }
     OverlayDialog(
         show = clearRequested,
+        onDismissFinished = { if (clearAfterExit) { clearAfterExit = false; devices.clearPhoneNotifications(deviceId) } },
         title = stringResource(R.string.phone_notifications_clear_title),
         summary = if (local) stringResource(R.string.phone_notifications_clear_local_summary)
             else stringResource(R.string.phone_notifications_clear_remote_summary, title),
@@ -718,13 +714,19 @@ internal fun PhoneNotificationHistoryScreen(devices: RemoteDevices, deviceId: St
     ) {
         DialogActionRow(
             onCancel = { clearRequested = false },
-            confirmText = stringResource(R.string.phone_notifications_clear),
+            confirmText = stringResource(R.string.common_clear),
             destructive = true,
-            onConfirm = { devices.clearPhoneNotifications(deviceId); clearRequested = false },
+            onConfirm = { clearAfterExit = true; clearRequested = false },
         )
     }
     OverlayDialog(
         show = removeRequested,
+        onDismissFinished = {
+            if (removeAfterExit) {
+                removeAfterExit = false
+                devices.forget(deviceId) { success -> if (success) onBack() }
+            }
+        },
         title = stringResource(R.string.remote_remove_title),
         summary = stringResource(R.string.remote_remove_summary),
         onDismissRequest = { removeRequested = false },
@@ -734,9 +736,8 @@ internal fun PhoneNotificationHistoryScreen(devices: RemoteDevices, deviceId: St
             confirmText = stringResource(R.string.remote_remove),
             destructive = true,
             onConfirm = {
+                removeAfterExit = true
                 removeRequested = false
-                devices.forget(deviceId)
-                onBack()
             },
         )
     }
@@ -745,8 +746,8 @@ internal fun PhoneNotificationHistoryScreen(devices: RemoteDevices, deviceId: St
 @Composable
 private fun PhoneNotificationRow(entry: PhoneNotificationEntry, modifier: Modifier, onCopyCode: (String) -> Unit) {
     val context = LocalContext.current
-    val appName = remember(entry.packageName, entry.appLabel) {
-        entry.appLabel.ifBlank { installedAppLabel(context, entry.packageName) ?: entry.packageName }
+    val appName by produceState(entry.appLabel.ifBlank { cachedAppLabel(entry.packageName) }, entry.packageName, entry.appLabel) {
+        if (entry.appLabel.isBlank()) value = appLabel(context, entry.packageName)
     }
     val hidden = entry.text.trim().equals(HiddenNotificationText, ignoreCase = true)
     val body = if (hidden) stringResource(R.string.phone_notifications_content_hidden) else entry.text.trim()
@@ -792,10 +793,6 @@ private fun rememberNotificationListenerGranted(): Boolean {
         context.getSystemService(NotificationManager::class.java).isNotificationListenerAccessGranted(
             ComponentName(context, PhoneNotificationListener::class.java))
 }
-
-private fun installedAppLabel(context: Context, packageName: String): String? = runCatching {
-    context.packageManager.getApplicationLabel(context.packageManager.getApplicationInfo(packageName, 0)).toString()
-}.getOrNull()
 
 private fun Context.copySensitive(label: String, value: String) {
     val clip = ClipData.newPlainText(label, value)

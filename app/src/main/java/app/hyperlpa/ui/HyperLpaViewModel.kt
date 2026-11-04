@@ -228,6 +228,16 @@ class HyperLpaViewModel(
     val navigationBackStack: NavBackStack = backStack
 
     // Snapshot state, not flows: the display must see these in the same frame as the back stack.
+    var operationPopupLocked by mutableStateOf(false)
+        private set
+    private var backAfterOperation = false
+    private val popupLockOwners = mutableSetOf<String>()
+    fun updateOperationPopupLock(locked: Boolean, owner: String = "lpa") {
+        if (locked) popupLockOwners.add(owner) else popupLockOwners.remove(owner)
+        operationPopupLocked = popupLockOwners.isNotEmpty()
+        if (!operationPopupLocked && backAfterOperation) { backAfterOperation = false; navigateBack() }
+    }
+
     var firstRunHandoffPending by mutableStateOf(false)
         private set
     var instantNavigation by mutableStateOf(false)
@@ -262,6 +272,8 @@ class HyperLpaViewModel(
     private val dataMutationMutex = Mutex()
     private val _backupOperationInProgress = MutableStateFlow(false)
     val backupOperationInProgress = _backupOperationInProgress.asStateFlow()
+    private val _backupOperationKind = MutableStateFlow<BackupOperationKind?>(null)
+    val backupOperationKind = _backupOperationKind.asStateFlow()
     val batchDownloadState = provisioningCoordinator.batchState
     val singleDownloadActive = provisioningCoordinator.singleDownloadActive
     private var simStateRefreshJob: Job? = null
@@ -612,6 +624,7 @@ class HyperLpaViewModel(
     fun navigationSnapshot(): NavigationSnapshot = NavigationSnapshot(
         selectedTab = selectedTab.value.name,
         route = backStack.lastOrNull().toPersistedRoute(),
+        routes = backStack.mapNotNull { it.toPersistedRoute() },
     )
 
     fun resolveStartRoute(settings: AppSettings) {
@@ -631,8 +644,18 @@ class HyperLpaViewModel(
     fun restoreNavigation(snapshot: NavigationSnapshot) {
         selectedTab.value = AppTab.entries.firstOrNull { it.name == snapshot.selectedTab }
             ?: AppTab.PROFILES
+        val routes = snapshot.routes.mapNotNull { it.toAppRoute() }
         val restoredRoute = snapshot.route.toAppRoute()
         backStack.clear()
+        if (routes.isNotEmpty()) {
+            if (routes.first() == AppRoute.FirstRunSetup && AppRoute.Shell !in routes) {
+                backStack.add(AppRoute.FirstRunSetup)
+            } else {
+                backStack.add(AppRoute.Shell)
+                backStack.addAll(routes.filter { it != AppRoute.Shell && it != AppRoute.FirstRunSetup })
+            }
+            return
+        }
         if (restoredRoute == AppRoute.FirstRunSetup) {
             backStack.add(AppRoute.FirstRunSetup)
             return
@@ -648,6 +671,7 @@ class HyperLpaViewModel(
     }
 
     fun navigateBack() {
+        if (operationPopupLocked) { backAfterOperation = true; return }
         if (profileDownloadFinishInProgress) return
         when (backStack.lastOrNull()) {
             AppRoute.ConfirmProfileDownload -> {
@@ -655,6 +679,10 @@ class HyperLpaViewModel(
                 if (operation?.stage == app.hyperlpa.domain.model.DownloadStage.CONFIRMING) {
                     showCancelDownloadConfirmation.value = true
                 }
+            }
+            AppRoute.DownloadProfile -> {
+                activationCodeDraft.value = ""
+                if (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
             }
             AppRoute.CompatibilityWizard -> dismissCompatibilityWizard()
             is AppRoute.ProfileDownloadResult -> finishProfileDownload()
@@ -669,7 +697,8 @@ class HyperLpaViewModel(
     fun handleActivationCode(value: String): Boolean {
         val activationCode = extractActivationCode(value) ?: return false
         activationCodeDraft.value = activationCode
-        navigate(AppRoute.DownloadProfile)
+        if (backStack.lastOrNull() != AppRoute.FirstRunSetup &&
+            state.value.settings.compatibilityWizardCompleted) navigate(AppRoute.DownloadProfile)
         return true
     }
 
@@ -692,7 +721,7 @@ class HyperLpaViewModel(
     }
     fun connectReader(readerId: String) {
         val operation = repository.state.value.operation
-        if (dataMutationMutex.isLocked || requestedProfileSwitch.value != null ||
+        if (operationPopupLocked || dataMutationMutex.isLocked || requestedProfileSwitch.value != null ||
             singleDownloadActive.value || batchDownloadState.value.running ||
             operation !is LpaOperation.Idle && operation !is LpaOperation.Connecting
         ) return
@@ -719,7 +748,7 @@ class HyperLpaViewModel(
         }
     }
     fun setProfileEnabled(iccid: String, enabled: Boolean) {
-        if (requestedProfileSwitch.value != null || dataMutationMutex.isLocked || readerConnectionJob?.isActive == true ||
+        if (operationPopupLocked || requestedProfileSwitch.value != null || dataMutationMutex.isLocked || readerConnectionJob?.isActive == true ||
             repository.state.value.readerSnapshotPendingRefresh ||
             repository.state.value.operation !is LpaOperation.Idle
         ) return
@@ -749,7 +778,9 @@ class HyperLpaViewModel(
         }
         if (stillEnabled) enqueueProfileSwitch(iccid, enabled = false, allowDisconnect = true)
     }
-    fun deleteProfile(iccid: String) = readerAction { repository.deleteProfile(iccid) }
+    fun deleteProfile(iccid: String, onComplete: (Boolean) -> Unit = {}) = readerAction(onRejected = { onComplete(false) }) {
+        onComplete(repository.deleteProfile(iccid) is OperationOutcome.Success)
+    }
     fun renameProfile(iccid: String, nickname: String) = readerAction { repository.renameProfile(iccid, nickname) }
     fun downloadProfile(request: DownloadRequest): Boolean = readerConnectionJob?.isActive != true &&
         provisioningCoordinator.startSingleDownload(request)
@@ -840,6 +871,18 @@ class HyperLpaViewModel(
     fun deleteNotification(sequenceNumber: Long) = readerAction { repository.deleteNotification(sequenceNumber) }
     fun resendNotification(entry: NotificationHistoryEntry) = readerAction {
         repository.resendNotification(entry)
+    }
+    fun refreshNotificationHistory(): Job = viewModelScope.launch {
+        try {
+            dataMutationMutex.withLock {
+                if (remoteDevices.isSelected) repository.refresh() else notificationHistoryStore.reload()
+            }
+        } catch (error: Exception) { repository.reportFailure(error) }
+    }
+    fun clearLocalNotificationHistory(onComplete: (Boolean) -> Unit) = launch {
+        if (remoteDevices.isSelected) { onComplete(false); return@launch }
+        try { notificationHistoryStore.clear(); onComplete(true) }
+        catch (error: Exception) { repository.reportFailure(error); onComplete(false) }
     }
     fun deleteNotificationHistoryEntry(entry: NotificationHistoryEntry) = readerAction {
         if (remoteDevices.isSelected) remoteDevices.execute(DeviceCommand(DeviceAction.DELETE_HISTORY, history = entry, confirmed = true))
@@ -1208,6 +1251,7 @@ class HyperLpaViewModel(
             onComplete(false)
             return
         }
+        _backupOperationKind.value = BackupOperationKind.CREATE
         viewModelScope.launch {
             var success = false
             try {
@@ -1232,6 +1276,7 @@ class HyperLpaViewModel(
                 // The UI reports a generic failure without exposing path or backup contents.
             } finally {
                 password.fill('\u0000')
+                _backupOperationKind.value = null
                 _backupOperationInProgress.value = false
                 onComplete(success)
             }
@@ -1244,6 +1289,7 @@ class HyperLpaViewModel(
             return
         }
         val password = passphrase.toCharArray()
+        _backupOperationKind.value = BackupOperationKind.RESTORE
         viewModelScope.launch {
             var success = false
             try {
@@ -1280,6 +1326,7 @@ class HyperLpaViewModel(
                 // Completion still runs so the screen cannot remain disabled after a failure.
             } finally {
                 password.fill('\u0000')
+                _backupOperationKind.value = null
                 _backupOperationInProgress.value = false
                 onComplete(success)
             }
@@ -1291,6 +1338,7 @@ class HyperLpaViewModel(
             onComplete(false)
             return
         }
+        _backupOperationKind.value = BackupOperationKind.RESET
         viewModelScope.launch {
             var success = false
             try {
@@ -1317,6 +1365,7 @@ class HyperLpaViewModel(
             } catch (_: Throwable) {
                 // Completion still runs so the screen cannot remain disabled after a failure.
             } finally {
+                _backupOperationKind.value = null
                 _backupOperationInProgress.value = false
                 onComplete(success)
             }
@@ -1408,6 +1457,9 @@ class HyperLpaViewModel(
 
     fun endInstantNavigation() {
         instantNavigation = false
+        if (activationCodeDraft.value.isNotBlank() && backStack.lastOrNull() == AppRoute.Shell) {
+            navigate(AppRoute.DownloadProfile)
+        }
     }
     fun setEidRedaction(value: RedactionMode) = launch { settingsStore.setEidRedaction(value) }
     fun setIccidRedaction(value: RedactionMode) = launch { settingsStore.setIccidRedaction(value) }
@@ -1456,7 +1508,7 @@ class HyperLpaViewModel(
     private fun readerAction(block: suspend () -> Unit) = readerAction(onRejected = {}, block = block)
 
     private fun readerAction(onRejected: () -> Unit, block: suspend () -> Unit) {
-        if (readerConnectionJob?.isActive == true) {
+        if (readerConnectionJob?.isActive == true || operationPopupLocked) {
             onRejected()
             return
         }
@@ -1574,6 +1626,7 @@ internal fun extractActivationCode(value: String): String? {
 data class NavigationSnapshot(
     val selectedTab: String,
     val route: String?,
+    val routes: List<String> = emptyList(),
 )
 
 private const val MaxStoredProfileIconBytes = 4L * 1024L * 1024L
@@ -1593,13 +1646,13 @@ internal fun shouldOpenCompatibilityWizard(
     currentRoute: AppRoute?,
 ): Boolean = settingsLoaded &&
     !wizardCompleted &&
-    activationCodeDraft.isBlank() &&
     currentRoute == AppRoute.Shell
 
 private fun NavKey?.toPersistedRoute(): String? = when (val route = this as? AppRoute) {
-    null,
-    AppRoute.Shell,
-    AppRoute.CompatibilityWizard,
+    null -> null
+    AppRoute.Shell -> "shell"
+    AppRoute.CompatibilityWizard -> "compatibility"
+
     is AppRoute.ProfileDownloadResult,
     is AppRoute.ProfileDownloadHistorySlot,
     AppRoute.ConfirmProfileDownload,
@@ -1623,6 +1676,7 @@ private fun NavKey?.toPersistedRoute(): String? = when (val route = this as? App
     AppRoute.BackupRestoreSettings -> "backup"
     AppRoute.AidManager -> "aids"
     AppRoute.TagsAndReminders -> "tags-reminders"
+    AppRoute.ReminderSettings -> "reminder-settings"
     AppRoute.TagManager -> "tags"
     AppRoute.ScheduledReminders -> "reminders"
     AppRoute.Statistics -> "statistics"
@@ -1639,6 +1693,8 @@ private fun String?.toAppRoute(): AppRoute? = when {
         .takeIf { it == "local" || it.matches(Regex("[a-f0-9-]{36}")) }
         ?.let(AppRoute::PhoneNotificationHistory)
     else -> when (this) {
+        "shell" -> AppRoute.Shell
+        "compatibility" -> AppRoute.CompatibilityWizard
         "first-run-setup" -> AppRoute.FirstRunSetup
         "download" -> AppRoute.DownloadProfile
         "batch" -> AppRoute.BatchDownload
@@ -1656,6 +1712,7 @@ private fun String?.toAppRoute(): AppRoute? = when {
         "backup" -> AppRoute.BackupRestoreSettings
         "aids" -> AppRoute.AidManager
         "tags-reminders" -> AppRoute.TagsAndReminders
+        "reminder-settings" -> AppRoute.ReminderSettings
         "tags" -> AppRoute.TagManager
         "reminders" -> AppRoute.ScheduledReminders
         "statistics" -> AppRoute.Statistics
@@ -1799,3 +1856,5 @@ private const val MaxUiOperatorIconBytes = 8L * 1024 * 1024
 private const val MaxUiOperatorIconEntries = 256
 private const val MaxCloudProfileSnapshots = 8
 private const val MaxSearchQueryCharacters = 256
+
+enum class BackupOperationKind { CREATE, RESTORE, RESET }

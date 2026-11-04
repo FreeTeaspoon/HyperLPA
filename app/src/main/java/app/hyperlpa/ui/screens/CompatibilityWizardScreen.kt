@@ -2,6 +2,7 @@ package app.hyperlpa.ui.screens
 
 import android.os.Build
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -76,6 +77,9 @@ fun CompatibilityWizardScreen(
         onBack = onBack,
         showBackButton = !firstRun,
         isRefreshing = refreshing,
+        refreshEnabled = shown != null && !checking,
+        pageState = if (shown == null) app.hyperlpa.ui.components.PageStateKind.LOADING else app.hyperlpa.ui.components.PageStateKind.CONTENT,
+        pageStateContent = { LoadingState(stringResource(R.string.compatibility_checking), Modifier.fillMaxSize()) },
         onRefresh = if (shown == null) null else ({
             if (!refreshing) {
                 refreshing = true
@@ -86,11 +90,7 @@ fun CompatibilityWizardScreen(
         }),
     ) { _ ->
         item(contentType = PageStart.Viewport) {
-            if (shown == null) {
-                LoadingState(stringResource(R.string.compatibility_checking), Modifier.fillParentMaxSize())
-            } else {
-                CompatibilityResultContent(shown, firstRun, onContinue)
-            }
+            shown?.let { CompatibilityResultContent(it, firstRun, onContinue) }
         }
     }
 }

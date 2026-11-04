@@ -2,6 +2,7 @@ package app.hyperlpa.ui.components
 
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -16,8 +17,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -58,7 +59,10 @@ fun DetailLazyScaffold(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     showBackButton: Boolean = true,
+    fullWidth: Boolean = false,
+    refreshEnabled: Boolean = true,
     actions: @Composable RowScope.() -> Unit = {},
+    bottomBar: @Composable () -> Unit = {},
     background: (@Composable BoxScope.() -> Unit)? = null,
     collapsedTitle: String? = null,
     collapsedBarRevealStart: Dp = 0.dp,
@@ -69,11 +73,13 @@ fun DetailLazyScaffold(
     pageStateContent: @Composable (PageStateKind) -> Unit = {},
     content: LazyListScope.(sidePadding: Dp) -> Unit,
 ) {
+    var retainedContent by remember { mutableStateOf(content) }
+    if (pageState == PageStateKind.CONTENT) retainedContent = content
     val scrollBehavior = MiuixScrollBehavior()
     val hasBackground = background != null
     val backdrop = rememberAppBackdrop()
+    val refreshState = top.yukonga.miuix.kmp.basic.rememberPullToRefreshState()
     val backgroundScrollOffset = remember { mutableFloatStateOf(0f) }
-    var hideStateDuringPull by remember { mutableStateOf(false) }
     val barRevealStart = with(LocalDensity.current) { collapsedBarRevealStart.toPx() }
     val barRevealDistance = with(LocalDensity.current) { 56.dp.toPx() }
     val collapsedBarProgress by remember(barRevealStart, barRevealDistance, hasBackground) {
@@ -151,6 +157,7 @@ fun DetailLazyScaffold(
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             containerColor = if (hasBackground) Color.Transparent else MiuixTheme.colorScheme.surface,
+            bottomBar = bottomBar,
             topBar = {
                 val navigationIcon: @Composable () -> Unit = {
                     if (showBackButton) {
@@ -239,8 +246,9 @@ fun DetailLazyScaffold(
                         modifier = Modifier
                             .fillMaxSize()
                             .horizontalCutoutPadding(),
+                        maxWidth = if (fullWidth) null else app.hyperlpa.ui.adaptive.MaximumContentWidth,
                     ) { sidePadding ->
-                        val pageContent = MishkaPageContent { content(sidePadding) }
+                        val pageContent = MishkaPageContent { retainedContent(sidePadding) }
                         LazyColumn(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -253,40 +261,38 @@ fun DetailLazyScaffold(
                             contentPadding = PaddingValues(
                                 start = sidePadding,
                                 end = sidePadding,
-                                top = padding.calculateTopPadding() + if (hasBackground) 0.dp else pageContent.topPadding,
-                                bottom = padding.calculateBottomPadding() + 24.dp,
+                                top = padding.calculateTopPadding() + (if (hasBackground) 0.dp else pageContent.topPadding) +
+                                    (12.dp - pageContent.topPadding).coerceAtLeast(0.dp) * refreshState.visualProgress.coerceIn(0f, 1f),
+                                bottom = maxOf(padding.calculateBottomPadding(), androidx.compose.foundation.layout.WindowInsets.ime.getBottom(LocalDensity.current).let { with(LocalDensity.current) { it.toDp() } }) + 24.dp,
                             ),
                         ) {
                             pageContent.content(this)
                         }
                     }
                 }
+                val result: @Composable () -> Unit = {
+                    PageStateHost(state = pageState, modifier = Modifier.fillMaxSize()) { target ->
+                        if (target == PageStateKind.CONTENT) list()
+                        else ScrollablePageState(
+                            modifier = Modifier.horizontalCutoutPadding(),
+                            scrollBehavior = scrollBehavior,
+                            contentPadding = PaddingValues(
+                                top = padding.calculateTopPadding() + 12.dp * refreshState.visualProgress.coerceIn(0f, 1f),
+                                bottom = maxOf(padding.calculateBottomPadding(), with(LocalDensity.current) {
+                                    androidx.compose.foundation.layout.WindowInsets.ime.getBottom(this).toDp()
+                                }),
+                            ),
+                        ) { pageStateContent(target) }
+                    }
+                }
                 if (onRefresh != null) {
-                    PullToRefresh(
-                        isRefreshing = isRefreshing,
-                        onRefresh = onRefresh,
+                    PullToRefresh(isRefreshing = isRefreshing, onRefresh = onRefresh,
+                        enabled = refreshEnabled && pageState != PageStateKind.LOADING,
+                        pullToRefreshState = refreshState,
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(top = padding.calculateTopPadding() + RefreshHeaderTopGap),
-                        topAppBarScrollBehavior = scrollBehavior,
-                        onPullProgress = { hideStateDuringPull = it > 0.01f },
-                        content = list,
-                    )
-                } else {
-                    list()
-                }
-                // The refresh indicator reports progress itself, so no page state competes with it.
-                val hideState = onRefresh != null && (isRefreshing || hideStateDuringPull)
-                PageStateOverlay(
-                    state = if (hideState) PageStateKind.CONTENT else pageState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(
-                            top = padding.calculateTopPadding(),
-                            bottom = padding.calculateBottomPadding(),
-                        )
-                        .horizontalCutoutPadding(),
-                    content = pageStateContent,
-                )
+                        topAppBarScrollBehavior = scrollBehavior, content = result)
+                } else result()
             }
         }
     }
@@ -321,8 +327,7 @@ fun Modifier.fillRemainingHeight(remainingHeight: State<Int>): Modifier = layout
 }
 
 /**
- * A page state below other list content. The item fades in as it appears but leaves at once,
- * because the content replacing it appears at once too and must not overlap it. [content]
+ * A page state below other list content. The item fades with the shared page-state timing. [content]
  * receives a modifier that stretches the state over the height left under that content.
  */
 fun LazyListScope.inlinePageStateItem(
@@ -336,7 +341,7 @@ fun LazyListScope.inlinePageStateItem(
             modifier = Modifier.animateItem(
                 fadeInSpec = tween(PageStateFadeInMillis),
                 placementSpec = null,
-                fadeOutSpec = null,
+                fadeOutSpec = tween(PageStateFadeOutMillis),
             ),
         ) {
             content(Modifier.fillRemainingHeight(remainingHeight))
@@ -361,6 +366,26 @@ fun redactIdentifier(
             if (value.length < 8) return "•".repeat(value.length)
             val visible = (value.length / 4).coerceIn(2, 6)
             value.take(visible) + "•".repeat(4) + value.takeLast(visible)
+        }
+    }
+}
+
+/** A viewport-sized state that participates in native pull nested scrolling. */
+@Composable
+fun ScrollablePageState(
+    contentPadding: PaddingValues,
+    scrollBehavior: top.yukonga.miuix.kmp.basic.ScrollBehavior,
+    modifier: Modifier = Modifier,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    LazyColumn(
+        modifier = modifier.fillMaxSize().scrollEndHaptic().overScrollVertical()
+            .nestedScroll(scrollBehavior.nestedScrollConnection),
+        overscrollEffect = null,
+        contentPadding = contentPadding,
+    ) {
+        item(key = "page-state") {
+            Box(Modifier.fillParentMaxSize(), content = content)
         }
     }
 }

@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -29,22 +28,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import app.hyperlpa.ui.theme.LocalDarkTheme
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
-import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Backup
 import top.yukonga.miuix.kmp.icon.extended.Link
 import top.yukonga.miuix.kmp.icon.extended.Notes
 import top.yukonga.miuix.kmp.icon.extended.Refresh
-import top.yukonga.miuix.kmp.squircle.squircleSurface
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.PressFeedbackType
 
@@ -107,20 +104,16 @@ fun PrimaryPageButton(
     enabled: Boolean = true,
     busy: Boolean = false,
 ) {
-    Button(
-        onClick = onClick,
-        enabled = enabled && !busy,
-        colors = ButtonDefaults.buttonColorsPrimary(),
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp)
-            .padding(bottom = 12.dp),
-    ) {
-        if (busy) {
-            InfiniteProgressIndicator(color = MiuixTheme.colorScheme.onPrimary)
-            Spacer(Modifier.width(10.dp))
-        }
-        Text(text = text, style = MiuixTheme.textStyles.button)
+    Box(modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(bottom = 12.dp),
+        contentAlignment = Alignment.Center) {
+        TextButton(
+            text = if (busy) "" else text,
+            onClick = onClick,
+            enabled = enabled && !busy,
+            colors = ButtonDefaults.textButtonColorsPrimary(),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (busy) InfiniteProgressIndicator(color = MiuixTheme.colorScheme.onPrimary, size = 24.dp)
     }
 }
 
@@ -185,11 +178,10 @@ fun pageStateTransition(): ContentTransform = ContentTransform(
 )
 
 /**
- * Fades whole-page states in and out and cross-fades between them. [PageStateKind.CONTENT]
- * draws nothing, so the page underneath shows through.
+ * Cross-fades the complete result, including content, without changing external list state.
  */
 @Composable
-fun PageStateOverlay(
+fun PageStateHost(
     state: PageStateKind,
     modifier: Modifier = Modifier,
     content: @Composable (PageStateKind) -> Unit,
@@ -201,7 +193,7 @@ fun PageStateOverlay(
         contentAlignment = Alignment.Center,
         label = "page-state",
     ) { target ->
-        if (target != PageStateKind.CONTENT) content(target)
+        content(target)
     }
 }
 
@@ -232,13 +224,15 @@ fun EmptyState(
     modifier: Modifier = Modifier,
     icon: ImageVector = MiuixIcons.Notes,
     showMessage: Boolean = false,
+    actionText: String? = null,
+    onAction: (() -> Unit)? = null,
 ) {
     val muted = MiuixTheme.colorScheme.onSurfaceVariantSummary
     val visibleMessage = message.takeIf { showMessage && it.isNotBlank() }
-    val stateDescription = if (message.isBlank()) title else stringResource(
+    val stateDescription = if (visibleMessage == null) title else stringResource(
         app.hyperlpa.R.string.common_state_description,
         title,
-        message,
+        visibleMessage,
     )
     Box(
         modifier = modifier
@@ -251,38 +245,33 @@ fun EmptyState(
             modifier = Modifier.widthIn(max = 320.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .squircleSurface(
-                        color = muted.copy(alpha = if (LocalDarkTheme.current) 0.38f else 0.23f),
-                        cornerRadius = 12.dp,
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    modifier = Modifier.size(27.dp),
-                    tint = MiuixTheme.colorScheme.surface,
-                )
-            }
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(36.dp),
+                tint = muted.copy(alpha = 0.7f),
+            )
             Spacer(Modifier.height(18.dp))
             Text(
                 text = title,
                 fontSize = 15.sp,
-                fontWeight = if (visibleMessage == null) FontWeight.Normal else FontWeight.Medium,
-                color = if (visibleMessage == null) muted else MiuixTheme.colorScheme.onSurfaceSecondary,
+                fontWeight = FontWeight.Medium,
+                color = MiuixTheme.colorScheme.onSurface,
                 textAlign = TextAlign.Center,
             )
             if (visibleMessage != null) {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(7.dp))
                 Text(
                     text = visibleMessage,
                     fontSize = 13.sp,
                     color = muted,
                     textAlign = TextAlign.Center,
                 )
+            }
+            if (actionText != null && onAction != null) {
+                TextButton(text = actionText, onClick = onAction,
+                    colors = ButtonDefaults.textButtonColors(color = androidx.compose.ui.graphics.Color.Transparent,
+                        textColor = MiuixTheme.colorScheme.primary))
             }
         }
     }
@@ -294,6 +283,8 @@ fun ErrorState(
     message: String,
     modifier: Modifier = Modifier,
     icon: ImageVector = MiuixIcons.Refresh,
+    actionText: String? = null,
+    onAction: (() -> Unit)? = null,
 ) {
     EmptyState(
         title = title,
@@ -301,5 +292,36 @@ fun ErrorState(
         modifier = modifier,
         icon = icon,
         showMessage = true,
+        actionText = actionText,
+        onAction = onAction,
     )
+}
+
+/** A continuous group with separately keyed, lazily composed rows. */
+fun <T> androidx.compose.foundation.lazy.LazyListScope.lazyGroup(
+    entries: List<T>,
+    key: (T) -> Any,
+    contentType: String,
+    row: @Composable (T) -> Unit,
+) {
+    items(count = entries.size, key = { "$contentType:${key(entries[it])}" }, contentType = { contentType }) { index ->
+        val topRadius = if (index == 0) 16.dp else 0.dp
+        val bottom = if (index == entries.lastIndex) 16.dp else 0.dp
+        top.yukonga.miuix.kmp.basic.Surface(
+            modifier = Modifier.animateItem().fillMaxWidth().padding(horizontal = 12.dp)
+                .padding(bottom = if (index == entries.lastIndex) 6.dp else 0.dp),
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(topStart = topRadius, topEnd = topRadius,
+                bottomStart = bottom, bottomEnd = bottom),
+            color = MiuixTheme.colorScheme.surfaceContainer,
+        ) { row(entries[index]) }
+    }
+}
+
+@Composable
+fun ExpandingPreferenceGroup(visible: Boolean, content: @Composable ColumnScope.() -> Unit) {
+    androidx.compose.animation.AnimatedVisibility(
+        visible = visible,
+        enter = androidx.compose.animation.expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+        exit = androidx.compose.animation.shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
+    ) { Column(content = content) }
 }

@@ -32,7 +32,7 @@ class CompatibilityWizardNavigationTest {
                 currentRoute = AppRoute.Shell,
             ),
         )
-        assertFalse(
+        assertTrue(
             shouldOpenCompatibilityWizard(
                 settingsLoaded = true,
                 wizardCompleted = false,

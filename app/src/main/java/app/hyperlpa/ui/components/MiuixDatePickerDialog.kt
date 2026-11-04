@@ -3,7 +3,6 @@ package app.hyperlpa.ui.components
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -13,11 +12,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.unit.dp
-import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.NumberPicker
-import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.window.WindowDialog
+import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import java.time.LocalDate
 import java.time.Month
 import java.time.YearMonth
@@ -58,7 +56,7 @@ fun MiuixDatePickerDialog(
     val selectedDate = LocalDate.of(year, actualMonth, actualDay)
     val locale = LocalLocale.current.platformLocale
 
-    WindowDialog(
+    OverlayDialog(
         show = show,
         title = title,
         summary = selectedDate.format(
@@ -119,25 +117,13 @@ fun MiuixDatePickerDialog(
                 modifier = Modifier.weight(1f),
             )
         }
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            TextButton(
-                text = cancelText,
-                onClick = onDismissRequest,
-                modifier = Modifier.weight(1f),
-            )
-            Button(
-                onClick = {
-                    onDateSelected(selectedDate)
-                    onDismissRequest()
-                },
-                modifier = Modifier.weight(1f),
-            ) {
-                Text(confirmText)
-            }
-        }
+        Spacer(Modifier.height(12.dp))
+        DialogActionRow(
+            onCancel = onDismissRequest,
+            cancelText = cancelText,
+            confirmText = confirmText,
+            onConfirm = { onDateSelected(selectedDate); onDismissRequest() },
+        )
     }
 }
 

@@ -24,6 +24,7 @@ import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
+import app.hyperlpa.ui.adaptive.horizontalCutoutPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -104,7 +105,6 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
-import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.FloatingNavigationBar
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
@@ -271,7 +271,7 @@ fun HyperLpaApp(
                         !currentState.value.lpa.readerSnapshotPendingRefresh,
                     onSetPinned = { pinned -> viewModel.setProfilePinned(route.iccid, pinned) },
                     onRename = { nickname -> viewModel.renameProfile(route.iccid, nickname) },
-                    onDelete = { viewModel.deleteProfile(route.iccid) },
+                    onDelete = { complete -> viewModel.deleteProfile(route.iccid, complete) },
                     onSetTags = { tags -> viewModel.setProfileTags(route.iccid, tags) },
                     onSetReminder = { label, instant -> viewModel.setProfileReminder(route.iccid, label, instant) },
                     onRequestNotificationPermission = onRequestNotificationPermission,
@@ -520,6 +520,8 @@ fun HyperLpaApp(
                     onBack = viewModel::navigateBack,
                     onDeleteHistoryEntry = viewModel::deleteNotificationHistoryEntry,
                     onResendNotification = viewModel::resendNotification,
+                    onRefreshHistory = viewModel::refreshNotificationHistory,
+                    onClearLocalHistory = viewModel::clearLocalNotificationHistory,
                 )
             }
             entry<AppRoute.AppearanceSettings>(swipeDismiss = swipeBackDirection) {
@@ -564,11 +566,15 @@ fun HyperLpaApp(
                 )
             }
             entry<AppRoute.TagsAndReminders>(swipeDismiss = swipeBackDirection) {
-                TagsAndRemindersScreen(
+                TagsAndRemindersScreen(settings = currentState.value.settings, onBack = viewModel::navigateBack,
+                    onOpenTagManager = { viewModel.navigate(AppRoute.TagManager) },
+                    onOpenReminderSettings = { viewModel.navigate(AppRoute.ReminderSettings) })
+            }
+            entry<AppRoute.ReminderSettings>(swipeDismiss = swipeBackDirection) {
+                app.hyperlpa.ui.screens.ReminderSettingsScreen(
                     settings = currentState.value.settings,
                     notificationPermissionGranted = currentNotificationPermissionGranted.value,
                     onBack = viewModel::navigateBack,
-                    onOpenTagManager = { viewModel.navigate(AppRoute.TagManager) },
                     onOpenScheduledReminders = { viewModel.navigate(AppRoute.ScheduledReminders) },
                     onSetRemindersEnabled = viewModel::setScheduledReminders,
                     onRequestNotificationPermission = onRequestNotificationPermission,
@@ -609,9 +615,9 @@ fun HyperLpaApp(
             }
         }
 
-            OperationProgressDialog(operation = state.lpa.operation)
+            OperationProgressDialog(operation = state.lpa.operation, onLockChange = viewModel::updateOperationPopupLock)
             OperationFailureDialog(
-                failure = state.lpa.failure,
+                failure = state.lpa.failure.takeUnless { viewModel.operationPopupLocked },
                 onDismiss = viewModel::clearFailure,
             )
             LastEnabledProfileDisableDialog(
@@ -898,7 +904,7 @@ private fun MainTabPage(
                     Modifier
                 },
             )
-        Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().horizontalCutoutPadding()) {
             if (useStaticBackdrop && backdrop != null) {
                 Spacer(Modifier.fillMaxSize().layerBackdrop(backdrop))
             }
@@ -1024,7 +1030,7 @@ private fun LastEnabledProfileDisableDialog(
     ) {
         DialogActionRow(
             onCancel = onCancel,
-            confirmText = stringResource(app.hyperlpa.R.string.last_profile_disable_action),
+            confirmText = stringResource(app.hyperlpa.R.string.common_disable),
             destructive = true,
             onConfirm = onConfirm,
         )
@@ -1037,15 +1043,18 @@ private fun OperationFailureDialog(
     onDismiss: () -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
+    var retained by remember { mutableStateOf(failure) }
+    if (failure != null) retained = failure
     OverlayDialog(
         show = failure != null,
-        title = failure?.title,
-        summary = failure?.message,
+        title = retained?.title,
+        summary = retained?.message,
+        onDismissFinished = { if (failure == null) retained = null },
         onDismissRequest = onDismiss,
     ) {
-        if (!failure?.diagnostic.isNullOrBlank()) {
+        if (!retained?.diagnostic.isNullOrBlank()) {
             Text(
-                text = failure.diagnostic.orEmpty(),
+                text = retained?.diagnostic.orEmpty(),
                 style = MiuixTheme.textStyles.footnote1,
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 maxLines = 8,
@@ -1066,34 +1075,7 @@ private fun OperationFailureDialog(
 }
 
 @Composable
-private fun NonDismissibleProgressDialog(
-    show: Boolean,
-    title: String?,
-    summary: String,
-    content: @Composable () -> Unit,
-) {
-    OverlayDialog(
-        show = show,
-        title = title,
-        summary = summary,
-        onDismissRequest = null,
-    ) {
-        // Miuix still animates predictive back when onDismissRequest is null. A handler composed
-        // inside its content takes precedence and consumes back without changing dialog progress.
-        val navigationEventState = rememberNavigationEventState(
-            currentInfo = NavigationEventInfo.None,
-        )
-        NavigationBackHandler(
-            state = navigationEventState,
-            isBackEnabled = show,
-            onBackCompleted = {},
-        )
-        content()
-    }
-}
-
-@Composable
-private fun OperationProgressDialog(operation: LpaOperation) {
+private fun OperationProgressDialog(operation: LpaOperation, onLockChange: (Boolean) -> Unit) {
     val title = when (operation) {
         is LpaOperation.Deleting -> stringResource(app.hyperlpa.R.string.operation_deleting_profile)
         is LpaOperation.Renaming -> stringResource(app.hyperlpa.R.string.operation_renaming_profile)
@@ -1110,18 +1092,7 @@ private fun OperationProgressDialog(operation: LpaOperation) {
         -> null
     }
 
-    NonDismissibleProgressDialog(
-        show = title != null,
-        title = title,
-        summary = stringResource(app.hyperlpa.R.string.operation_keep_connected_summary),
-    ) {
-        Box(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            InfiniteProgressIndicator()
-        }
-    }
+    app.hyperlpa.ui.components.CompactProgressDialog(title, onLockChange)
 }
 
 @Composable

@@ -19,6 +19,17 @@ class NotificationOtpTest {
     }
 
     @Test
+    fun preservesLeadingZeroesAndRequiresProximityOnBothSides() {
+        assertEquals("001234", code("Your code: 001234"))
+        assertEquals("0007", code("0007 is your PIN"))
+        assertNull(code("123456 " + "unrelated message ".repeat(4) + "security notice"))
+        assertNull(code("verification notice " + "unrelated message ".repeat(4) + "123456"))
+        assertNull(code("PIN 123456789012"))
+        assertNull(code("123456789012 is your code"))
+        assertEquals("004321", code("Order 123456789012. Your verification code is 004321"))
+    }
+
+    @Test
     fun ignoresNumbersWithoutKeyword() {
         assertNull(code("Meet at 1930 near gate 12"))
         assertNull(code("Order 12345678901 has shipped"))

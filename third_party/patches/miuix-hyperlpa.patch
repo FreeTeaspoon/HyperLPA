@@ -1,0 +1,435 @@
+diff --git a/docs/components/pulltorefresh.md b/docs/components/pulltorefresh.md
+index 61ebe3a9..52db4174 100644
+--- a/docs/components/pulltorefresh.md
++++ b/docs/components/pulltorefresh.md
+@@ -35,6 +35,7 @@ LaunchedEffect(isRefreshing) {
+ Surface {
+     PullToRefresh(
+         isRefreshing = isRefreshing,
++        enabled = true,
+         onRefresh = { isRefreshing = true },
+         pullToRefreshState = pullToRefreshState,
+     ) {
+@@ -75,6 +76,7 @@ PullToRefresh has the following states:
+ | ----------------------- | ---------------------- | ------------------------------ | -------------------------------------- | -------- |
+ | isRefreshing            | Boolean                | Refresh state                  | None                                   | Yes      |
+ | onRefresh               | () -> Unit             | Refresh callback function      | None                                   | Yes      |
++| enabled | Boolean | Allow user pull gestures; preserves content and scroll state | true | No |
+ | modifier                | Modifier               | Container modifier             | Modifier                               | No       |
+ | pullToRefreshState      | PullToRefreshState     | PullToRefresh state            | rememberPullToRefreshState()           | No       |
+ | contentPadding          | PaddingValues          | Content padding                | PaddingValues(0.dp)                    | No       |
+diff --git a/docs/demo/src/commonMain/kotlin/PullToRefreshDemo.kt b/docs/demo/src/commonMain/kotlin/PullToRefreshDemo.kt
+index 26c54453..e6f775c6 100644
+--- a/docs/demo/src/commonMain/kotlin/PullToRefreshDemo.kt
++++ b/docs/demo/src/commonMain/kotlin/PullToRefreshDemo.kt
+@@ -58,6 +58,7 @@ fun PullToRefreshDemo() {
+ 
+             PullToRefresh(
+                 isRefreshing = isRefreshing,
++                enabled = true,
+                 onRefresh = { isRefreshing = true },
+                 pullToRefreshState = pullToRefreshState,
+             ) {
+diff --git a/docs/guide/blur.md b/docs/guide/blur.md
+index d4bc2d92..bb1054d7 100644
+--- a/docs/guide/blur.md
++++ b/docs/guide/blur.md
+@@ -68,6 +68,11 @@ val backdropScaffoldSupported = isRenderEffectSupported()
+ val blurAndBlendSupported = isRuntimeShaderSupported()
+ ```
+ 
++Blend shaders compile only the blend modes used by each surface. This keeps the same
++color and alpha calculations while avoiding driver compiler memory limits for
++small chains that include Lab or linear-light modes. Changing the mode set
++selects a matching shader; changing colors keeps the existing shader.
++
+ ## Basic Usage
+ 
+ Applying a backdrop blur involves three steps:
+diff --git a/docs/guide/miuix-nav.md b/docs/guide/miuix-nav.md
+index 7a657660..3f1ad756 100644
+--- a/docs/guide/miuix-nav.md
++++ b/docs/guide/miuix-nav.md
+@@ -66,6 +66,8 @@ while (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
+ 
+ The reconciler classifies each change as `Push` / `Pop` / `MultiPush(n)` / `MultiPop(n)` / `Replace` / `ReplaceAll`, surfaced to transitions via `NavTransitionScope.change` so you can animate a multi-pop differently from a single pop.
+ 
++During an interrupted pop followed by a push, the current entry draws above any removing entry at the same stack position. Reopening a retained page brings its existing content to the front immediately; it does not wait for the previous page to finish closing. Motion and covered-layer transitions use the same ordering, and only the uppermost visible entry owns the dim scrim.
++
+ ## Transitions
+ 
+ A built-in preset library is available as `NavTransitions`:
+diff --git a/docs/zh_CN/components/pulltorefresh.md b/docs/zh_CN/components/pulltorefresh.md
+index e82ec1cf..a5b08b11 100644
+--- a/docs/zh_CN/components/pulltorefresh.md
++++ b/docs/zh_CN/components/pulltorefresh.md
+@@ -35,6 +35,7 @@ LaunchedEffect(isRefreshing) {
+ Surface {
+     PullToRefresh(
+         isRefreshing = isRefreshing,
++        enabled = true,
+         onRefresh = { isRefreshing = true },
+         pullToRefreshState = pullToRefreshState,
+     ) {
+@@ -75,6 +76,7 @@ PullToRefresh 组件有以下几种状态：
+ | ----------------------- | ---------------------- | ------------------------ | -------------------------------------- | -------- |
+ | isRefreshing            | Boolean                | 是否正在刷新             | 无                                     | 是       |
+ | onRefresh               | () -> Unit             | 刷新触发时的回调函数     | 无                                     | 是       |
++| enabled | Boolean | Allow user pull gestures; preserves content and scroll state | true | No |
+ | modifier                | Modifier               | 应用于容器的修饰符       | Modifier                               | 否       |
+ | pullToRefreshState      | PullToRefreshState     | 下拉刷新状态控制器       | rememberPullToRefreshState()           | 否       |
+ | contentPadding          | PaddingValues          | 内容区的内边距           | PaddingValues(0.dp)                    | 否       |
+diff --git a/docs/zh_CN/guide/blur.md b/docs/zh_CN/guide/blur.md
+index d30eaff7..83fb20d8 100644
+--- a/docs/zh_CN/guide/blur.md
++++ b/docs/zh_CN/guide/blur.md
+@@ -31,6 +31,8 @@ dependencies {
+ }
+ ```
+ 
++混合着色器只编译当前表面使用的混合模式，保持颜色和透明度计算不变，避免包含 Lab 或线性光模式的小型混合链触发驱动编译器的内存限制。模式集合改变时选择对应着色器，仅改变颜色时复用原着色器。
++
+ ## 平台支持
+ 
+ | 平台          | 最低要求            |
+diff --git a/docs/zh_CN/guide/miuix-nav.md b/docs/zh_CN/guide/miuix-nav.md
+index 2ae0243e..f1602b4d 100644
+--- a/docs/zh_CN/guide/miuix-nav.md
++++ b/docs/zh_CN/guide/miuix-nav.md
+@@ -66,6 +66,8 @@ while (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
+ 
+ reconciler 把每次变化分类为 `Push` / `Pop` / `MultiPush(n)` / `MultiPop(n)` / `Replace` / `ReplaceAll`，并经 `NavTransitionScope.change` 暴露给转场，使你能对「连续 pop n 层」与「单次 pop」做不同动画。
+ 
++当 pop 动画被后续 push 打断时，同一栈位置的当前 entry 会绘制在正在移除的 entry 上方。重新打开仍被保留的页面时，会立即将原有内容移到前面，无需等待上一页关闭完成。运动曲线与被覆盖层转场使用相同的排序规则，且只有最上方的可见 entry 拥有暗色遮罩。
++
+ ## 转场
+ 
+ 内置预设库 `NavTransitions`：
+diff --git a/example/shared/src/commonMain/kotlin/PullToRefreshPage.kt b/example/shared/src/commonMain/kotlin/PullToRefreshPage.kt
+index 5f2c0dd9..e1f35cd9 100644
+--- a/example/shared/src/commonMain/kotlin/PullToRefreshPage.kt
++++ b/example/shared/src/commonMain/kotlin/PullToRefreshPage.kt
+@@ -135,6 +135,7 @@ fun PullToRefreshPage(
+         Box(modifier = if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier) {
+             PullToRefresh(
+                 isRefreshing = isRefreshing,
++                enabled = true,
+                 onRefresh = { isRefreshing = true },
+                 pullToRefreshState = pullToRefreshState,
+                 topAppBarScrollBehavior = if (appState.showTopAppBar) topAppBarScrollBehavior else null,
+diff --git a/example/shared/src/commonMain/kotlin/component/BlurSection.kt b/example/shared/src/commonMain/kotlin/component/BlurSection.kt
+index 662c838a..00ec3ecc 100644
+--- a/example/shared/src/commonMain/kotlin/component/BlurSection.kt
++++ b/example/shared/src/commonMain/kotlin/component/BlurSection.kt
+@@ -463,6 +463,7 @@ private fun ForegroundBlurDemo() {
+                                 contrast = contrast,
+                                 saturation = saturation,
+                             ),
++                            // Exercises the specialized ColorBurn/LinearLight/Lab shader with an alpha mask.
+                             contentBlendMode = ComposeBlendMode.DstIn,
+                         ),
+                 )
+diff --git a/miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffects.kt b/miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffects.kt
+index baf9acff..72ca2898 100644
+--- a/miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffects.kt
++++ b/miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffects.kt
+@@ -7,14 +7,11 @@ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.geometry.Size
+ import androidx.compose.ui.graphics.RenderEffect
+ import androidx.compose.ui.graphics.colorspace.ColorSpaces
+-import top.yukonga.miuix.kmp.blur.internal.BLEND_MODE_SHADER_EXTENDED
+-import top.yukonga.miuix.kmp.blur.internal.BLEND_MODE_SHADER_EXTENDED_RAMP
+-import top.yukonga.miuix.kmp.blur.internal.BLEND_MODE_SHADER_STANDARD
+-import top.yukonga.miuix.kmp.blur.internal.BLEND_MODE_SHADER_STANDARD_RAMP
+ import top.yukonga.miuix.kmp.blur.internal.BLUR_KERNEL_REACH
+ import top.yukonga.miuix.kmp.blur.internal.BLUR_RADIUS_TO_SIGMA
+ import top.yukonga.miuix.kmp.blur.internal.PROGRESSIVE_LEVEL_FRACTION_1
+ import top.yukonga.miuix.kmp.blur.internal.adjustedVarianceForExp
++import top.yukonga.miuix.kmp.blur.internal.buildSpecializedBlendModeShader
+ import top.yukonga.miuix.kmp.blur.internal.chain
+ import top.yukonga.miuix.kmp.blur.internal.computeDownScaleBlend
+ import top.yukonga.miuix.kmp.blur.internal.createBlurEffect
+@@ -283,9 +280,10 @@ internal fun obtainBlendColorsEffect(scope: BackdropEffectScopeImpl, colors: Blu
+     if (cached != null && scope.cachedBlendColors == colors) return cached
+ 
+     val needsExtended = colors.needsExtendedBlend()
++    val modes = colors.blendColors.take(MAX_BLEND_LAYERS).map { it.mode.value }.toSet()
+     val shader = scope.obtainRuntimeShader(
+-        if (needsExtended) "MiBlendModesExt" else "MiBlendModesStd",
+-        if (needsExtended) BLEND_MODE_SHADER_EXTENDED else BLEND_MODE_SHADER_STANDARD,
++        "MiBlendModes:${modes.sorted()}",
++        buildSpecializedBlendModeShader(modes),
+     )
+     shader.setBlendLayerUniforms(scope, colors, needsExtended)
+     return createRuntimeShaderEffect(shader, "child").also {
+@@ -310,9 +308,10 @@ internal fun buildRampBlendColorsEffect(
+     curve: Float,
+ ): RenderEffect {
+     val needsExtended = colors.needsExtendedBlend()
++    val modes = colors.blendColors.take(MAX_BLEND_LAYERS).map { it.mode.value }.toSet()
+     val shader = scope.obtainRuntimeShader(
+-        if (needsExtended) "MiBlendModesExtRamp" else "MiBlendModesStdRamp",
+-        if (needsExtended) BLEND_MODE_SHADER_EXTENDED_RAMP else BLEND_MODE_SHADER_STANDARD_RAMP,
++        "MiBlendModesRamp:${modes.sorted()}",
++        buildSpecializedBlendModeShader(modes, rampMix = true),
+     )
+     shader.setBlendLayerUniforms(scope, colors, needsExtended)
+     shader.setFloatUniform("in_gradAxis", ax, ay)
+diff --git a/miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/internal/Shaders.kt b/miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/internal/Shaders.kt
+index 171b6b91..ea8b199b 100644
+--- a/miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/internal/Shaders.kt
++++ b/miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/internal/Shaders.kt
+@@ -537,6 +537,19 @@ internal fun buildBlendModeShader(includeExtended: Boolean, rampMix: Boolean = f
+     )
+ }
+ 
++/** Keeps unused blend branches out of GPU programs on drivers with limited compiler memory. */
++internal fun buildSpecializedBlendModeShader(modes: Set<Int>, rampMix: Boolean = false): String = buildBlendModeShader(includeExtended = modes.any { it >= 100 }, rampMix = rampMix)
++    .lineSequence()
++    .mapNotNull { line ->
++        val dispatch = BLEND_DISPATCH.find(line) ?: return@mapNotNull line
++        if (dispatch.groupValues[1].toInt() !in modes) return@mapNotNull null
++        // Independent equality checks preserve the result and do not need a leading else.
++        line.replace("else if (mode ==", "if (mode ==")
++    }
++    .joinToString("\n")
++
++private val BLEND_DISPATCH = Regex("(?:else )?if \\(mode == (\\d+)\\)")
++
+ internal val BLEND_MODE_SHADER_STANDARD: String = buildBlendModeShader(includeExtended = false)
+ internal val BLEND_MODE_SHADER_EXTENDED: String = buildBlendModeShader(includeExtended = true)
+ internal val BLEND_MODE_SHADER_STANDARD_RAMP: String = buildBlendModeShader(includeExtended = false, rampMix = true)
+diff --git a/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt b/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt
+index c6f6c28f..7799c3d9 100644
+--- a/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt
++++ b/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt
+@@ -310,6 +310,20 @@ private class PredictiveBackSession(
+     var progressVelocity: Float = 0f,
+ )
+ 
++/** Prefer the current entry when interrupted navigation retains another entry at the same index. */
++private fun NavEntry<*>.drawsAbove(other: NavEntry<*>, index: Int, otherIndex: Int): Boolean =
++    index > otherIndex || (index == otherIndex && (!presentation.isRemoving || other.presentation.isRemoving))
++
++/** Resolve the same uppermost entry used by draw order, including a revived current entry. */
++private fun List<NavEntry<*>>.topEntryAt(index: Int, indices: Map<Any, Int>): NavEntry<*>? {
++    var top: NavEntry<*>? = null
++    for (i in this.indices) {
++        val entry = this[i]
++        if (indices[entry.contentKey] == index && (top == null || entry.drawsAbove(top, index, index))) top = entry
++    }
++    return top
++}
++
+ /**
+  * Private rendering core shared by all [NavDisplay] overloads.
+  *
+@@ -443,7 +457,7 @@ private fun NavDisplayLayout(
+             val presented = presentation.presented
+             for (i in presented.indices) {
+                 val idx = indexByContentKey[presented[i].contentKey] ?: continue
+-                if (idx > topIdx) {
++                if (topEntry == null || presented[i].drawsAbove(topEntry, idx, topIdx)) {
+                     topIdx = idx
+                     topEntry = presented[i]
+                 }
+@@ -577,7 +591,12 @@ private fun NavDisplayLayout(
+                 val e = presented[i]
+                 if (!e.presentation.isRemoving) continue
+                 val index = indexByContentKey[e.contentKey]
+-                if (index == null || top - index <= -1f || index < currentSize) {
++                // An interrupted pop followed by a push can reuse this index. Retain the
++                // outgoing entry until the new boundary settles, rather than dropping it
++                // in the first composition of the push.
++                val replacementSettled = index != null && index < currentSize &&
++                    !presentation.animatedTop.isRunning && top == backStack.lastIndex.toFloat()
++                if (index == null || top - index <= -1f || replacementSettled) {
+                     (result ?: ArrayList<NavEntry<*>>(presented.size).also { result = it }).add(e)
+                 }
+             }
+@@ -675,10 +694,11 @@ private fun NavDisplayLayout(
+                     if (isVisibleAt(relativeDepth(top, index), windowDepth)) {
+                         val list = result ?: ArrayList<NavEntry<*>>(presented.size).also { result = it }
+                         // Insertion-sorted by stack index: composition order is draw order, and a
+-                        // pure back-stack reorder leaves `presented` in its old order. Stable, so a
+-                        // replace transient (equal index) keeps the newer instance on top.
++                        // pure back-stack reorder leaves `presented` in its old order. At an
++                        // equal index, current content must draw above removing content even when
++                        // the current entry was revived from an earlier interrupted pop.
+                         var at = list.size
+-                        while (at > 0 && (indexByContentKey[list[at - 1].contentKey] ?: -1) > index) at--
++                        while (at > 0 && !entry.drawsAbove(list[at - 1], index, indexByContentKey[list[at - 1].contentKey] ?: -1)) at--
+                         list.add(at, entry)
+                     }
+                 }
+@@ -687,9 +707,7 @@ private fun NavDisplayLayout(
+         }
+ 
+         // Highest visible layer; the fullscreen dim scrim renders just beneath it.
+-        val topMostVisibleIndex = visibleEntries.fold(-1) { acc, e ->
+-            maxOf(acc, indexByContentKey[e.contentKey] ?: -1)
+-        }
++        val topMostVisibleKey = visibleEntries.lastOrNull()?.contentKey
+ 
+         visibleEntries.fastForEach { entry ->
+             key(entry.contentKey) {
+@@ -710,10 +728,10 @@ private fun NavDisplayLayout(
+                     // (e.g. a bottom-up Modal) is popped, revert this covered layer to the global transition
+                     // mid-dismiss — for a Modal over the horizontal-slide default that wrongly parallaxes the
+                     // layer below sideways while the modal is still sliding down (§4.3 boundary ownership).
+-                    val upperEntry = presentation.presented.firstOrNull { indexByContentKey[it.contentKey] == entryIndex + 1 }
++                    val upperEntry = presentation.presented.topEntryAt(entryIndex + 1, indexByContentKey)
+                     val upperTransition = upperEntry?.transitionOrNull() ?: transition
+ 
+-                    if (effects.dimAmount > 0f && entryIndex == topMostVisibleIndex && entryIndex > 0) {
++                    if (effects.dimAmount > 0f && entry.contentKey == topMostVisibleKey && entryIndex > 0) {
+                         // Fullscreen dim scrim UNDER the top-most visible layer (reference shell
+                         // behavior): it must cover the entering page AND the backdrop revealed
+                         // around it when a card-style transition scales layers down — a scrim
+@@ -726,7 +744,7 @@ private fun NavDisplayLayout(
+                         // 1 = covered). The effects layer only caps the darkness (dimAmount). The
+                         // fraction is read inside the deferred graphicsLayer, so the per-frame float
+                         // never recomposes this layout.
+-                        val belowEntry = presentation.presented.firstOrNull { indexByContentKey[it.contentKey] == entryIndex - 1 }
++                        val belowEntry = presentation.presented.topEntryAt(entryIndex - 1, indexByContentKey)
+                         val scrimScope = LiveNavTransitionScope(
+                             presentation = presentation,
+                             entryIndex = entryIndex - 1,
+diff --git a/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeDismiss.kt b/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeDismiss.kt
+index 766097ae..b71a8ef4 100644
+--- a/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeDismiss.kt
++++ b/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeDismiss.kt
+@@ -295,21 +295,16 @@ internal fun Modifier.navSwipeDismissImpl(
+                 val event = awaitPointerEvent(PointerEventPass.Initial)
+                 if (externalGestureOwnsSequence()) return@awaitEachGesture
+                 val change = event.changes.firstOrNull { it.id == down.id }
+-                if (forceCancel || event.changes.any { it.id != down.id && it.pressed } || change == null) {
++                if (change == null) {
+                     forceCancel = true
+-                    event.changes.forEach { it.consume() }
+-                    if (event.changes.none { it.pressed }) break
+-                    continue
+-                }
+-                velocityTracker.addPosition(change.uptimeMillis, change.position)
+-                if (!change.pressed) {
+-                    event.changes.forEach { it.consume() }
+                     break
+                 }
++                velocityTracker.addPosition(change.uptimeMillis, change.position)
++                if (!change.pressed) break
+                 val delta = change.positionChange()
+                 val axisDelta = if (isHorizontal) delta.x else delta.y
+                 dismissTravelPx += dismissSign * axisDelta
+-                change.consume()
++                event.changes.forEach { it.consume() }
+                 // Unclamped here; anchoredProgress clamps the total to [min(anchor, 0), MAX_FINGER_PROGRESS].
+                 val fingerProgress = dismissTravelPx / extent
+                 val touchY = change.position.y
+diff --git a/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/PullToRefresh.kt b/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/PullToRefresh.kt
+index 235dd9a2..cd9b6967 100644
+--- a/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/PullToRefresh.kt
++++ b/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/PullToRefresh.kt
+@@ -101,6 +101,7 @@ import kotlin.math.sin
+  * should initiate the data loading, set `isRefreshing` to `true`, and is responsible for
+  * eventually setting it back to `false` upon completion. It is not invoked when the indicator
+  * settles while `isRefreshing` is already `true`; the gesture joins the refresh in progress.
++ * @param enabled Whether user pull gestures may request a refresh. Does not remove content or reset scrolling.
+  * @param modifier The modifier to be applied to this container.
+  * @param pullToRefreshState The state object that manages the UI and animations of the indicator.
+  * See [rememberPullToRefreshState].
+@@ -126,6 +127,7 @@ fun PullToRefresh(
+     isRefreshing: Boolean,
+     onRefresh: () -> Unit,
+     modifier: Modifier = Modifier,
++    enabled: Boolean = true,
+     pullToRefreshState: PullToRefreshState = rememberPullToRefreshState(),
+     contentPadding: PaddingValues = PaddingValues(0.dp),
+     topAppBarScrollBehavior: ScrollBehavior? = null,
+@@ -138,7 +140,8 @@ fun PullToRefresh(
+ ) {
+     val coroutineScope = rememberCoroutineScope()
+     val overScrollState = LocalOverScrollState.current
+-    val currentOnRefresh by rememberUpdatedState(onRefresh)
++    val currentEnabled by rememberUpdatedState(enabled)
++    val currentOnRefresh by rememberUpdatedState({ if (enabled) onRefresh() })
+     val currentIsRefreshing by rememberUpdatedState(isRefreshing)
+     // Level reader for long-lived closures; capturing the raw Boolean would freeze it.
+     val isRefreshingNow: () -> Boolean = remember { { currentIsRefreshing } }
+@@ -180,6 +183,7 @@ fun PullToRefresh(
+                 pullToRefreshState,
+                 topAppBarScrollBehavior,
+                 overScrollState,
++                enabled = { currentEnabled },
+             )
+         }
+ 
+@@ -192,7 +196,7 @@ fun PullToRefresh(
+             awaitPointerEventScope {
+                 while (true) {
+                     val event = awaitPointerEvent()
+-                    val active = when (event.type) {
++                    val active = currentEnabled && when (event.type) {
+                         PointerEventType.PanStart, PointerEventType.PanMove -> true
+                         PointerEventType.PanEnd -> false
+                         PointerEventType.Scroll -> pullToRefreshState.isGestureActive
+@@ -205,7 +209,7 @@ fun PullToRefresh(
+                             (pullToRefreshState.refreshState == RefreshState.Pulling || pullToRefreshState.refreshState == RefreshState.ThresholdReached)
+                         ) {
+                             coroutineScope.launch {
+-                                pullToRefreshState.handlePointerRelease(currentOnRefresh, isRefreshingNow)
++                                pullToRefreshState.handlePointerRelease(currentOnRefresh, isRefreshingNow, canRefresh = { currentEnabled })
+                             }
+                         }
+                     }
+@@ -501,14 +505,14 @@ class PullToRefreshState(
+     }
+ 
+     /** Handles the pointer release event to either trigger a refresh or rebound the indicator. */
+-    internal suspend fun handlePointerRelease(onRefresh: () -> Unit, isRefreshingNow: () -> Boolean) {
++    internal suspend fun handlePointerRelease(onRefresh: () -> Unit, isRefreshingNow: () -> Boolean, canRefresh: () -> Boolean = { true }) {
+         if (isProcessingRelease || isRefreshing || isRebounding) return
+         // Cleared only by the launch that owns the release: a release racing an in-flight rebound
+         // early-returns above, and a pre-guard clear would erase a catch's isTouching and fire onRefresh.
+         isTouching = false
+         isProcessingRelease = true
+         try {
+-            if (dragOffset > 0f && dragOffset >= triggerProgressOffset) {
++            if (canRefresh() && dragOffset > 0f && dragOffset >= triggerProgressOffset) {
+                 // If pulled past threshold, will then call startRefreshing().
+                 startRefreshing(onRefresh, isRefreshingNow)
+             } else {
+@@ -631,8 +635,10 @@ private fun createPullToRefreshConnection(
+     pullToRefreshState: PullToRefreshState,
+     topAppBarScrollBehavior: ScrollBehavior?,
+     overScrollState: OverScrollState,
++    enabled: () -> Boolean,
+ ): NestedScrollConnection = object : NestedScrollConnection {
+     override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
++        if (!enabled()) return topAppBarScrollBehavior?.nestedScrollConnection?.onPreScroll(available, source) ?: Offset.Zero
+         when (pullToRefreshState.refreshState) {
+             RefreshState.Idle -> {
+                 val consumedByAppBar = topAppBarScrollBehavior?.nestedScrollConnection?.onPreScroll(available, source) ?: Offset.Zero
+@@ -657,6 +663,7 @@ private fun createPullToRefreshConnection(
+     }
+ 
+     override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
++        if (!enabled()) return topAppBarScrollBehavior?.nestedScrollConnection?.onPostScroll(consumed, available, source) ?: Offset.Zero
+         when (pullToRefreshState.refreshState) {
+             RefreshState.RefreshComplete, RefreshState.Refreshing -> {
+                 return available
+@@ -675,6 +682,7 @@ private fun createPullToRefreshConnection(
+     }
+ 
+     override suspend fun onPreFling(available: Velocity): Velocity {
++        if (!enabled()) return Velocity.Zero
+         if (pullToRefreshState.refreshState != RefreshState.Idle) {
+             return available
+         }
+@@ -682,6 +690,7 @@ private fun createPullToRefreshConnection(
+     }
+ 
+     override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
++        if (!enabled()) return topAppBarScrollBehavior?.nestedScrollConnection?.onPostFling(consumed, available) ?: Velocity.Zero
+         if (pullToRefreshState.refreshState != RefreshState.Idle) {
+             // Ensure the indicator cancels and rebounds to zero.
+             if (

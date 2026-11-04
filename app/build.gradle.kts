@@ -156,7 +156,7 @@ android {
 
     defaultConfig {
         applicationId = "app.hyperlpa"
-        minSdk = 28
+        minSdk = 33
         targetSdk = 37
         versionCode = appVersionCode
         versionName = appVersionName

@@ -7,6 +7,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -34,8 +35,12 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import app.hyperlpa.domain.model.ReaderKind
+import top.yukonga.miuix.kmp.icon.extended.Delete
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.SideEffect
@@ -79,7 +84,8 @@ import app.hyperlpa.ui.components.ErrorState
 import app.hyperlpa.ui.components.GroupedCard
 import app.hyperlpa.ui.components.LoadingState
 import app.hyperlpa.ui.components.PageStateKind
-import app.hyperlpa.ui.components.PageStateOverlay
+import app.hyperlpa.ui.components.ScrollablePageState
+import app.hyperlpa.ui.components.PageStateHost
 import app.hyperlpa.ui.components.ProfilesStateIcon
 import app.hyperlpa.ui.components.ReaderStateIcon
 import app.hyperlpa.ui.components.RefreshHeaderTopGap
@@ -108,6 +114,7 @@ import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.DropdownEntry
 import top.yukonga.miuix.kmp.basic.DropdownItem
+import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.PullToRefresh
@@ -177,7 +184,7 @@ fun ProfilesScreen(
         cloudIconLookupPending = state.settings.loadOperatorIcons && !state.profileEnrichmentReady,
     )
     val lastPageState = remember { LastPageState() }
-    val artworkWarmupReady by ProfileArtworkSnapshots.ready.collectAsState()
+    val artworkWarmupReady by ProfileArtworkSnapshots.ready.collectAsStateWithLifecycle()
     val hasNoSearchResults = state.searchQuery.isNotBlank() &&
         state.lpa.profiles.isNotEmpty() &&
         profiles.isEmpty()
@@ -226,7 +233,6 @@ fun ProfilesScreen(
     )
     SideEffect { lastPageState.kind = pageState }
     val isRefreshing = refreshPending
-    var hideStateDuringPull by remember { mutableStateOf(false) }
     val stateModel = when (pageState) {
         PageStateKind.LOADING -> ProfilesStateModel(kind = PageStateKind.LOADING, title = loadingMessage)
         PageStateKind.ERROR -> ProfilesStateModel(
@@ -260,11 +266,15 @@ fun ProfilesScreen(
         PageStateKind.CONTENT -> null
     }
     val listTopPadding = contentPadding.calculateTopPadding() + ProfilesFirstCardGap
-    val listBottomPadding = contentPadding.calculateBottomPadding() + 24.dp
+    val bottomInset = maxOf(contentPadding.calculateBottomPadding(), with(androidx.compose.ui.platform.LocalDensity.current) {
+        androidx.compose.foundation.layout.WindowInsets.ime.getBottom(this).toDp()
+    })
+    val listBottomPadding = bottomInset + 24.dp
 
     Box(modifier = modifier.fillMaxSize()) {
         PullToRefresh(
             isRefreshing = isRefreshing,
+            enabled = state.lpa.initialized && (state.lpa.operation is LpaOperation.Idle || isRefreshing),
             onRefresh = {
                 // A pull on the no-reader state also asks for missing Bluetooth access, which must
                 // never stop the other reader providers from refreshing.
@@ -277,10 +287,11 @@ fun ProfilesScreen(
                 bottom = contentPadding.calculateBottomPadding(),
             ),
             topAppBarScrollBehavior = scrollBehavior,
-            onPullProgress = { hideStateDuringPull = it > 0.01f },
+
         ) {
             CenteredContent { sidePadding ->
-                if (pageState == PageStateKind.LOADING) {
+                PageStateHost(state = if (pageState == PageStateKind.LOADING) PageStateKind.LOADING else PageStateKind.CONTENT) { result ->
+                if (result == PageStateKind.LOADING) {
                     // Same area as the list's state item, so loading lines up with what follows it.
                     LoadingState(
                         message = loadingMessage,
@@ -319,8 +330,8 @@ fun ProfilesScreen(
                                 onOpenEuiccDetails = onOpenEuiccDetails,
                             )
                         }
-                        items(profiles, key = ProfileInfo::iccid) { profile ->
-                            ProfileCard(
+                        items(profiles, key = ProfileInfo::iccid, contentType = { "profile" }) { profile ->
+                            Box(Modifier.animateItem()) { ProfileCard(
                                 profile = profile,
                                 artwork = artworkLoadState.artwork(profile.iccid),
                                 state = state,
@@ -328,7 +339,7 @@ fun ProfilesScreen(
                                 onOpen = { onOpenProfile(profile) },
                                 onEnableChange = { enabled -> onEnableChange(profile.iccid, enabled) },
                                 onLongPress = { profileActionsState.value = profile },
-                            )
+                            ) }
                         }
                     }
                 } else {
@@ -357,8 +368,8 @@ fun ProfilesScreen(
                             )
                         }
                         if (pageState == PageStateKind.CONTENT) {
-                            items(profiles, key = ProfileInfo::iccid) { profile ->
-                                ProfileCard(
+                            items(profiles, key = ProfileInfo::iccid, contentType = { "profile" }) { profile ->
+                                Box(Modifier.animateItem()) { ProfileCard(
                                     profile = profile,
                                     artwork = artworkLoadState.artwork(profile.iccid),
                                     state = state,
@@ -366,14 +377,14 @@ fun ProfilesScreen(
                                     onOpen = { onOpenProfile(profile) },
                                     onEnableChange = { enabled -> onEnableChange(profile.iccid, enabled) },
                                     onLongPress = { profileActionsState.value = profile },
-                                )
+                                ) }
                             }
                         }
                         if (stateModel != null) {
                             inlinePageStateItem(key = ProfilesStateKey, listState = listState) { fillModifier ->
                                 AnimatedContent(
                                     // The refresh indicator reports progress itself during a pull.
-                                    targetState = stateModel.takeUnless { isRefreshing || hideStateDuringPull },
+                                    targetState = stateModel,
                                     modifier = Modifier.fillMaxWidth(),
                                     transitionSpec = { pageStateTransition() },
                                     contentAlignment = Alignment.TopCenter,
@@ -390,12 +401,16 @@ fun ProfilesScreen(
                                             message = model.message,
                                             modifier = fillModifier,
                                             icon = model.icon,
+                                            actionText = stringResource(if (hasNoSearchResults) R.string.common_clear else R.string.common_retry),
+                                            onAction = { if (hasNoSearchResults) onSearchChange("") else { onResolveReaderAccess(); onRefresh() } },
                                         )
                                         PageStateKind.EMPTY -> EmptyState(
                                             title = model.title,
                                             message = model.message,
                                             modifier = fillModifier,
                                             icon = model.icon,
+                                            actionText = stringResource(if (hasNoSearchResults) R.string.common_clear else R.string.common_retry),
+                                            onAction = { if (hasNoSearchResults) onSearchChange("") else { onResolveReaderAccess(); onRefresh() } },
                                         )
                                         PageStateKind.CONTENT -> Unit
                                     }
@@ -405,6 +420,7 @@ fun ProfilesScreen(
                     }
                 }
             }
+        }
         }
     }
 
@@ -468,6 +484,7 @@ private fun ProfileActionsOverlay(
     onSetPinned: (String, Boolean) -> Unit,
     onRename: (String, String) -> Unit,
 ) {
+    var showHomeRename by remember { mutableStateOf(false) }
     var renameProfile by remember { mutableStateOf<ProfileInfo?>(null) }
     var pendingRenameProfile by remember { mutableStateOf<ProfileInfo?>(null) }
     var isClosing by remember { mutableStateOf(false) }
@@ -486,7 +503,7 @@ private fun ProfileActionsOverlay(
             pendingRenameProfile = null
             profileState.value = null
             isClosing = false
-            if (nextRenameProfile != null) renameProfile = nextRenameProfile
+            if (nextRenameProfile != null) { renameProfile = nextRenameProfile; showHomeRename = true }
         },
     ) {
         profile?.let { selectedProfile ->
@@ -547,12 +564,13 @@ private fun ProfileActionsOverlay(
     }
 
     ProfileRenameDialog(
-        show = renameProfile != null,
+        show = showHomeRename,
+        onDismissFinished = { if (!showHomeRename) renameProfile = null },
         nickname = renameProfile?.nickname.orEmpty(),
-        onDismiss = { renameProfile = null },
+        onDismiss = { showHomeRename = false },
         onRename = { nickname ->
             renameProfile?.let { selectedProfile -> onRename(selectedProfile.iccid, nickname) }
-            renameProfile = null
+            showHomeRename = false
         },
     )
 }
@@ -563,8 +581,10 @@ internal fun ProfileRenameDialog(
     nickname: String,
     onDismiss: () -> Unit,
     onRename: (String) -> Unit,
+    onDismissFinished: () -> Unit = {},
 ) {
     TextInputDialog(
+        onDismissFinished = onDismissFinished,
         show = show,
         title = stringResource(R.string.profile_rename),
         summary = stringResource(R.string.profile_rename_summary),
@@ -670,7 +690,7 @@ private fun ProfilesHeader(
                             modifier = Modifier.padding(start = 16.dp, end = 8.dp),
                         )
                     },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(bottom = if (showEnrichmentLoading) 0.dp else 6.dp),
                 )
             }
         }
@@ -679,7 +699,7 @@ private fun ProfilesHeader(
                 text = stringResource(R.string.profiles_optional_data_loading),
                 style = MiuixTheme.textStyles.footnote1,
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                modifier = Modifier.padding(horizontal = 28.dp, vertical = 6.dp),
+                modifier = Modifier.padding(horizontal = 28.dp).padding(bottom = 6.dp),
             )
         }
     }
@@ -1167,88 +1187,64 @@ fun NotificationsScreen(
         selectedNotification = notification
         showNotificationActions = true
     }
-    val isRefreshing = refreshPending || state.lpa.operation is LpaOperation.Refreshing
-    var hideStateDuringPull by remember { mutableStateOf(false) }
+    val isRefreshing = refreshPending
     val hasReader = state.lpa.selectedReader != null
 
-    Box(modifier = modifier.fillMaxSize()) {
-        PullToRefresh(
-            isRefreshing = isRefreshing,
-            onRefresh = onRefresh,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(
-                top = contentPadding.calculateTopPadding() + RefreshHeaderTopGap,
-                bottom = contentPadding.calculateBottomPadding(),
-            ),
-            topAppBarScrollBehavior = scrollBehavior,
-            onPullProgress = { hideStateDuringPull = it > 0.01f },
-        ) {
-            val pageContent = MishkaPageContent {
-                if (hasReader && state.lpa.notifications.isNotEmpty()) {
-                    items(state.lpa.notifications, key = LpaNotification::sequenceNumber) { notification ->
-                        val profile = profilesByIccid[notification.iccid]
-                        NotificationCard(
-                            notification = notification,
-                            profileName = profile?.let {
-                                formatProfileDisplayName(
-                                    it,
-                                    state.settings.phoneFormatStrategy,
-                                    profileFallbackName,
-                                    state.settings.profileNameRedaction,
-                                ).fullText
-                            },
-                            providerName = profile?.providerName?.takeIf(String::isNotBlank),
-                            onClick = { openActions(notification) },
-                        )
+    val resultState = when {
+        !state.lpa.initialized -> PageStateKind.LOADING
+        !hasReader -> PageStateKind.ERROR
+        state.lpa.notifications.isEmpty() -> PageStateKind.EMPTY
+        else -> PageStateKind.CONTENT
+    }
+    val listState = rememberLazyListState()
+    val refreshState = top.yukonga.miuix.kmp.basic.rememberPullToRefreshState()
+    PullToRefresh(
+        isRefreshing = isRefreshing, onRefresh = onRefresh,
+        enabled = state.lpa.initialized && (state.lpa.operation is LpaOperation.Idle || isRefreshing),
+        pullToRefreshState = refreshState,
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(top = contentPadding.calculateTopPadding() + RefreshHeaderTopGap),
+        topAppBarScrollBehavior = scrollBehavior,
+    ) {
+        PageStateHost(state = resultState, modifier = Modifier.fillMaxSize()) { kind ->
+            if (kind == PageStateKind.CONTENT) {
+                var shownNotifications by remember { mutableStateOf(state.lpa.notifications) }
+                if (resultState == kind) shownNotifications = state.lpa.notifications
+                CenteredContent { sidePadding ->
+                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize().scrollEndHaptic().overScrollVertical()
+                        .nestedScroll(scrollBehavior.nestedScrollConnection), overscrollEffect = null,
+                        contentPadding = PaddingValues(start = sidePadding, end = sidePadding,
+                            top = contentPadding.calculateTopPadding() + 12.dp,
+                            bottom = contentPadding.calculateBottomPadding() + 24.dp)) {
+                        items(shownNotifications, key = LpaNotification::sequenceNumber, contentType = { "pending-notification" }) { notification ->
+                            val profile = profilesByIccid[notification.iccid]
+                            Box(Modifier.animateItem()) {
+                                NotificationCard(notification = notification,
+                                    profileName = profile?.let { formatProfileDisplayName(it,
+                                        state.settings.phoneFormatStrategy, profileFallbackName,
+                                        state.settings.profileNameRedaction).fullText },
+                                    providerName = profile?.providerName?.takeIf(String::isNotBlank),
+                                    onClick = { openActions(notification) })
+                            }
+                        }
                     }
                 }
-            }
-            CenteredContent { sidePadding ->
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .scrollEndHaptic()
-                        .overScrollVertical()
-                        .nestedScroll(scrollBehavior.nestedScrollConnection),
-                    overscrollEffect = null,
-                    contentPadding = PaddingValues(
-                        start = sidePadding,
-                        end = sidePadding,
-                        top = contentPadding.calculateTopPadding() + pageContent.topPadding,
-                        bottom = contentPadding.calculateBottomPadding() + 24.dp,
-                    ),
-                    content = pageContent.content,
+            } else {
+                ScrollablePageState(scrollBehavior = scrollBehavior, contentPadding = PaddingValues(
+                    top = contentPadding.calculateTopPadding() + 12.dp * refreshState.visualProgress.coerceIn(0f, 1f),
+                    bottom = contentPadding.calculateBottomPadding())) {
+                val insets = Modifier.fillMaxSize()
+                if (kind == PageStateKind.LOADING) LoadingState(stringResource(R.string.common_loading), insets)
+                else EmptyState(
+                    title = stringResource(if (kind == PageStateKind.ERROR) R.string.notifications_no_reader else R.string.notifications_none_pending),
+                    message = stringResource(if (kind == PageStateKind.ERROR) R.string.notifications_no_reader_message else R.string.notifications_none_pending_message),
+                    icon = if (kind == PageStateKind.ERROR) ReaderStateIcon else MiuixIcons.Community,
+                    modifier = insets,
+                    actionText = stringResource(R.string.common_retry).takeIf { kind == PageStateKind.ERROR },
+                    onAction = onRefresh,
                 )
+                }
             }
-        }
-        // ERROR stands for the missing reader, so it cross-fades with the nothing-pending state.
-        val emptyState = when {
-            isRefreshing || hideStateDuringPull -> PageStateKind.CONTENT
-            !hasReader -> PageStateKind.ERROR
-            state.lpa.notifications.isEmpty() -> PageStateKind.EMPTY
-            else -> PageStateKind.CONTENT
-        }
-        PageStateOverlay(
-            state = emptyState,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(
-                    top = contentPadding.calculateTopPadding(),
-                    bottom = contentPadding.calculateBottomPadding(),
-                ),
-        ) { kind ->
-            val noReader = kind == PageStateKind.ERROR
-            EmptyState(
-                title = stringResource(
-                    if (noReader) R.string.notifications_no_reader else R.string.notifications_none_pending,
-                ),
-                message = stringResource(
-                    if (noReader) R.string.notifications_no_reader_message
-                    else R.string.notifications_none_pending_message,
-                ),
-                icon = if (noReader) ReaderStateIcon else MiuixIcons.Community,
-                modifier = Modifier.fillMaxSize(),
-            )
         }
     }
 
@@ -1363,7 +1359,15 @@ fun NotificationHistoryScreen(
     onBack: () -> Unit,
     onDeleteHistoryEntry: (NotificationHistoryEntry) -> Unit,
     onResendNotification: (NotificationHistoryEntry) -> Unit,
+    onRefreshHistory: () -> kotlinx.coroutines.Job,
+    onClearLocalHistory: ((Boolean) -> Unit) -> Unit,
 ) {
+    var clearHistoryRequested by remember { mutableStateOf(false) }
+    var historyRefreshing by remember { mutableStateOf(false) }
+    var clearingHistory by remember { mutableStateOf(false) }
+    var clearHistoryAfterExit by remember { mutableStateOf(false) }
+    var historyPopupLocked by remember { mutableStateOf(false) }
+    val historyScope = rememberCoroutineScope()
     var selectedHistoryEntry by remember { mutableStateOf<NotificationHistoryEntry?>(null) }
     var showHistoryDetails by remember { mutableStateOf(false) }
     var showHistoryActions by remember { mutableStateOf(false) }
@@ -1371,16 +1375,26 @@ fun NotificationHistoryScreen(
     var deleteHistoryEntry by remember { mutableStateOf<NotificationHistoryEntry?>(null) }
     var showDeleteConfirmation by remember { mutableStateOf(false) }
     val historyItems = remember(state.notificationHistory) {
-        val seen = HashMap<Long, Int>()
-        state.notificationHistory.asReversed().map { entry ->
-            val occurrence = seen.merge(entry.timestampEpochMillis, 1, Int::plus)
-            "${entry.timestampEpochMillis}:$occurrence" to entry
-        }
+        state.notificationHistory.asReversed().map { it.id to it }
     }
 
     DetailLazyScaffold(
         title = stringResource(R.string.notification_history_title),
         onBack = onBack,
+        isRefreshing = historyRefreshing,
+        refreshEnabled = !clearingHistory && !historyPopupLocked,
+        onRefresh = {
+            if (!historyRefreshing) { historyRefreshing = true
+                historyScope.launch { try { onRefreshHistory().join() } finally { historyRefreshing = false } }
+            }
+        },
+        actions = {
+            if (state.notificationHistory.isNotEmpty() && state.lpa.selectedReader?.kind != ReaderKind.REMOTE) {
+                IconButton(onClick = { clearHistoryRequested = true }) {
+                    Icon(MiuixIcons.Delete, contentDescription = stringResource(R.string.history_clear_local))
+                }
+            }
+        },
         pageState = if (state.notificationHistory.isEmpty()) PageStateKind.EMPTY else PageStateKind.CONTENT,
         pageStateContent = {
             EmptyState(
@@ -1392,7 +1406,8 @@ fun NotificationHistoryScreen(
         },
     ) {
         if (state.notificationHistory.isNotEmpty()) {
-            items(historyItems, key = { it.first }) { (_, entry) ->
+            items(historyItems, key = { it.first }, contentType = { "euicc-history" }) { (_, entry) ->
+                Box(Modifier.animateItem()) {
                 NotificationHistoryCard(
                     entry = entry,
                     onClick = {
@@ -1404,9 +1419,27 @@ fun NotificationHistoryScreen(
                         showHistoryActions = true
                     },
                 )
+                }
             }
         }
     }
+
+    OverlayDialog(show = clearHistoryRequested, title = stringResource(R.string.history_clear_local),
+        summary = stringResource(R.string.history_clear_local_summary), onDismissRequest = { clearHistoryRequested = false },
+        onDismissFinished = {
+            if (clearHistoryAfterExit) {
+                clearHistoryAfterExit = false
+                clearingHistory = true
+                onClearLocalHistory { clearingHistory = false }
+            }
+        }) {
+        DialogActionRow(onCancel = { clearHistoryRequested = false }, confirmText = stringResource(R.string.common_clear),
+            destructive = true, onConfirm = {
+                clearHistoryAfterExit = true
+                clearHistoryRequested = false
+            })
+    }
+    app.hyperlpa.ui.components.CompactProgressDialog(stringResource(R.string.history_clear_local).takeIf { clearingHistory }) { historyPopupLocked = it }
 
     selectedHistoryEntry?.let { entry ->
         NotificationHistoryDetailsSheet(
@@ -1481,72 +1514,15 @@ private fun NotificationHistoryCard(
     val profileLabel = entry.profileName?.takeIf(String::isNotBlank)
         ?: stringResource(R.string.common_unavailable)
     val timestamp = entry.timestamp.formatReminderDateTime()
-    val statusColor = if (entry.status == NotificationHistoryStatus.FAILED) {
-        MiuixTheme.colorScheme.error
-    } else {
-        MiuixTheme.colorScheme.primary
-    }
     GroupedCard(onClick = onClick, onLongPress = onLongPress) {
-        Column(Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = actionLabel,
-                        fontSize = MiuixTheme.textStyles.headline1.fontSize,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = operationLabel,
-                        style = MiuixTheme.textStyles.subtitle,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantActions,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                Text(
-                    text = statusLabel,
-                    style = MiuixTheme.textStyles.subtitle,
-                    color = statusColor,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(start = 12.dp),
-                )
-            }
-
-            Spacer(Modifier.height(4.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = profileLabel,
-                    style = MiuixTheme.textStyles.body1,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = timestamp,
-                    style = MiuixTheme.textStyles.body1,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    modifier = Modifier.padding(start = 12.dp),
-                )
-            }
-        }
+        BasicComponent(
+            title = "$actionLabel · $operationLabel",
+            summary = "$profileLabel\n$statusLabel · $timestamp",
+            startAction = { app.hyperlpa.ui.components.AppIcon(
+                packageName = app.hyperlpa.BuildConfig.APPLICATION_ID, label = stringResource(R.string.app_name),
+                modifier = Modifier.padding(end = 12.dp),
+            ) },
+        )
     }
 }
 

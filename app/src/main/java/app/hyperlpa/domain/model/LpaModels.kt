@@ -384,6 +384,7 @@ data class ActivityLogEntry(
     val level: LogLevel,
     val tag: String,
     val message: String,
+    val id: String = java.util.UUID.randomUUID().toString(),
 )
 
 @Serializable

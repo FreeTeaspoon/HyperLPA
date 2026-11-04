@@ -299,7 +299,7 @@
     <string name="profile_display_ascending">Ascending order</string>
     <string name="profile_display_search">Profile search</string>
     <string name="profile_display_search_summary">Show the search field below the eUICC selector</string>
-    <string name="profile_display_phone_format">Phone number format</string>
+    <string name="profile_display_phone_format">Number format</string>
     <string name="profile_display_phone_format_summary">Detect and format phone numbers in profile names</string>
     <string name="phone_format_e164_only">E.164 International Only</string>
     <string name="phone_format_international_mobile">International &amp; Mobile</string>
@@ -1107,7 +1107,8 @@
     <string name="phone_notifications_adb_copy">Copy</string>
     <string name="phone_notifications_adb_copied">ADB command copied</string>
     <string name="phone_notifications_this_phone">History on this phone</string>
-    <string name="phone_notifications_apps_tip">Your messages app is on by default. Other apps appear here after they post a notification. Turning an app off deletes what HyperLPA saved from it.</string>
+    <string name="phone_notifications_apps_tip">Your messages app is on by default. Other apps appear here after they post a notification. Turning an app off stops sharing its saved history and collecting new notifications.</string>
+    <string name="phone_notifications_unavailable_title">Notifications unavailable</string>
     <string name="phone_notifications_unavailable">This device has not shared its notifications with you, or it is offline. On the other phone, turn on the switch next to this device.</string>
     <string name="phone_notifications_empty">No notifications yet</string>
     <string name="phone_notifications_clear">Clear history</string>
@@ -1124,4 +1125,18 @@
     <string name="remote_relay_test_failed">This address did not respond as a HyperLPA relay.</string>
     <string name="remote_relay_rejected">The relay did not accept this device. Check the relay address and enrollment key.</string>
     <string name="remote_pair_code_invalid">This pairing code is not valid or has expired. Create a new code on the other device.</string>
+    <string name="phone_notifications_timeout">No reply from this device. Check its connection and pull to try again.</string>
+    <string name="scale_validation">Enter a value from 80 to 110.</string>
+    <string name="common_disable">Disable</string>
+    <string name="common_reset">Reset</string>
+    <string name="reminder_clear_confirmation">Remove the saved reminder for this profile?</string>
+    <string name="common_restore">Restore</string>
+    <string name="common_delete">Delete</string>
+    <string name="common_retry">Retry</string>
+    <string name="reader_remove_credentials_title">Remove saved credentials?</string>
+    <string name="reader_remove_credentials_summary">Saving this list removes the protected credentials for deleted reader addresses. You will need to enter them again if you add those readers later.</string>
+    <string name="common_enabled">On</string>
+    <string name="common_disabled">Off</string>
+    <string name="history_clear_local">Clear local history</string>
+    <string name="history_clear_local_summary">Remove this phone’s saved eUICC notification history? This does not remove pending notifications from the eUICC or delete records on other devices.</string>
 </resources>

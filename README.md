@@ -105,7 +105,7 @@ can run on Vercel with the same Cloudflare relay. Enroll each phone with a trust
 group owner once, then approve additional browsers and assign per-phone permissions
 without accounts or passwords. Install the updated app and relay together.
 
-- Android 9 / API 28 or newer.
+- Android 13 / API 33 or newer.
 - A compatible eUICC and at least one usable reader backend.
 - Network access when downloading a profile or using a remote reader.
 - An activation code or QR code from the mobile operator for profile download.
@@ -263,7 +263,7 @@ by continuous integration:
   :app:assembleDebugAndroidTest
 ```
 
-Instrumentation and Compose accessibility tests can be run on an API 28+
+Instrumentation and Compose accessibility tests can be run on an API 33+
 emulator or device with:
 
 ```shell
