@@ -198,6 +198,88 @@ test("enroll once, authorize another browser, manage profiles, recover results a
   } finally { phone.close(); secondPhone.close(); }
 });
 
+test("dashboard tabs reflow and distinguish pointer from keyboard focus after reload", async ({ page, context }) => {
+  await bridge(context);
+  await page.goto("/");
+  await page.getByLabel("Relay address").fill(remoteRelay);
+  await page.getByLabel("Enrollment key").fill("test-only-enrollment-key");
+  await page.getByLabel("Browser name").fill("Navigation test");
+  await page.getByRole("button", { name: "Create trusted group" }).click();
+  await expect(page.getByText("Connected", { exact: true })).toBeVisible();
+
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate(theme => localStorage.setItem("hyperlpa-theme", theme), theme);
+    await page.reload();
+    await expect(page.getByRole("tab", { name: "Devices", exact: true })).toBeVisible();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+    // Explicitly cover the first pointer interaction after a reload.
+    const notifications = page.getByRole("tab", { name: "Notifications", exact: true });
+    await notifications.click();
+    await expect(page.getByRole("heading", { name: "Notifications", exact: true })).toBeVisible();
+    expect(await notifications.evaluate(el => getComputedStyle(el).outlineStyle)).toBe("none");
+    expect(await notifications.evaluate(el => getComputedStyle(el).boxShadow)).toBe("none");
+
+    const underline = () => notifications.evaluate(el => {
+      const line = getComputedStyle(el, "::after");
+      return { height: line.height, bottom: line.bottom, radius: line.borderRadius, width: line.width };
+    });
+    const selectedLine = await underline();
+    expect(selectedLine).toMatchObject({ height: "2px", bottom: "0px", radius: "0px" });
+    // Reproduce a null-target focusout without assuming it means keyboard input.
+    await notifications.dispatchEvent("focusout", { relatedTarget: null });
+    await expect(notifications).toHaveCSS("outline-style", "none");
+    await page.keyboard.press("Alt");
+    await expect(notifications).toHaveCSS("outline-style", "none");
+    // Headless Chromium retains window focus. Use --headed for real deactivation.
+    if (test.info().project.use.headless === false) {
+      const cdp = await context.newCDPSession(page);
+      await cdp.send("Emulation.setFocusEmulationEnabled", { enabled: false });
+      await page.bringToFront();
+      await expect.poll(() => page.evaluate(() => document.hasFocus())).toBe(true);
+      const otherWindow = await context.newPage();
+      try {
+        await otherWindow.bringToFront();
+        await expect.poll(() => page.evaluate(() => document.hasFocus())).toBe(false);
+        await expect(notifications).toHaveCSS("outline-style", "none");
+        expect(await underline()).toEqual(selectedLine);
+        await page.bringToFront();
+        await expect.poll(() => page.evaluate(() => document.hasFocus())).toBe(true);
+        await expect(notifications).toHaveCSS("outline-style", "none");
+        expect(await underline()).toEqual(selectedLine);
+      } finally {
+        await otherWindow.close();
+        await cdp.detach();
+      }
+    }
+
+    for (const width of [320, 390, 640, 1280]) {
+      await page.setViewportSize({ width, height: 800 });
+      await page.evaluate(() => document.fonts.ready);
+      const tabs = page.locator(".main-tabs");
+      expect(await tabs.evaluate(el => el.scrollWidth <= el.clientWidth && el.scrollHeight <= el.clientHeight)).toBe(true);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      const bounds = await tabs.boundingBox();
+      for (const tab of await tabs.getByRole("tab").all()) {
+        const target = await tab.boundingBox();
+        expect(target!.x).toBeGreaterThanOrEqual(bounds!.x);
+        expect(target!.x + target!.width).toBeLessThanOrEqual(bounds!.x + bounds!.width + 1);
+        expect(target!.y + target!.height).toBeLessThanOrEqual(bounds!.y + bounds!.height);
+      }
+      // Shift+Tab returns from the tab panel to the active tab.
+      await notifications.click();
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Shift+Tab");
+      await expect(notifications).toBeFocused();
+      expect(await notifications.evaluate(el => ({ visible: el.matches(":focus-visible"),
+        style: getComputedStyle(el).outlineStyle, width: getComputedStyle(el).outlineWidth,
+        offset: getComputedStyle(el).outlineOffset }))).toEqual({ visible: true, style: "solid", width: "2px", offset: "-2px" });
+      await page.keyboard.press("ArrowRight");
+      await expect(page.getByRole("tab", { name: "History", exact: true })).toBeFocused();
+      await expect(page.getByRole("heading", { name: "eUICC history", exact: true })).toBeVisible();
+    }
+  }
+});
+
 test("setup keyboard navigation, validation, system theme and narrow layout", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 740 }); await page.goto("/");
   await page.getByRole("tab", { name: "Join group" }).click();

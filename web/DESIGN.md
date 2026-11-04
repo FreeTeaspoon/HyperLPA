@@ -44,7 +44,11 @@ operation in flight.
 Rare device edits live in one Manage mode. Identifiers have adjacent copy buttons.
 
 On narrow screens the shell has 20px gutters, fields use 16px text, controls grow
-to at least 40px, permissions stack, and tabs scroll within their own row. Dialogs
+to at least 40px, permissions stack, and tabs wrap onto additional rows. Tab focus
+outlines sit inside the targets and appear for keyboard navigation. Pointer focus
+stays free of outlines through window deactivation and reactivation; keyboard
+input outside the group restores keyboard focus on re-entry. The selected 2px
+underline stays flat and independent of the focus outline. Dialogs
 use the available viewport height and scroll internally. Device names wrap rather
 than expanding the page. Theme is applied before React renders, including a hard
 refresh in dark mode.
@@ -52,3 +56,5 @@ refresh in dark mode.
 No image gallery or remote image loading is used. The current profile view uses
 code-drawn icons and does not display carrier artwork, so image loading transitions
 are not part of this implementation.
+
+Navigation verification, 5 November 2026: the production build and focused headed Chromium regression pass. A synthetic local group covers both themes, reload and first pointer click, null-target focusout, modifier input, actual document deactivation/reactivation with focus emulation disabled, stable underlines, keyboard exit/re-entry and arrow activation. Tab and document bounds are checked at 320px, 390px, 640px and 1280px. The actual focus-loss branch runs with `--headed`; headless Chromium retains window focus. No private group or phone data was used.
