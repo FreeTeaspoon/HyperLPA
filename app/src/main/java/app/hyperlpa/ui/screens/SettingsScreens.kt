@@ -13,21 +13,20 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.InputTransformation
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.maxLength
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
+import androidx.compose.runtime.LaunchedEffect
+import android.net.Uri
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -37,10 +36,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.focus.focusRequester
+import app.hyperlpa.ui.components.FieldError
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalContext
@@ -50,7 +48,6 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -89,14 +86,11 @@ import app.hyperlpa.ui.HyperLpaViewModel
 import app.hyperlpa.ui.BluetoothReaderAvailability
 import app.hyperlpa.ui.BluetoothReaderUiState
 import app.hyperlpa.ui.LocalMiuixSnackbar
-import app.hyperlpa.ui.adaptive.AdaptiveTopAppBar
-import app.hyperlpa.ui.adaptive.CenteredContent
-import app.hyperlpa.ui.adaptive.horizontalCutoutPadding
+import app.hyperlpa.ui.components.lazyGroup
+import app.hyperlpa.ui.components.ExpandingPreferenceGroup
 import app.hyperlpa.ui.components.GroupedCard
 import app.hyperlpa.ui.components.SectionHeading
 import app.hyperlpa.ui.components.DetailLazyScaffold
-import app.hyperlpa.ui.components.BlurredBar
-import app.hyperlpa.ui.components.TipCard
 import app.hyperlpa.ui.components.rememberAppBackdrop
 import app.hyperlpa.ui.components.redactIdentifier
 import app.hyperlpa.ui.components.DialogActionRow
@@ -109,14 +103,12 @@ import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
-import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Slider
 import top.yukonga.miuix.kmp.basic.SliderDefaults
 import top.yukonga.miuix.kmp.basic.SnackbarDuration
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.blur.isRuntimeShaderSupported
-import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Back
 import top.yukonga.miuix.kmp.icon.basic.Check
@@ -127,9 +119,6 @@ import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.utils.overScrollVertical
-import top.yukonga.miuix.kmp.utils.scrollEndHaptic
-import top.yukonga.miuix.kmp.window.WindowDialog
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -149,7 +138,7 @@ fun AppearanceSettingsScreen(
     }
     var showDensityDialog by rememberSaveable { mutableStateOf(false) }
     val densityTextState = rememberTextFieldState()
-    val blurSupported = isRuntimeShaderSupported()
+    val blurSupported = isRuntimeShaderSupported() && top.yukonga.miuix.kmp.shader.isRenderEffectSupported()
     val backdrop = rememberAppBackdrop()
     val haptic = LocalHapticFeedback.current
     val focusManager = LocalFocusManager.current
@@ -159,43 +148,9 @@ fun AppearanceSettingsScreen(
     val floatingBarLabels = FloatingBottomBarStyle.entries.map { stringResource(it.labelResource()) }
     val navigationLabelOptions = NavigationLabels.entries.map { stringResource(it.labelResource()) }
 
-    Scaffold(
-        containerColor = MiuixTheme.colorScheme.surface,
-        topBar = {
-            BlurredBar(
-                backdrop = backdrop,
-                progressive = true,
-                scrollBehavior = scrollBehavior,
-            ) {
-                AdaptiveTopAppBar(
-                    title = stringResource(R.string.settings_appearance_theme),
-                    color = if (backdrop != null) Color.Transparent else MiuixTheme.colorScheme.surface,
-                    scrollBehavior = scrollBehavior,
-                    navigationIcon = { AppearanceBackButton(onBack) },
-                )
-            }
-        },
-    ) { innerPadding ->
-        CenteredContent(
-            modifier = Modifier
-                .fillMaxSize()
-                .horizontalCutoutPadding()
-                .then(if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier),
-            maxWidth = null,
-        ) { sidePadding ->
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .scrollEndHaptic()
-                    .overScrollVertical()
-                    .nestedScroll(scrollBehavior.nestedScrollConnection),
-                contentPadding = PaddingValues(
-                    start = sidePadding,
-                    end = sidePadding,
-                    top = innerPadding.calculateTopPadding(),
-                    bottom = innerPadding.calculateBottomPadding() + 24.dp,
-                ),
-            ) {
+    DetailLazyScaffold(
+        title = stringResource(R.string.settings_appearance_theme), onBack = onBack, fullWidth = true,
+    ) { _ ->
                 item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.appearance_color_theme)) }
                 item {
                     GroupedCard {
@@ -326,6 +281,7 @@ fun AppearanceSettingsScreen(
                             enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
                             exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
                         ) {
+                            Column {
                             OverlayDropdownPreference(
                                 title = stringResource(R.string.appearance_floating_bar_style),
                                 summary = floatingBarLabels[settings.floatingBottomBarStyle.ordinal],
@@ -336,6 +292,7 @@ fun AppearanceSettingsScreen(
                                         ?.let(viewModel::setFloatingBottomBarStyle)
                                 },
                             )
+                            }
                         }
                         OverlayDropdownPreference(
                             title = stringResource(R.string.appearance_bottom_bar_options),
@@ -348,16 +305,26 @@ fun AppearanceSettingsScreen(
                         )
                     }
                 }
-            }
-        }
     }
 
-    WindowDialog(
+
+    OverlayDialog(
         show = showDensityDialog,
         title = stringResource(R.string.appearance_interface_scale),
         summary = stringResource(R.string.appearance_interface_scale_summary),
         onDismissRequest = { showDensityDialog = false },
     ) {
+        val focusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
+        val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+        val percent = densityTextState.text.toString().toIntOrNull()
+        val valid = percent != null && percent in 80..110
+        val save = {
+            if (valid) {
+                viewModel.setDensityScale(requireNotNull(percent) / 100f)
+                showDensityDialog = false
+            }
+        }
+        LaunchedEffect(Unit) { focusRequester.requestFocus(); keyboard?.show() }
         TextField(
             state = densityTextState,
             inputTransformation = DensityDigitsOnlyTransformation.maxLength(3),
@@ -366,7 +333,7 @@ fun AppearanceSettingsScreen(
                 keyboardType = KeyboardType.Number,
                 imeAction = ImeAction.Done,
             ),
-            onKeyboardAction = { focusManager.clearFocus() },
+            onKeyboardAction = { save() },
             trailingIcon = {
                 Text(
                     text = "%",
@@ -374,23 +341,16 @@ fun AppearanceSettingsScreen(
                     color = MiuixTheme.colorScheme.onSurfaceVariantActions,
                 )
             },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
         )
+        if (!valid) FieldError(stringResource(R.string.scale_validation))
         Spacer(Modifier.height(12.dp))
         DialogActionRow(
             onCancel = { showDensityDialog = false },
             confirmText = stringResource(R.string.common_save),
+            confirmEnabled = valid,
             onConfirm = {
-                val percent = densityTextState.text.toString().toIntOrNull()
-                    ?.coerceIn(
-                        (MIN_INTERFACE_SCALE * 100f).roundToInt(),
-                        (MAX_INTERFACE_SCALE * 100f).roundToInt(),
-                    )
-                    ?: densityDraft.roundToInt()
-                densityDraft = percent.toFloat()
-                haptic.performHapticFeedback(HapticFeedbackType.Confirm)
-                viewModel.setDensityScale(percent / 100f)
-                showDensityDialog = false
+                save()
             },
         )
     }
@@ -574,6 +534,7 @@ fun ReaderSettingsScreen(
     }
     DetailLazyScaffold(
         title = stringResource(R.string.reader_settings_title),
+        refreshEnabled = state.lpa.initialized && state.lpa.operation is app.hyperlpa.domain.model.LpaOperation.Idle,
         onBack = onBack,
         isRefreshing = refreshing,
         onRefresh = {
@@ -780,9 +741,7 @@ fun ReaderSettingsScreen(
                 }
             }
         } else {
-            item {
-                GroupedCard {
-                    state.lpa.readers.forEach { reader ->
+            lazyGroup(state.lpa.readers, key = { it.id }, contentType = "reader") { reader ->
                         val selected = reader.id == state.lpa.selectedReaderId
                         BasicComponent(
                             title = reader.name,
@@ -802,9 +761,8 @@ fun ReaderSettingsScreen(
                             },
                             onClick = { viewModel.connectReader(reader.id) },
                         )
-                    }
+
                 }
-            }
         }
     }
 }
@@ -816,10 +774,14 @@ fun RemoteReadersScreen(
     viewModel: HyperLpaViewModel,
 ) {
     var showRemoteEditor by remember { mutableStateOf(false) }
-    var remoteUrls by remember(settings.remoteReaderUrls) {
+    var remoteUrls by remember {
         mutableStateOf(settings.remoteReaderUrls.joinToString("\n"))
     }
     var remoteInputTooLong by remember { mutableStateOf(false) }
+    var showRemoteToken by remember { mutableStateOf(false) }
+    var confirmCredentialRemoval by remember { mutableStateOf(false) }
+    var removalAfterEditorExit by remember { mutableStateOf(false) }
+    var reopenEditorAfterRemoval by remember { mutableStateOf(false) }
     var remoteTokenEndpoint by remember { mutableStateOf<String?>(null) }
     var remoteTokenSaving by remember { mutableStateOf(false) }
     var remoteTokenSaveFailed by remember { mutableStateOf(false) }
@@ -854,6 +816,18 @@ fun RemoteReadersScreen(
         )
         else -> null
     }
+    fun saveRemoteUrls() {
+        remoteUrlsSaving = true
+        remoteUrlsSaveFailed = false
+        viewModel.setRemoteReaderUrls(remoteUrlEntries) { success ->
+            remoteUrlsSaving = false
+            if (success) { remoteInputTooLong = false; showRemoteEditor = false; confirmCredentialRemoval = false }
+            else {
+                remoteUrlsSaveFailed = true
+                if (confirmCredentialRemoval) { reopenEditorAfterRemoval = true; confirmCredentialRemoval = false }
+            }
+        }
+    }
     DetailLazyScaffold(title = stringResource(R.string.reader_remote_title), onBack = onBack) { _ ->
         item {
             GroupedCard {
@@ -863,11 +837,12 @@ fun RemoteReadersScreen(
                     title = stringResource(R.string.reader_remote_enable),
                     summary = stringResource(R.string.reader_remote_summary),
                 )
-                if (settings.enableRemote) {
+                ExpandingPreferenceGroup(settings.enableRemote) {
                     ArrowPreference(
                         title = stringResource(R.string.reader_remote_addresses),
                         summary = remoteReaderSummary(settings.remoteReaderUrls),
                         onClick = {
+                            remoteUrls = settings.remoteReaderUrls.joinToString("\n")
                             remoteInputTooLong = false
                             remoteUrlsSaveFailed = false
                             showRemoteEditor = true
@@ -876,23 +851,15 @@ fun RemoteReadersScreen(
                 }
             }
         }
-        if (settings.enableRemote && settings.remoteReaderUrls.isNotEmpty()) {
-            item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.reader_remote_credentials)) }
-            item {
+        item {
+            ExpandingPreferenceGroup(settings.enableRemote && settings.remoteReaderUrls.isNotEmpty()) {
+                SectionHeading(stringResource(R.string.reader_remote_credentials))
                 GroupedCard {
                     settings.remoteReaderUrls.forEach { endpoint ->
-                        ArrowPreference(
-                            title = endpoint.toUri().host ?: endpoint,
-                            summary = if (settings.remoteReaderTokens.containsKey(endpoint)) {
-                                stringResource(R.string.reader_remote_credential_stored)
-                            } else {
-                                stringResource(R.string.reader_remote_credential_none)
-                            },
-                            onClick = {
-                                remoteTokenSaveFailed = false
-                                remoteTokenEndpoint = endpoint
-                            },
-                        )
+                        ArrowPreference(title = endpoint.toUri().host ?: endpoint,
+                            summary = stringResource(if (settings.remoteReaderTokens.containsKey(endpoint))
+                                R.string.reader_remote_credential_stored else R.string.reader_remote_credential_none),
+                            onClick = { remoteTokenSaveFailed = false; remoteTokenEndpoint = endpoint; showRemoteToken = true })
                     }
                 }
             }
@@ -917,26 +884,37 @@ fun RemoteReadersScreen(
                 showRemoteEditor = false
             }
         },
+        onDismissFinished = {
+            if (removalAfterEditorExit) { removalAfterEditorExit = false; confirmCredentialRemoval = true }
+            else if (!showRemoteEditor) remoteUrls = ""
+        },
         onConfirm = {
             if (!remoteUrlsSaving && remoteEditorError == null) {
-                remoteUrlsSaving = true
-                remoteUrlsSaveFailed = false
-                viewModel.setRemoteReaderUrls(
-                    remoteUrlEntries,
-                ) { success ->
-                    remoteUrlsSaving = false
-                    if (success) {
-                        remoteInputTooLong = false
-                        showRemoteEditor = false
-                    } else {
-                        remoteUrlsSaveFailed = true
-                    }
-                }
+                val retained = validateRemoteReaderSettings(remoteUrlEntries).map { it.endpointUrl }.toSet()
+                if (settings.remoteReaderTokens.keys.any { it !in retained }) {
+                    removalAfterEditorExit = true
+                    showRemoteEditor = false
+                } else saveRemoteUrls()
             }
         },
     )
+    OverlayDialog(show = confirmCredentialRemoval, title = stringResource(R.string.reader_remove_credentials_title),
+        summary = stringResource(R.string.reader_remove_credentials_summary),
+        onDismissRequest = { reopenEditorAfterRemoval = true; confirmCredentialRemoval = false },
+        onDismissFinished = {
+            if (reopenEditorAfterRemoval) { reopenEditorAfterRemoval = false; showRemoteEditor = true }
+            else if (!confirmCredentialRemoval) remoteUrls = ""
+        },
+    ) {
+        DialogActionRow(onCancel = { reopenEditorAfterRemoval = true; confirmCredentialRemoval = false },
+            confirmText = stringResource(R.string.common_save), destructive = true,
+            confirmEnabled = !remoteUrlsSaving, onConfirm = ::saveRemoteUrls)
+    }
+
     TextInputDialog(
-        show = remoteTokenEndpoint != null,
+        show = showRemoteToken,
+        onDismissFinished = { if (!showRemoteToken) remoteTokenEndpoint = null },
+        confirmEnabled = !remoteTokenSaving,
         title = stringResource(R.string.reader_remote_credential_title),
         summary = remoteTokenEndpoint?.let { endpoint ->
             if (settings.remoteReaderTokens.containsKey(endpoint)) {
@@ -954,7 +932,7 @@ fun RemoteReadersScreen(
         inputFilter = { value -> value.filterNot { it == '\r' || it == '\n' } },
         validate = { value -> tokenInvalidMessage.takeUnless { isValidRemoteReaderToken(value) } },
         error = remoteSaveFailedMessage.takeIf { remoteTokenSaveFailed },
-        onDismiss = { if (!remoteTokenSaving) remoteTokenEndpoint = null },
+        onDismiss = { if (!remoteTokenSaving) showRemoteToken = false },
         onConfirm = { token ->
             val endpoint = remoteTokenEndpoint
             if (endpoint != null && !remoteTokenSaving) {
@@ -963,7 +941,7 @@ fun RemoteReadersScreen(
                 viewModel.setRemoteReaderToken(endpoint, token) { success ->
                     remoteTokenSaving = false
                     if (success) {
-                        remoteTokenEndpoint = null
+                        showRemoteToken = false
                     } else {
                         remoteTokenSaveFailed = true
                     }
@@ -1201,7 +1179,7 @@ fun PrivacySettingsScreen(
                     checked = settings.estimateProfileSize,
                     onCheckedChange = viewModel::setEstimateProfileSize,
                     title = stringResource(R.string.privacy_profile_size),
-                    summary = stringResource(R.string.privacy_profile_size_summary),
+                    summary = stringResource(R.string.privacy_profile_size_summary) + "\n" + stringResource(R.string.privacy_cloud_data_use_summary),
                 )
             }
         }
@@ -1214,9 +1192,6 @@ fun PrivacySettingsScreen(
                     onClick = { showClearCloudCachesConfirmation = true },
                 )
             }
-        }
-        item(contentType = PageStart.Inset) {
-            TipCard(text = stringResource(R.string.privacy_cloud_data_use_summary))
         }
     }
 
@@ -1341,231 +1316,155 @@ private const val MinEs10xMss = 32
 private const val MaxEs10xMss = 255
 
 @Composable
-fun BackupRestoreSettingsScreen(
-    onBack: () -> Unit,
-    viewModel: HyperLpaViewModel,
-) {
-    val showSnackbar = LocalMiuixSnackbar.current
-    val backupCreated = stringResource(R.string.backup_created)
-    val backupCreateFailed = stringResource(R.string.backup_create_failed)
-    val backupRestored = stringResource(R.string.backup_restored)
-    val backupRestoreFailed = stringResource(R.string.backup_restore_failed)
-    val backupResetComplete = stringResource(R.string.backup_reset_complete)
-    val backupResetFailed = stringResource(R.string.backup_reset_failed)
-    val filePickerUnavailable = stringResource(R.string.common_file_picker_unavailable)
-    val busy by viewModel.backupOperationInProgress.collectAsStateWithLifecycle()
-    var showCreatePassword by rememberSaveable { mutableStateOf(false) }
-    var pendingRestoreUri by rememberSaveable { mutableStateOf<String?>(null) }
+fun BackupRestoreSettingsScreen(onBack: () -> Unit, viewModel: HyperLpaViewModel) {
+    val snackbar = LocalMiuixSnackbar.current
+    val created = stringResource(R.string.backup_created)
+    val createFailed = stringResource(R.string.backup_create_failed)
+    val restored = stringResource(R.string.backup_restored)
+    val restoreFailed = stringResource(R.string.backup_restore_failed)
+    val reset = stringResource(R.string.backup_reset_complete)
+    val resetFailed = stringResource(R.string.backup_reset_failed)
+    val pickerUnavailable = stringResource(R.string.common_file_picker_unavailable)
+    val createLabel = stringResource(R.string.backup_create)
+    val restoreLabel = stringResource(R.string.backup_restore)
+    val resetLabel = stringResource(R.string.backup_reset_settings)
+    val backendBusy by viewModel.backupOperationInProgress.collectAsStateWithLifecycle()
+    val operationKind by viewModel.backupOperationKind.collectAsStateWithLifecycle()
+    val progress = when (operationKind) {
+        app.hyperlpa.ui.BackupOperationKind.CREATE -> createLabel
+        app.hyperlpa.ui.BackupOperationKind.RESTORE -> restoreLabel
+        app.hyperlpa.ui.BackupOperationKind.RESET -> resetLabel
+        null -> null
+    }
+    var progressLocked by remember { mutableStateOf(false) }
+    val busy = backendBusy || progressLocked
+    var showCreate by remember { mutableStateOf(false) }
+    var showRestore by remember { mutableStateOf(false) }
+    var showReset by remember { mutableStateOf(false) }
     var backupPassword by remember { mutableStateOf("") }
-    var backupPasswordConfirmation by remember { mutableStateOf("") }
+    var confirmation by remember { mutableStateOf("") }
     var restorePassword by remember { mutableStateOf("") }
-    var showResetConfirmation by rememberSaveable { mutableStateOf(false) }
-    val createBackupLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/json"),
-    ) { uri ->
-        if (uri == null) {
-            viewModel.cancelPreparedBackup()
-        } else {
+    var restoreUri by remember { mutableStateOf<Uri?>(null) }
+    var createAfterExit by remember { mutableStateOf(false) }
+    var restoreAfterExit by remember { mutableStateOf(false) }
+    var resetAfterExit by remember { mutableStateOf(false) }
+    var retryRestoreAfterProgress by remember { mutableStateOf(false) }
+    var restoreError by remember { mutableStateOf(false) }
+    val createPicker = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri == null) viewModel.cancelPreparedBackup()
+        else {
             viewModel.createPreparedBackup(uri) { success ->
-                showSnackbar(
-                    if (success) backupCreated else backupCreateFailed,
-                    SnackbarDuration.Short,
-                )
+                snackbar(if (success) created else createFailed, SnackbarDuration.Short)
             }
         }
     }
-    val restoreBackupLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument(),
-    ) { uri ->
-        pendingRestoreUri = uri?.toString()
+    val restorePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) { restoreUri = uri; restoreError = false; showRestore = true }
     }
-
     DetailLazyScaffold(title = stringResource(R.string.backup_title), onBack = onBack) { _ ->
-        item(contentType = PageStart.Inset) {
-            TipCard {
-                Text(
-                    text = stringResource(R.string.backup_keep_secure_summary),
-                    fontSize = 13.sp,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = stringResource(R.string.backup_esim_profiles_summary),
-                    fontSize = 13.sp,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                )
+        item {
+            GroupedCard {
+                ArrowPreference(title = createLabel,
+                    summary = stringResource(R.string.backup_create_summary) + "\n" + stringResource(R.string.backup_esim_profiles_summary),
+                    enabled = !busy, onClick = { showCreate = true })
+                ArrowPreference(title = restoreLabel, summary = stringResource(R.string.backup_restore_summary),
+                    enabled = !busy, onClick = {
+                        runCatching { restorePicker.launch(arrayOf("application/json", "text/plain")) }
+                            .onFailure { snackbar(pickerUnavailable, SnackbarDuration.Long) }
+                    })
             }
         }
         item {
             GroupedCard {
-                ArrowPreference(
-                    title = stringResource(R.string.backup_create),
-                    summary = stringResource(R.string.backup_create_summary),
-                    enabled = !busy,
-                    onClick = { showCreatePassword = true },
-                )
-                ArrowPreference(
-                    title = stringResource(R.string.backup_restore),
-                    summary = stringResource(R.string.backup_restore_summary),
-                    enabled = !busy,
-                    onClick = {
-                        runCatching { restoreBackupLauncher.launch(arrayOf("application/json", "text/plain")) }
-                            .onFailure { showSnackbar(filePickerUnavailable, SnackbarDuration.Long) }
-                    },
-                )
-            }
-        }
-        item {
-            GroupedCard {
-                ArrowPreference(
-                    title = stringResource(R.string.backup_reset_settings),
-                    summary = stringResource(R.string.backup_reset_settings_summary),
-                    enabled = !busy,
-                    titleColor = BasicComponentDefaults.titleColor(color = MiuixTheme.colorScheme.error),
-                    onClick = { showResetConfirmation = true },
-                )
+                ArrowPreference(title = resetLabel, summary = stringResource(R.string.backup_reset_settings_summary),
+                    enabled = !busy, titleColor = BasicComponentDefaults.titleColor(color = MiuixTheme.colorScheme.error),
+                    onClick = { showReset = true })
             }
         }
     }
-
-    OverlayDialog(
-        show = showCreatePassword,
-        title = stringResource(R.string.backup_protect_title),
-        summary = stringResource(R.string.backup_protect_summary),
-        onDismissRequest = {
-            showCreatePassword = false
+    OverlayDialog(show = showCreate, title = stringResource(R.string.backup_protect_title),
+        summary = stringResource(R.string.backup_protect_summary) + "\n" + stringResource(R.string.backup_keep_secure_summary),
+        onDismissRequest = { showCreate = false },
+        onDismissFinished = {
             backupPassword = ""
-            backupPasswordConfirmation = ""
-        },
-    ) {
-            Column {
-            TextField(
-                value = backupPassword,
-                onValueChange = { backupPassword = it.take(128) },
-                label = stringResource(R.string.backup_password),
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(12.dp))
-            TextField(
-                value = backupPasswordConfirmation,
-                onValueChange = { backupPasswordConfirmation = it.take(128) },
-                label = stringResource(R.string.backup_confirm_password),
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            // A partly typed confirmation is not a mismatch until it diverges or reaches full length.
-            val passwordsDiffer = backupPasswordConfirmation.isNotEmpty() &&
-                (!backupPassword.startsWith(backupPasswordConfirmation) ||
-                    backupPasswordConfirmation.length >= backupPassword.length) &&
-                backupPassword != backupPasswordConfirmation
-            if (passwordsDiffer) {
-                Text(
-                    text = stringResource(R.string.backup_passwords_differ),
-                    color = MiuixTheme.colorScheme.error,
-                    style = MiuixTheme.textStyles.footnote1,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
+            confirmation = ""
+            if (createAfterExit) {
+                createAfterExit = false
+                runCatching { createPicker.launch("hyperlpa-backup-${LocalDate.now()}.json") }
+                    .onFailure { viewModel.cancelPreparedBackup(); snackbar(pickerUnavailable, SnackbarDuration.Long) }
             }
-            Spacer(Modifier.height(12.dp))
-            DialogActionRow(
-                confirmText = stringResource(if (backupPassword.isEmpty()) R.string.backup_save_unprotected else R.string.backup_encrypt_save),
-                confirmEnabled = (backupPassword.isEmpty() && backupPasswordConfirmation.isEmpty()) ||
-                    (backupPassword.length >= 10 && backupPassword == backupPasswordConfirmation),
-                onCancel = {
-                    showCreatePassword = false
-                    backupPassword = ""
-                    backupPasswordConfirmation = ""
-                },
-                onConfirm = {
-                    val password = backupPassword
-                    showCreatePassword = false
-                    backupPassword = ""
-                    backupPasswordConfirmation = ""
-                    if (!viewModel.prepareBackup(password)) {
-                        showSnackbar(backupCreateFailed, SnackbarDuration.Short)
-                        return@DialogActionRow
-                    }
-                    runCatching {
-                        createBackupLauncher.launch(
-                            "hyperlpa-backup-${LocalDate.now()}.json",
-                        )
-                    }.onFailure {
-                        viewModel.cancelPreparedBackup()
-                        showSnackbar(backupCreateFailed, SnackbarDuration.Short)
-                    }
-                },
-            )
-        }
-    }
-
-    OverlayDialog(
-        show = pendingRestoreUri != null,
-        title = stringResource(R.string.backup_restore_dialog_title),
-        summary = stringResource(R.string.backup_restore_dialog_summary),
-        onDismissRequest = {
-            pendingRestoreUri = null
-            restorePassword = ""
         },
     ) {
-        Column {
-            TextField(
-                value = restorePassword,
-                onValueChange = { restorePassword = it.take(128) },
-                label = stringResource(R.string.backup_password),
-                useLabelAsPlaceholder = true,
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(12.dp))
-            DialogActionRow(
-                confirmText = stringResource(R.string.backup_decrypt_restore),
-                onCancel = {
-                    pendingRestoreUri = null
-                    restorePassword = ""
-                },
-                onConfirm = {
-                    val uri = pendingRestoreUri?.toUri() ?: return@DialogActionRow
-                    val password = restorePassword
-                    pendingRestoreUri = null
-                    restorePassword = ""
-                    viewModel.restoreBackup(uri, password) { success ->
-                        showSnackbar(
-                            if (success) backupRestored else backupRestoreFailed,
-                            SnackbarDuration.Short,
-                        )
-                    }
-                },
-            )
-        }
-    }
-
-    OverlayDialog(
-        show = showResetConfirmation,
-        title = stringResource(R.string.backup_reset_dialog_title),
-        summary = stringResource(R.string.backup_reset_dialog_summary),
-        onDismissRequest = { showResetConfirmation = false },
-    ) {
-        DialogActionRow(
-            confirmText = stringResource(R.string.backup_reset_settings),
-            destructive = true,
-            onCancel = { showResetConfirmation = false },
+        val mismatch = confirmation.isNotEmpty() && (!backupPassword.startsWith(confirmation) ||
+            confirmation.length >= backupPassword.length) && backupPassword != confirmation
+        TextField(value = backupPassword, onValueChange = { backupPassword = it.take(128) },
+            label = stringResource(R.string.backup_password), singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Next),
+            modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(12.dp))
+        TextField(value = confirmation, onValueChange = { confirmation = it.take(128) },
+            label = stringResource(R.string.backup_confirm_password), singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+            modifier = Modifier.fillMaxWidth())
+        if (mismatch) FieldError(stringResource(R.string.backup_passwords_differ))
+        Spacer(Modifier.height(12.dp))
+        DialogActionRow(onCancel = { showCreate = false }, confirmText = stringResource(R.string.common_save),
+            confirmEnabled = (backupPassword.isEmpty() && confirmation.isEmpty()) ||
+                (backupPassword.length >= 10 && backupPassword == confirmation),
             onConfirm = {
-                showResetConfirmation = false
-                viewModel.resetSettings { success ->
-                    showSnackbar(
-                        if (success) backupResetComplete else backupResetFailed,
-                        SnackbarDuration.Short,
-                    )
+                if (viewModel.prepareBackup(backupPassword)) { createAfterExit = true; showCreate = false }
+                else snackbar(createFailed, SnackbarDuration.Short)
+            })
+    }
+    OverlayDialog(show = showRestore, title = stringResource(R.string.backup_restore_dialog_title),
+        summary = stringResource(R.string.backup_restore_dialog_summary),
+        onDismissRequest = { showRestore = false },
+        onDismissFinished = {
+            if (restoreAfterExit) {
+                restoreAfterExit = false
+                restoreUri?.let { uri ->
+                    viewModel.restoreBackup(uri, restorePassword) { success ->
+                        if (success) { restoreUri = null; restorePassword = "" }
+                        else { restoreError = true; retryRestoreAfterProgress = true }
+                        snackbar(if (success) restored else restoreFailed, SnackbarDuration.Short)
+                    }
                 }
-            },
-        )
+            } else if (!retryRestoreAfterProgress && progress == null) {
+                restoreUri = null
+                restorePassword = ""
+                restoreError = false
+            }
+        },
+    ) {
+        TextField(value = restorePassword, onValueChange = { restorePassword = it.take(128); restoreError = false },
+            label = stringResource(R.string.backup_password), useLabelAsPlaceholder = true, singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+            modifier = Modifier.fillMaxWidth())
+        if (restoreError) FieldError(restoreFailed)
+        Spacer(Modifier.height(12.dp))
+        DialogActionRow(onCancel = { showRestore = false }, confirmText = stringResource(R.string.common_restore),
+            onConfirm = { restoreAfterExit = true; showRestore = false })
+    }
+    OverlayDialog(show = showReset, title = stringResource(R.string.backup_reset_dialog_title),
+        summary = stringResource(R.string.backup_reset_dialog_summary), onDismissRequest = { showReset = false },
+        onDismissFinished = {
+            if (resetAfterExit) {
+                resetAfterExit = false
+                viewModel.resetSettings { success ->
+                    snackbar(if (success) reset else resetFailed, SnackbarDuration.Short)
+                }
+            }
+        }) {
+        DialogActionRow(onCancel = { showReset = false }, confirmText = stringResource(R.string.common_reset),
+            destructive = true, onConfirm = { resetAfterExit = true; showReset = false })
+    }
+    app.hyperlpa.ui.components.CompactProgressDialog(progress) { locked ->
+        progressLocked = locked
+        viewModel.updateOperationPopupLock(locked, owner = "backup")
+        if (!locked && retryRestoreAfterProgress) { retryRestoreAfterProgress = false; showRestore = true }
     }
 }
 
@@ -1617,9 +1516,6 @@ fun AidManagerScreen(
             }
         },
     ) { _ ->
-        item(contentType = PageStart.Inset) {
-            TipCard(text = stringResource(R.string.aid_manager_summary))
-        }
         item {
             TextField(
                 value = text,
@@ -1628,6 +1524,7 @@ fun AidManagerScreen(
                     if (!inputTooLong) text = value
                 },
                 label = stringResource(R.string.aid_manager_input_label),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, autoCorrectEnabled = false),
                 useLabelAsPlaceholder = true,
                 minLines = 7,
                 maxLines = 12,
@@ -1637,18 +1534,7 @@ fun AidManagerScreen(
                     .padding(top = 4.dp, bottom = if (validationMessage == null) 12.dp else 0.dp),
             )
         }
-        validationMessage?.let { message ->
-            item {
-                Text(
-                    text = message,
-                    color = MiuixTheme.colorScheme.error,
-                    style = MiuixTheme.textStyles.footnote1,
-                    modifier = Modifier
-                        .padding(horizontal = 28.dp)
-                        .padding(top = 10.dp),
-                )
-            }
-        }
+        validationMessage?.let { message -> item { FieldError(message, Modifier.padding(horizontal = 28.dp)) } }
         item {
             PrimaryPageButton(
                 text = stringResource(R.string.common_save),
@@ -1674,31 +1560,26 @@ private fun TextEditorDialog(
     confirmEnabled: Boolean = true,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
+    onDismissFinished: () -> Unit = {},
 ) {
     OverlayDialog(
         show = show,
+        onDismissFinished = onDismissFinished,
         title = title,
         summary = summary,
         onDismissRequest = onDismiss,
     ) {
+        val focusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
+        val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+        var field by remember { mutableStateOf(androidx.compose.ui.text.input.TextFieldValue(value, androidx.compose.ui.text.TextRange(value.length))) }
+        LaunchedEffect(Unit) { focusRequester.requestFocus(); keyboard?.show() }
         Column {
-            TextField(
-                value = value,
-                onValueChange = onValueChange,
-                label = stringResource(R.string.reader_addresses_label),
-                useLabelAsPlaceholder = true,
-                minLines = 4,
-                maxLines = 8,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            if (error != null) {
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = error,
-                    color = MiuixTheme.colorScheme.error,
-                    style = MiuixTheme.textStyles.footnote1,
-                )
-            }
+            TextField(value = field, onValueChange = { field = it; onValueChange(it.text) },
+                label = stringResource(R.string.reader_addresses_label), useLabelAsPlaceholder = true,
+                minLines = 4, maxLines = 8,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
+                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester))
+            if (error != null) FieldError(error)
             Spacer(Modifier.height(12.dp))
             DialogActionRow(
                 onCancel = onDismiss,

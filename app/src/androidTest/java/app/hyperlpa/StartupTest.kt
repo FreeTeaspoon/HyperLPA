@@ -31,6 +31,23 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class StartupTest {
     @Test
+    fun operationPopupOwnersKeepNavigationLockedUntilEveryExitFinishes() {
+        withInitialSettings(AppSettings(compatibilityWizardCompleted = true)) { viewModel ->
+            viewModel.resolveStartRoute(AppSettings(compatibilityWizardCompleted = true))
+            viewModel.navigate(AppRoute.AppearanceSettings)
+            viewModel.updateOperationPopupLock(true)
+            viewModel.updateOperationPopupLock(true, owner = "backup")
+            viewModel.navigateBack()
+            viewModel.updateOperationPopupLock(false)
+            assertTrue(viewModel.operationPopupLocked)
+            assertEquals(AppRoute.AppearanceSettings, viewModel.navigationBackStack.last())
+            viewModel.updateOperationPopupLock(false, owner = "backup")
+            assertFalse(viewModel.operationPopupLocked)
+            assertEquals(AppRoute.Shell, viewModel.navigationBackStack.last())
+        }
+    }
+
+    @Test
     fun savedAppearanceIsPresentBeforeUiFlowCollection() {
         val settings = AppSettings(
             themeMode = ThemeMode.DARK,
@@ -68,15 +85,43 @@ class StartupTest {
     }
 
     @Test
-    fun activationIntentKeepsDownloadAsTheStartPage() {
+    fun activationIntentWaitsForFirstRunAndOpensAfterHandoff() {
         val settings = AppSettings(compatibilityWizardCompleted = false)
         withInitialSettings(settings) { viewModel ->
             assertTrue(viewModel.handleActivationCode("LPA:1\$example.org\$test-code"))
             viewModel.resolveStartRoute(settings)
-            assertEquals(
-                listOf(AppRoute.Shell, AppRoute.DownloadProfile),
-                viewModel.navigationBackStack.toList(),
+            assertEquals(listOf(AppRoute.FirstRunSetup), viewModel.navigationBackStack.toList())
+            viewModel.finishFirstRunSetup()
+            viewModel.completeFirstRunHandoff()
+            viewModel.endInstantNavigation()
+            assertEquals(listOf(AppRoute.Shell, AppRoute.DownloadProfile), viewModel.navigationBackStack.toList())
+            viewModel.navigateBack()
+        }
+    }
+
+    @Test
+    fun nestedParentsAndSettingsCompatibilitySurviveRecreation() {
+        withInitialSettings(AppSettings(compatibilityWizardCompleted = true)) { viewModel ->
+            val stacks = listOf(
+                listOf(AppRoute.ReaderSettings, AppRoute.RemoteReaders),
+                listOf(AppRoute.RemoteDevices, AppRoute.PhoneNotificationSettings, AppRoute.PhoneNotificationHistory("local")),
+                listOf(AppRoute.AdvancedSettings, AppRoute.AidManager),
+                listOf(AppRoute.TagsAndReminders, AppRoute.ReminderSettings, AppRoute.ScheduledReminders, AppRoute.ProfileDetails("1234567890")),
+                listOf(AppRoute.CompatibilityWizard),
             )
+            for (children in stacks) {
+                viewModel.navigationBackStack.clear()
+                viewModel.navigationBackStack.add(AppRoute.Shell)
+                children.forEach(viewModel::navigate)
+                val saved = viewModel.navigationSnapshot()
+                viewModel.navigationBackStack.clear()
+                viewModel.restoreNavigation(saved)
+                assertEquals(listOf(AppRoute.Shell) + children, viewModel.navigationBackStack.toList())
+                if (children.size > 1) {
+                    viewModel.navigateBack()
+                    assertEquals(children[children.lastIndex - 1], viewModel.navigationBackStack.last())
+                }
+            }
         }
     }
 

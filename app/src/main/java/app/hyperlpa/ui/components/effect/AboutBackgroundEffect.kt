@@ -6,6 +6,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -40,13 +43,15 @@ fun AboutBackgroundEffect(
     alpha: () -> Float = { 1f },
     content: @Composable BoxScope.() -> Unit,
 ) {
-    if (!isRuntimeShaderSupported()) {
+    if (!isRuntimeShaderSupported() || !top.yukonga.miuix.kmp.shader.isRenderEffectSupported()) {
         Box(modifier = modifier, content = content)
         return
     }
     Box(modifier = modifier) {
         val animationsEnabled = rememberSystemAnimationsEnabled()
-        val playing = dynamicBackground && animationsEnabled
+        val currentAlpha by rememberUpdatedState(alpha)
+        val visible by remember { derivedStateOf { currentAlpha() > 0f } }
+        val playing = dynamicBackground && animationsEnabled && visible
         val surface = MiuixTheme.colorScheme.surface
         val isDark = LocalDarkTheme.current
         val painter = remember { AboutBackgroundPainter() }

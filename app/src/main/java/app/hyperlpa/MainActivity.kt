@@ -107,6 +107,7 @@ class MainActivity : ComponentActivity() {
                 NavigationSnapshot(
                     selectedTab = state.getString(StateSelectedTab).orEmpty(),
                     route = state.getString(StateRoute),
+                    routes = state.getStringArrayList("navigation-stack").orEmpty(),
                 ),
             )
         }
@@ -241,6 +242,7 @@ class MainActivity : ComponentActivity() {
         viewModel.navigationSnapshot().let { snapshot ->
             outState.putString(StateSelectedTab, snapshot.selectedTab)
             outState.putString(StateRoute, snapshot.route)
+            outState.putStringArrayList("navigation-stack", ArrayList(snapshot.routes))
         }
         super.onSaveInstanceState(outState)
     }

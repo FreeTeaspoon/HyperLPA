@@ -1,13 +1,13 @@
 # Reference source audit
 
-Source was inspected directly through July 21, 2026. The implementation is not based
+Source was inspected directly through November 4, 2026. Historical integration references are retained below. The implementation is not based
 solely on screenshots or README files.
 
 | Project | Inspected revision | Source areas reviewed | License decision |
 | --- | --- | --- | --- |
-| Mishka | `223b5aa1b03a456d7564563d944011ee93d9ac0d` | app theme, Navigation 3 shell, pager state, adaptive top bars, rail layout, grouped settings, blur and dialogs | GPL-compatible project; UI rewritten for this app |
+| Mishka | `94573b0a0b11b624d75592558d34bc3f2e6ef451`, with historical review at `223b5aa1b03a456d7564563d944011ee93d9ac0d` | app theme, Navigation 3 shell, pager state, adaptive top bars, rail layout, grouped settings, blur and dialogs | GPL-compatible project; UI rewritten for this app |
 | InstallerX-Revived | `221af84834a1b481cb5fa7f9a1becad6a93fb610` | Miuix theme bridge, adaptive layout, backdrop, dialogs, cards, settings and predictive back | GPL-compatible project; patterns used selectively |
-| compose-miuix-ui/miuix | `b459d861561e0d9f117c87184db5330c05388f2f` | component implementations and example app for theme, app bars, navigation, preferences, blur, overlays, haptics and overscroll | Apache-2.0 dependency and implementation reference |
+| compose-miuix-ui/miuix | `2afdbb39f1aac5747165cc354cafd4b918fa55a5` plus `third_party/patches/miuix-hyperlpa.patch` | component implementations and example app for theme, app bars, navigation, preferences, blur, overlays, haptics and overscroll | Apache-2.0 dependency and implementation reference |
 | NekokoLPA2 | `7d5a426d8d836caf5e7d98d9428e58c036f03a6d` | reader adapters, profile manager, download flow, notifications, tags/reminders, operator-icon catalog resolution, profile-size prediction, settings, platform channels and responsive pages | MIT-compatible feature and cloud-data reference; mascot artwork and installation telemetry excluded |
 | OpenEUICC | `d9c89d311f34325e1bd7e4b35d7e750e72faafac` | `lpac-jni`, channel abstractions, OMAPI, USB CCID, download wizard, notifications and diagnostics | GPL-3.0-compatible engine integration |
 | OTBridge | `90682357afe4d722d7ab130a3df45c3b2b1b50e5` (`v1.2.0`) | NBridge package/provider contract, exported ContentProvider surface, release artifacts and signer certificates | MIT-compatible interoperability reference; accepted release certificates are pinned locally and require explicit rotation |
@@ -20,7 +20,7 @@ solely on screenshots or README files.
 - Wide pages use fixed small app bars and centered content; phones use collapsible large titles.
 - Runtime-shader blur captures the page backdrop and falls back to an opaque Miuix surface.
 - Settings use `SmallTitle` headings and grouped Miuix preference cards.
-- Detail routes use typed Navigation 3 entries and Miuix `NavDisplay` predictive transitions.
+- Detail routes use typed Miuix navigation entries and `NavDisplay` predictive transitions.
 - Loading, empty, error and content states share one reusable state container.
 
 ## Feature conclusions
@@ -41,3 +41,35 @@ solely on screenshots or README files.
   authoritative refresh proves that the first command did not take effect.
 - Keep release credentials in a protected GitHub environment, pin CI actions by commit,
   checksum Gradle dependencies, and verify every generated APK and app bundle before upload.
+
+## Current source profile
+
+The stable Miuix tag inspected for this change is v0.9.4 at
+`39c40f99844227b853f0049a0933b1f3ae6c00ba`. The pinned submodule adds five
+post-release pager/navigation fixes at `2afdbb39f1aac5747165cc354cafd4b918fa55a5`.
+Core, UI, preference, icons, shader, blur, squircle and nav all use that source
+through Gradle composite substitution, including the Android coordinates.
+The app requires Android 13/API 33, matching the blur module's declared floor.
+
+The tracked patch changes scrim ownership and interrupted-navigation draw ordering in `NavDisplay`, initiating-pointer
+ownership in `NavSwipeDismiss`, refresh eligibility in `PullToRefresh`, and
+mode-specific blur shader compilation. The shader change keeps the native
+blend calculations but excludes unused dispatch branches, avoiding an Android
+emulator GPU compiler failure that made glass masks transparent.
+Refresh eligibility includes English and Chinese API documentation and both examples. The blur shader fix updates both language guides and the shared blur example.
+Settings checks the base revision and applies the patch idempotently. A clean
+checkout needs recursive submodule initialization; no unpublished submodule
+commit or premodified working tree is required.
+
+Language Selector About was inspected at
+`1220669f6de59490f6a1caae105f8857c3a80348` for progressive bar blur, backdrop
+capabilities, monochrome mark treatment and hidden-animation ownership. The
+app's own mark and dependency links remain product-specific. The monochrome
+mark is derived from this repository's existing app artwork.
+
+The runtime remains Activity 1.13.0 and NavigationEvent 1.1.2.
+`ComponentActivity` owns the navigation-event dispatcher. No second provider
+is added.
+
+See `skill-implementation.md` for finding coverage, product decisions and the
+validation record.

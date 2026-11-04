@@ -40,6 +40,7 @@ sealed interface AppRoute : NavKey {
     data object BackupRestoreSettings : AppRoute
     data object AidManager : AppRoute
     data object TagsAndReminders : AppRoute
+    data object ReminderSettings : AppRoute
     data object TagManager : AppRoute
     data object ScheduledReminders : AppRoute
     data object Statistics : AppRoute

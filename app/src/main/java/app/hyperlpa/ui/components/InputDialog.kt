@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.*
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
@@ -81,13 +82,19 @@ fun TextInputDialog(
     inputFilter: (String) -> String = { it },
     validate: (String) -> String? = { null },
     error: String? = null,
+    onDismissFinished: () -> Unit = {},
+    confirmEnabled: Boolean = true,
 ) {
+    var retainedTitle by remember { mutableStateOf(title) }
+    var retainedSummary by remember { mutableStateOf(summary) }
+    if (show) { retainedTitle = title; retainedSummary = summary }
     OverlayDialog(
         show = show,
         modifier = modifier,
-        title = title,
-        summary = summary,
+        title = retainedTitle,
+        summary = retainedSummary,
         onDismissRequest = onDismiss,
+        onDismissFinished = onDismissFinished,
     ) {
         var value by remember { mutableStateOf(TextFieldValue(initialValue, TextRange(initialValue.length))) }
         // A failure reported by the caller describes the submitted text, so editing hides it.
@@ -100,7 +107,7 @@ fun TextInputDialog(
         }
         val validationError = value.text.takeIf { it.isNotBlank() }?.let(validate)
         val shownError = validationError ?: error.takeUnless { editedSinceError }
-        val canConfirm = validationError == null && (allowBlank || value.text.isNotBlank())
+        val canConfirm = confirmEnabled && validationError == null && (allowBlank || value.text.isNotBlank())
         TextField(
             value = value,
             onValueChange = { input ->
@@ -125,7 +132,7 @@ fun TextInputDialog(
                 text = shownError,
                 color = MiuixTheme.colorScheme.error,
                 style = MiuixTheme.textStyles.footnote1,
-                modifier = Modifier.padding(top = 8.dp),
+                modifier = Modifier.padding(top = 8.dp).semantics { error(shownError); liveRegion = LiveRegionMode.Polite },
             )
         }
         Spacer(Modifier.height(12.dp))
@@ -136,4 +143,10 @@ fun TextInputDialog(
             onConfirm = { onConfirm(value.text) },
         )
     }
+}
+
+@Composable
+fun FieldError(message: String, modifier: Modifier = Modifier) {
+    Text(message, style = MiuixTheme.textStyles.footnote1, color = MiuixTheme.colorScheme.error,
+        modifier = modifier.padding(top = 8.dp).semantics { error(message); liveRegion = LiveRegionMode.Polite })
 }

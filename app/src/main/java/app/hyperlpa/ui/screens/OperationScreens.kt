@@ -37,6 +37,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -50,16 +51,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.liveRegion
-import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -68,7 +65,6 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
@@ -102,6 +98,9 @@ import app.hyperlpa.domain.model.takeUnicodeCodePoints
 import app.hyperlpa.ui.components.DialogActionRow
 import app.hyperlpa.ui.components.TextInputDialog
 import app.hyperlpa.ui.components.EmptyState
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.Box
+import app.hyperlpa.ui.components.lazyGroup
 import app.hyperlpa.ui.components.GroupedCard
 import app.hyperlpa.ui.components.LoadingState
 import app.hyperlpa.ui.components.PageStateKind
@@ -116,7 +115,6 @@ import app.hyperlpa.ui.components.DetailLazyScaffold
 import app.hyperlpa.ui.components.FormattedProfileDisplayName
 import app.hyperlpa.ui.components.formatProfileDisplayName
 import app.hyperlpa.ui.components.PrimaryPageButton
-import app.hyperlpa.ui.components.TipCard
 import app.hyperlpa.ui.components.ValuePreference
 import app.hyperlpa.ui.components.rememberProfileArtwork
 import app.hyperlpa.ui.components.redactIdentifier
@@ -150,22 +148,17 @@ import androidx.navigationevent.compose.NavigationBackHandler
 import androidx.navigationevent.compose.rememberNavigationEventState
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
-import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.basic.SnackbarDuration
-import top.yukonga.miuix.kmp.basic.Surface
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Alarm
-import top.yukonga.miuix.kmp.icon.extended.Delete
 import top.yukonga.miuix.kmp.icon.extended.ExpandLess
 import top.yukonga.miuix.kmp.icon.extended.ExpandMore
-import top.yukonga.miuix.kmp.icon.extended.Info
 import top.yukonga.miuix.kmp.icon.extended.Notes
-import top.yukonga.miuix.kmp.icon.extended.Refresh
 import top.yukonga.miuix.kmp.icon.extended.Scan
 import top.yukonga.miuix.kmp.icon.extended.Search
 import top.yukonga.miuix.kmp.icon.extended.Years
@@ -195,7 +188,7 @@ fun ProfileDetailsScreen(
     profileSwitchEnabled: Boolean = true,
     onSetPinned: (Boolean) -> Unit,
     onRename: (String) -> Unit,
-    onDelete: () -> Unit,
+    onDelete: ((Boolean) -> Unit) -> Unit,
     onSetTags: (Set<String>) -> Unit,
     onSetReminder: (String, Instant?) -> Unit,
     onRequestNotificationPermission: ((Boolean) -> Unit) -> Unit,
@@ -205,6 +198,10 @@ fun ProfileDetailsScreen(
 ) {
     var showRename by remember { mutableStateOf(false) }
     var showDelete by remember { mutableStateOf(false) }
+    var deleteNext by remember { mutableStateOf(false) }
+    var deleteAfterExit by remember { mutableStateOf(false) }
+    var pendingIconAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var showClearReminder by remember { mutableStateOf(false) }
     var showDeleteConfirmation by remember { mutableStateOf(false) }
     var showTags by remember { mutableStateOf(false) }
     var editableTags by remember(profile?.tags) { mutableStateOf(profile?.tags.orEmpty()) }
@@ -586,6 +583,7 @@ fun ProfileDetailsScreen(
 
     OverlayDialog(
         show = showDelete && !settings.hideProfileDeletion,
+        onDismissFinished = { if (deleteNext) { deleteNext = false; showDeleteConfirmation = true } },
         title = stringResource(R.string.profile_delete_first_title),
         summary = stringResource(R.string.profile_delete_first_summary),
         onDismissRequest = { showDelete = false },
@@ -595,26 +593,31 @@ fun ProfileDetailsScreen(
             confirmText = stringResource(R.string.common_continue),
             destructive = true,
             onConfirm = {
+                deleteNext = true
                 showDelete = false
-                showDeleteConfirmation = true
             },
         )
     }
 
     OverlayDialog(
         show = showDeleteConfirmation && !settings.hideProfileDeletion,
+        onDismissFinished = {
+            if (deleteAfterExit) {
+                deleteAfterExit = false
+                onDelete { success -> if (success) onBack() }
+            }
+        },
         title = stringResource(R.string.profile_delete_final_title),
         summary = stringResource(profileDeleteFinalSummaryRes(profile?.state)),
         onDismissRequest = { showDeleteConfirmation = false },
     ) {
         DialogActionRow(
             onCancel = { showDeleteConfirmation = false },
-            confirmText = stringResource(R.string.profile_delete),
+            confirmText = stringResource(R.string.common_delete),
             destructive = true,
             onConfirm = {
+                deleteAfterExit = true
                 showDeleteConfirmation = false
-                onDelete()
-                onBack()
             },
         )
     }
@@ -638,6 +641,7 @@ fun ProfileDetailsScreen(
 
     OverlayBottomSheet(
         show = showReminder,
+        onDismissFinished = { pendingIconAction?.also { pendingIconAction = null }?.invoke() },
         title = stringResource(R.string.profile_reminder_title_sheet),
         onDismissRequest = { showReminder = false },
     ) {
@@ -658,17 +662,24 @@ fun ProfileDetailsScreen(
                 stringResource(R.string.reminder_custom),
                 stringResource(R.string.reminder_custom_summary),
             ) {
-                showCustomReminderDatePicker = true
+                pendingIconAction = { showCustomReminderDatePicker = true }
+                showReminder = false
             }
             ReminderOption(
                 stringResource(R.string.reminder_clear),
                 profile?.reminderAt?.formatReminderDate() ?: stringResource(R.string.profile_no_reminder),
             ) {
-                onSetReminder(reminderLabel, null)
+                pendingIconAction = { showClearReminder = true }
                 showReminder = false
             }
             BottomSheetFooterSpacer()
         }
+    }
+
+    OverlayDialog(show = showClearReminder, title = stringResource(R.string.reminder_clear),
+        summary = stringResource(R.string.reminder_clear_confirmation), onDismissRequest = { showClearReminder = false }) {
+        DialogActionRow(onCancel = { showClearReminder = false }, confirmText = stringResource(R.string.common_clear),
+            destructive = true, onConfirm = { onSetReminder(reminderLabel, null); showClearReminder = false })
     }
 
     MiuixDatePickerDialog(
@@ -687,6 +698,7 @@ fun ProfileDetailsScreen(
 
     OverlayBottomSheet(
         show = showIconOptions,
+        onDismissFinished = { pendingIconAction?.also { pendingIconAction = null }?.invoke() },
         title = stringResource(R.string.profile_custom_icon),
         onDismissRequest = { showIconOptions = false },
     ) {
@@ -697,8 +709,8 @@ fun ProfileDetailsScreen(
             ) {
                 pickForProvider = false
                 showIconOptions = false
-                runCatching { pickIcon.launch("image/*") }
-                    .onFailure { showSnackbar(filePickerUnavailable, SnackbarDuration.Long) }
+                pendingIconAction = { runCatching { pickIcon.launch("image/*") }
+                    .onFailure { showSnackbar(filePickerUnavailable, SnackbarDuration.Long) } }
             }
             if (canShareByProvider) {
                 ReminderOption(
@@ -707,11 +719,11 @@ fun ProfileDetailsScreen(
                 ) {
                     pickForProvider = true
                     showIconOptions = false
-                    runCatching { pickIcon.launch("image/*") }
+                    pendingIconAction = { runCatching { pickIcon.launch("image/*") }
                         .onFailure {
                             pickForProvider = false
                             showSnackbar(filePickerUnavailable, SnackbarDuration.Long)
-                        }
+                        } }
                 }
             }
             if (canShareByProvider && (hasProfileIcon || hasProviderIcon)) {
@@ -728,8 +740,8 @@ fun ProfileDetailsScreen(
                     stringResource(R.string.profile_icon_remove_profile),
                     stringResource(R.string.profile_icon_remove_profile_summary),
                 ) {
+                    pendingIconAction = { showRemoveProfileIconConfirmation = true }
                     showIconOptions = false
-                    showRemoveProfileIconConfirmation = true
                 }
             }
             if (hasProviderIcon && !hasProfileIcon && !isProviderIconHidden) {
@@ -737,8 +749,8 @@ fun ProfileDetailsScreen(
                     stringResource(R.string.profile_icon_remove_shared_profile),
                     stringResource(R.string.profile_icon_remove_shared_profile_summary),
                 ) {
+                    pendingIconAction = { showRemoveSharedProviderIconForProfileConfirmation = true }
                     showIconOptions = false
-                    showRemoveSharedProviderIconForProfileConfirmation = true
                 }
             }
             if (hasProviderIcon && isProviderIconHidden) {
@@ -755,8 +767,8 @@ fun ProfileDetailsScreen(
                     stringResource(R.string.profile_icon_remove_provider, providerLabel),
                     stringResource(R.string.profile_icon_remove_provider_summary),
                 ) {
+                    pendingIconAction = { showRemoveProviderIconConfirmation = true }
                     showIconOptions = false
-                    showRemoveProviderIconConfirmation = true
                 }
             }
             BottomSheetFooterSpacer()
@@ -835,6 +847,7 @@ fun DownloadProfileScreen(
     // The confirmation code is a credential, so it stays out of saved state.
     var confirmationCode by remember(initialValue) { mutableStateOf("") }
     var imeiOverride by rememberSaveable { mutableStateOf<String?>(null) }
+    var showFieldEditor by remember { mutableStateOf(false) }
     var editingField by remember { mutableStateOf<DownloadField?>(null) }
     var validationAttempted by rememberSaveable { mutableStateOf(false) }
     var imageScanError by rememberSaveable { mutableStateOf<String?>(null) }
@@ -946,6 +959,7 @@ fun DownloadProfileScreen(
                     Spacer(Modifier.height(12.dp))
                     TextField(
                         value = localValue,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, autoCorrectEnabled = false, imeAction = ImeAction.Done),
                         onValueChange = {
                             val bounded = it.take(MaxActivationInputCharacters)
                             if (bounded != localValue) {
@@ -963,16 +977,12 @@ fun DownloadProfileScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                if (confirmationCodeRequired) {
-                    TipCard(
-                        text = stringResource(app.hyperlpa.R.string.activation_confirmation_help),
-                    )
-                }
+
             }
         }
         item {
             GroupedCard(
-                modifier = Modifier.padding(top = if (confirmationCodeRequired) 0.dp else 10.dp),
+                modifier = Modifier.padding(top = 6.dp),
             ) {
                 ArrowPreference(
                     title = stringResource(app.hyperlpa.R.string.activation_paste),
@@ -1000,7 +1010,7 @@ fun DownloadProfileScreen(
                     title = "SM-DP+",
                     summary = parsed?.smdpAddress ?: stringResource(R.string.activation_waiting_valid),
                     enabled = !busy,
-                    onClick = { editingField = DownloadField.SmdpAddress },
+                    onClick = { editingField = DownloadField.SmdpAddress; showFieldEditor = true },
                 )
                 ArrowPreference(
                     title = stringResource(R.string.activation_matching_id),
@@ -1012,14 +1022,14 @@ fun DownloadProfileScreen(
                         },
                     ),
                     enabled = !busy && parsed != null,
-                    onClick = { editingField = DownloadField.MatchingId },
+                    onClick = { editingField = DownloadField.MatchingId; showFieldEditor = true },
                 )
                 parsed?.smdpOid?.takeIf(String::isNotBlank)?.let { smdpOid ->
                     ArrowPreference(
                         title = "SM-DP+ OID",
                         summary = smdpOid,
                         enabled = !busy,
-                        onClick = { editingField = DownloadField.SmdpOid },
+                        onClick = { editingField = DownloadField.SmdpOid; showFieldEditor = true },
                     )
                 }
                 ArrowPreference(
@@ -1035,13 +1045,13 @@ fun DownloadProfileScreen(
                         BasicComponentDefaults.summaryColor()
                     },
                     enabled = !busy && parsed != null,
-                    onClick = { editingField = DownloadField.ConfirmationCode },
+                    onClick = { editingField = DownloadField.ConfirmationCode; showFieldEditor = true },
                 )
                 ArrowPreference(
                     title = "IMEI",
                     summary = effectiveImei.ifBlank { stringResource(R.string.activation_not_supplied) },
                     enabled = !busy,
-                    onClick = { editingField = DownloadField.Imei },
+                    onClick = { editingField = DownloadField.Imei; showFieldEditor = true },
                 )
                 if (readers.isEmpty()) {
                     ArrowPreference(
@@ -1092,16 +1102,18 @@ fun DownloadProfileScreen(
                         ?.let(onContinue) == false
                 },
                 busy = busy,
+                enabled = requestResult.getOrNull()?.hasRequiredConfirmationCode == true,
             )
         }
     }
     val parsed = parsedRequest.getOrNull()
     val resources = LocalResources.current
-    val closeEditor = { editingField = null }
+    val closeEditor = { showFieldEditor = false }
     fun errorFor(result: Result<*>): String? =
         result.exceptionOrNull()?.let { resources.getString(downloadRequestErrorResource(it)) }
     TextInputDialog(
-        show = editingField == DownloadField.SmdpAddress,
+        show = showFieldEditor && editingField == DownloadField.SmdpAddress,
+        onDismissFinished = { if (!showFieldEditor) editingField = null },
         title = "SM-DP+",
         summary = stringResource(R.string.download_smdp_dialog_summary),
         label = stringResource(R.string.download_smdp_label),
@@ -1116,10 +1128,12 @@ fun DownloadProfileScreen(
         },
     )
     TextInputDialog(
-        show = editingField == DownloadField.MatchingId,
+        show = showFieldEditor && editingField == DownloadField.MatchingId,
+        onDismissFinished = { if (!showFieldEditor) editingField = null },
         title = stringResource(R.string.activation_matching_id),
         summary = stringResource(R.string.download_matching_id_dialog_summary),
         initialValue = parsed?.matchingId.orEmpty(),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, autoCorrectEnabled = false),
         maxLength = 1_024,
         allowBlank = true,
         validate = { value ->
@@ -1136,7 +1150,8 @@ fun DownloadProfileScreen(
         },
     )
     TextInputDialog(
-        show = editingField == DownloadField.SmdpOid,
+        show = showFieldEditor && editingField == DownloadField.SmdpOid,
+        onDismissFinished = { if (!showFieldEditor) editingField = null },
         title = "SM-DP+ OID",
         summary = stringResource(R.string.download_oid_dialog_summary),
         initialValue = parsed?.smdpOid.orEmpty(),
@@ -1151,7 +1166,8 @@ fun DownloadProfileScreen(
         },
     )
     TextInputDialog(
-        show = editingField == DownloadField.ConfirmationCode,
+        show = showFieldEditor && editingField == DownloadField.ConfirmationCode,
+        onDismissFinished = { if (!showFieldEditor) editingField = null },
         title = stringResource(R.string.activation_confirmation_code),
         summary = stringResource(R.string.activation_confirmation_help),
         initialValue = confirmationCode,
@@ -1167,7 +1183,8 @@ fun DownloadProfileScreen(
         },
     )
     TextInputDialog(
-        show = editingField == DownloadField.Imei,
+        show = showFieldEditor && editingField == DownloadField.Imei,
+        onDismissFinished = { if (!showFieldEditor) editingField = null },
         title = "IMEI",
         summary = stringResource(R.string.download_imei_dialog_summary),
         initialValue = effectiveImei,
@@ -1445,14 +1462,7 @@ fun ProfileDownloadConfirmationScreen(
                 }
             }
         }
-        if (progressOperation != null) {
-            item {
-                ProfileDownloadProgressBar(
-                    operation = progressOperation,
-                    modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 12.dp),
-                )
-            }
-        } else {
+        if (progressOperation == null) {
             item {
                 PrimaryPageButton(
                     text = stringResource(R.string.common_download),
@@ -1461,6 +1471,8 @@ fun ProfileDownloadConfirmationScreen(
             }
         }
     }
+
+    ProfileDownloadProgressBar(progressOperation)
 
     OverlayDialog(
         show = showCancelConfirmation,
@@ -1479,12 +1491,15 @@ fun ProfileDownloadConfirmationScreen(
 }
 
 @Composable
-private fun ProfileDownloadProgressBar(
-    operation: LpaOperation.Downloading,
+internal fun ProfileDownloadProgressBar(
+    operation: LpaOperation.Downloading?,
     modifier: Modifier = Modifier,
 ) {
-    val sentBytes = operation.sentBytes?.coerceAtLeast(0L)
-    val totalBytes = operation.totalBytes?.takeIf { it > 0L }
+    var retained by remember { mutableStateOf(operation) }
+    if (operation != null) retained = operation
+    val displayed = retained
+    val sentBytes = displayed?.sentBytes?.coerceAtLeast(0L)
+    val totalBytes = displayed?.totalBytes?.takeIf { it > 0L }
     val targetProgress = if (sentBytes != null && totalBytes != null) {
         (sentBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
     } else {
@@ -1494,7 +1509,8 @@ private fun ProfileDownloadProgressBar(
         targetValue = targetProgress ?: 0f,
         animationSpec = tween(durationMillis = 300),
     )
-    val stageText = when (operation.stage) {
+    val stageText = when (displayed?.stage) {
+        null -> ""
         DownloadStage.PREPARING -> stringResource(R.string.download_progress_preparing)
         DownloadStage.CONNECTING -> stringResource(R.string.download_progress_connecting)
         DownloadStage.AUTHENTICATING -> stringResource(R.string.download_progress_authenticating)
@@ -1503,83 +1519,30 @@ private fun ProfileDownloadProgressBar(
         DownloadStage.FINALIZING -> stringResource(R.string.download_progress_finalizing)
         DownloadStage.INSTALLING -> stringResource(R.string.download_progress_installing)
     }
-    val progressText = if (targetProgress != null && sentBytes != null && totalBytes != null) {
-        stringResource(
-            R.string.download_progress_status,
-            stageText,
-            stringResource(
-                R.string.download_progress_detail,
-                (targetProgress * 100).roundToInt(),
-                formatBytes(sentBytes),
-                formatBytes(totalBytes),
-            ),
-        )
-    } else {
-        stageText
-    }
-    val mutedStage = operation.stage == DownloadStage.DOWNLOADING ||
-        operation.stage == DownloadStage.INSTALLING
-    val contentColor = if (progress < 0.45f) {
-        if (MiuixTheme.isDynamicColor) {
-            MiuixTheme.colorScheme.onSecondaryContainer
-        } else {
-            MiuixTheme.colorScheme.onSecondaryVariant
-        }
-    } else {
-        MiuixTheme.colorScheme.onPrimary
-    }
-    val trackColor = if (mutedStage) {
-        MiuixTheme.colorScheme.disabledSecondaryVariant
-    } else if (MiuixTheme.isDynamicColor) {
-        MiuixTheme.colorScheme.secondaryContainer
-    } else {
-        MiuixTheme.colorScheme.secondaryVariant
-    }
-    val progressColor = MiuixTheme.colorScheme.primary
-
-    Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .semantics {
-                progressBarRangeInfo = targetProgress?.let {
-                    ProgressBarRangeInfo(progress, 0f..1f)
-                } ?: ProgressBarRangeInfo.Indeterminate
-            },
-        shape = RoundedCornerShape(ButtonDefaults.CornerRadius),
-        color = trackColor,
-        contentColor = contentColor,
+    OverlayDialog(
+        show = operation != null,
+        modifier = modifier.semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
+        cornerRadius = 36.dp,
+        onDismissRequest = null,
+        onDismissFinished = { if (operation == null) retained = null },
     ) {
-        Row(
-            modifier = Modifier
-                .defaultMinSize(
-                    minWidth = ButtonDefaults.MinWidth,
-                    minHeight = ButtonDefaults.MinHeight,
-                )
-                .drawWithContent {
-                    if (progress > 0f) {
-                        drawRect(
-                            color = progressColor,
-                            size = Size(
-                                width = size.width * progress,
-                                height = size.height,
-                            ),
-                        )
-                    }
-                    drawContent()
-                }
-                .padding(ButtonDefaults.InsideMargin),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            InfiniteProgressIndicator(color = contentColor)
-            Spacer(Modifier.width(10.dp))
-            Text(
-                text = progressText,
-                color = contentColor,
-                style = MiuixTheme.textStyles.button,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+        NavigationBackHandler(state = rememberNavigationEventState(currentInfo = NavigationEventInfo.None),
+            isBackEnabled = true, onBackCompleted = {})
+        if (targetProgress == null) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically) {
+                InfiniteProgressIndicator(size = 24.dp, color = MiuixTheme.colorScheme.onSurface)
+                Text(stageText, style = MiuixTheme.textStyles.body1)
+            }
+        } else Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text(stageText, style = MiuixTheme.textStyles.body1, modifier = Modifier.weight(1f))
+                Text(stringResource(R.string.download_progress_detail,
+                    ((targetProgress ?: 0f) * 100).roundToInt(), formatBytes(sentBytes ?: 0L), formatBytes(totalBytes ?: 0L)),
+                    style = MiuixTheme.textStyles.footnote1, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+            }
+            top.yukonga.miuix.kmp.basic.LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth())
         }
     }
 }
@@ -1747,21 +1710,19 @@ fun BatchDownloadScreen(
     }
 
     DetailLazyScaffold(title = stringResource(R.string.batch_download_title), onBack = onBack) { _ ->
-        item(contentType = PageStart.Inset) {
-            TipCard(text = stringResource(R.string.batch_download_instructions))
-        }
         item {
             TextField(
                 value = values,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, autoCorrectEnabled = false, imeAction = ImeAction.Done),
                 onValueChange = { values = it.take(MaxBatchInputCharacters) },
-                label = stringResource(R.string.batch_download_codes_label),
+                label = stringResource(R.string.batch_download_instructions),
                 useLabelAsPlaceholder = true,
                 minLines = 8,
                 maxLines = 16,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp)
-                    .padding(top = 4.dp, bottom = 10.dp),
+                    .padding(bottom = 6.dp),
             )
         }
         item {
@@ -1819,9 +1780,7 @@ fun BatchDownloadScreen(
                     ),
                 )
             }
-            item {
-                GroupedCard {
-                    state.items.forEach { item ->
+            lazyGroup(state.items, key = { "batch-${it.index}" }, contentType = "batch-item") { item ->
                         BatchItemRow(
                             title = "${item.index + 1}. ${item.address}",
                             failed = item.error != null || item.status == BatchDownloadStatus.FAILED,
@@ -1850,7 +1809,9 @@ fun BatchDownloadScreen(
                                 }
                             },
                         )
-                    }
+            }
+            item {
+                GroupedCard {
                     ValuePreference(
                         title = stringResource(R.string.batch_progress),
                         value = stringResource(
@@ -1944,6 +1905,7 @@ fun EuiccDetailsScreen(
     onUseDiscoveredAddress: (String) -> Unit,
 ) {
     var showReset by remember { mutableStateOf(false) }
+    var pendingResetStage by remember { mutableIntStateOf(0) }
     var showResetConfirmation by remember { mutableStateOf(false) }
     var showFinalResetConfirmation by remember { mutableStateOf(false) }
     var advancedDetailsExpanded by rememberSaveable(info?.eid) { mutableStateOf(false) }
@@ -2109,16 +2071,13 @@ fun EuiccDetailsScreen(
             }
             if (discoveredSmdpAddresses.isNotEmpty()) {
                 item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.euicc_discovered_profiles)) }
-                item {
-                    GroupedCard {
-                        discoveredSmdpAddresses.forEach { address ->
+                lazyGroup(discoveredSmdpAddresses, key = { it }, contentType = "discovered-profile") { address ->
                             ArrowPreference(
                                 title = address,
                                 summary = stringResource(R.string.euicc_open_discovered_summary),
                                 onClick = { onUseDiscoveredAddress(address) },
                             )
-                        }
-                    }
+
                 }
             }
             item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.profile_advanced_section)) }
@@ -2231,6 +2190,7 @@ fun EuiccDetailsScreen(
     )
     OverlayDialog(
         show = showReset,
+        onDismissFinished = { if (pendingResetStage == 1) { pendingResetStage = 0; showResetConfirmation = true } },
         title = stringResource(R.string.euicc_reset_first_title),
         summary = stringResource(R.string.euicc_reset_first_summary),
         onDismissRequest = { showReset = false },
@@ -2240,13 +2200,14 @@ fun EuiccDetailsScreen(
             confirmText = stringResource(R.string.common_continue),
             destructive = true,
             onConfirm = {
+                pendingResetStage = 1
                 showReset = false
-                showResetConfirmation = true
             },
         )
     }
     OverlayDialog(
         show = showResetConfirmation,
+        onDismissFinished = { if (pendingResetStage == 2) { pendingResetStage = 0; showFinalResetConfirmation = true } },
         title = stringResource(R.string.euicc_reset_second_title),
         summary = stringResource(R.string.euicc_reset_second_summary),
         onDismissRequest = { showResetConfirmation = false },
@@ -2256,24 +2217,25 @@ fun EuiccDetailsScreen(
             confirmText = stringResource(R.string.common_continue),
             destructive = true,
             onConfirm = {
+                pendingResetStage = 2
                 showResetConfirmation = false
-                showFinalResetConfirmation = true
             },
         )
     }
     OverlayDialog(
         show = showFinalResetConfirmation,
+        onDismissFinished = { if (pendingResetStage == 3) { pendingResetStage = 0; onReset() } },
         title = stringResource(R.string.euicc_reset_final_title),
         summary = stringResource(R.string.euicc_reset_final_summary),
         onDismissRequest = { showFinalResetConfirmation = false },
     ) {
         DialogActionRow(
             onCancel = { showFinalResetConfirmation = false },
-            confirmText = stringResource(R.string.euicc_reset_action),
+            confirmText = stringResource(R.string.common_reset),
             destructive = true,
             onConfirm = {
+                pendingResetStage = 3
                 showFinalResetConfirmation = false
-                onReset()
             },
         )
     }
@@ -2313,11 +2275,26 @@ private fun ProvisioningAddressDialog(
 }
 
 @Composable
-fun TagsAndRemindersScreen(
+fun TagsAndRemindersScreen(settings: AppSettings, onBack: () -> Unit,
+    onOpenTagManager: () -> Unit, onOpenReminderSettings: () -> Unit) {
+    DetailLazyScaffold(title = stringResource(R.string.tags_reminders_title), onBack = onBack) { _ ->
+        item {
+            GroupedCard {
+                ArrowPreference(title = stringResource(R.string.tags_manager),
+                    summary = stringResource(R.string.tags_manager_summary), onClick = onOpenTagManager)
+                ArrowPreference(title = stringResource(R.string.reminders_profile),
+                    summary = stringResource(if (settings.scheduledReminders) R.string.common_enabled else R.string.common_disabled),
+                    onClick = onOpenReminderSettings)
+            }
+        }
+    }
+}
+
+@Composable
+fun ReminderSettingsScreen(
     settings: AppSettings,
     notificationPermissionGranted: Boolean,
     onBack: () -> Unit,
-    onOpenTagManager: () -> Unit,
     onOpenScheduledReminders: () -> Unit,
     onSetRemindersEnabled: (Boolean) -> Unit,
     onRequestNotificationPermission: ((Boolean) -> Unit) -> Unit,
@@ -2338,15 +2315,9 @@ fun TagsAndRemindersScreen(
         }
     }
 
-    DetailLazyScaffold(title = stringResource(R.string.tags_reminders_title), onBack = onBack) { _ ->
-        item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.tags_reminders_general)) }
+    DetailLazyScaffold(title = stringResource(R.string.reminders_profile), onBack = onBack) { _ ->
         item {
             GroupedCard {
-                ArrowPreference(
-                    title = stringResource(R.string.tags_manager),
-                    summary = stringResource(R.string.tags_manager_summary),
-                    onClick = onOpenTagManager,
-                )
                 SwitchPreference(
                     checked = settings.scheduledReminders,
                     onCheckedChange = { enabled ->
@@ -2411,6 +2382,7 @@ fun TagManagerScreen(
     onSetTags: (String, Set<String>) -> Unit,
 ) {
     var selected by remember { mutableStateOf<ProfileInfo?>(null) }
+    var showTagEditor by remember { mutableStateOf(false) }
     var editableTags by remember { mutableStateOf(emptySet<String>()) }
     var searchQuery by rememberSaveable { mutableStateOf("") }
     val allTags = profiles
@@ -2458,20 +2430,13 @@ fun TagManagerScreen(
                 )
             }
             item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.tags_active)) }
-            item {
-                GroupedCard {
-                    if (allTags.isEmpty()) {
-                        ValuePreference(
-                            title = stringResource(R.string.tags_none_yet),
-                            value = stringResource(R.string.tags_none_yet_summary),
-                        )
-                    } else if (visibleTags.isEmpty()) {
-                        ValuePreference(
-                            title = stringResource(R.string.tags_no_matching),
-                            value = stringResource(R.string.tags_no_matching_summary),
-                        )
-                    } else {
-                        visibleTags.forEach { (tag, count) ->
+            if (allTags.isEmpty() || visibleTags.isEmpty()) {
+                item { GroupedCard { ValuePreference(
+                    title = stringResource(if (allTags.isEmpty()) R.string.tags_none_yet else R.string.tags_no_matching),
+                    value = stringResource(if (allTags.isEmpty()) R.string.tags_none_yet_summary else R.string.tags_no_matching_summary),
+                ) } }
+            } else {
+                lazyGroup(visibleTags, key = { it.first }, contentType = "tag") { (tag, count) ->
                             ArrowPreference(
                                 title = tag,
                                 summary = pluralStringResource(
@@ -2481,10 +2446,9 @@ fun TagManagerScreen(
                                 ),
                                 onClick = { searchQuery = tag },
                             )
-                        }
-                    }
-                }
+                                        }
             }
+
             item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.tags_profiles_section)) }
             if (filteredProfiles.isEmpty()) {
                 inlinePageStateItem(key = "tags-none-found", listState = listState) { stateModifier ->
@@ -2492,13 +2456,12 @@ fun TagManagerScreen(
                         title = stringResource(R.string.tags_none_found),
                         message = stringResource(R.string.tags_none_found_message),
                         icon = MiuixIcons.Search,
+                        actionText = stringResource(R.string.common_clear), onAction = { searchQuery = "" },
                         modifier = stateModifier,
                     )
                 }
             } else {
-                item {
-                    GroupedCard {
-                        filteredProfiles.forEach { profile ->
+                lazyGroup(filteredProfiles, key = { it.iccid }, contentType = "tag-profile") { profile ->
                             ArrowPreference(
                                 title = profile.nickname.ifBlank {
                                     profile.name.ifBlank { stringResource(R.string.profile_default_name) }
@@ -2507,29 +2470,30 @@ fun TagManagerScreen(
                                     ?: stringResource(R.string.profile_no_tags),
                                 onClick = {
                                     selected = profile
+                                    showTagEditor = true
                                     editableTags = profile.tags
                                 },
                             )
-                        }
-                    }
+
                 }
             }
         }
     }
     OverlayBottomSheet(
-        show = selected != null,
+        show = showTagEditor,
+        onDismissFinished = { if (!showTagEditor) selected = null },
         title = selected?.nickname?.ifBlank { selected?.name.orEmpty() }
             ?.ifBlank { stringResource(R.string.profile_tags_title) },
-        onDismissRequest = { selected = null },
+        onDismissRequest = { showTagEditor = false },
     ) {
         ProfileTagsEditor(
             tags = editableTags,
             suggestedTags = allTags.mapTo(linkedSetOf()) { it.first },
             onTagsChange = { editableTags = it },
-            onCancel = { selected = null },
+            onCancel = { showTagEditor = false },
             onSave = { tags ->
                 selected?.let { onSetTags(it.iccid, tags) }
-                selected = null
+                showTagEditor = false
             },
         )
     }
@@ -2560,23 +2524,17 @@ fun ScheduledRemindersScreen(
     ) { _ ->
         if (scheduled.isNotEmpty()) {
             if (upcoming.isNotEmpty()) {
-                item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.reminders_upcoming)) }
-                item {
-                    GroupedCard {
-                        upcoming.forEach { profile ->
+                if (pastDue.isNotEmpty()) item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.reminders_upcoming)) }
+                lazyGroup(upcoming, key = { it.iccid }, contentType = "upcoming-reminder") { profile ->
                             ReminderManagerPreference(profile, onOpen)
-                        }
-                    }
+
                 }
             }
             if (pastDue.isNotEmpty()) {
-                item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.reminders_past_due)) }
-                item {
-                    GroupedCard {
-                        pastDue.forEach { profile ->
+                if (upcoming.isNotEmpty()) item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.reminders_past_due)) }
+                lazyGroup(pastDue, key = { it.iccid }, contentType = "overdue-reminder") { profile ->
                             ReminderManagerPreference(profile, onOpen)
-                        }
-                    }
+
                 }
             }
         }
@@ -2656,6 +2614,8 @@ fun LogsScreen(
     onExportSupportReport: (Uri, (Boolean) -> Unit) -> Unit,
 ) {
     val showSnackbar = LocalMiuixSnackbar.current
+    var confirmExport by remember { mutableStateOf(false) }
+    var exportAfterExit by remember { mutableStateOf(false) }
     val logsExported = stringResource(R.string.logs_exported)
     val logsExportFailed = stringResource(R.string.logs_export_failed)
     val filePickerUnavailable = stringResource(R.string.common_file_picker_unavailable)
@@ -2673,9 +2633,8 @@ fun LogsScreen(
     val levels = listOf<LogLevel?>(null) + LogLevel.entries
     var selectedLevel by remember { mutableIntStateOf(0) }
     val visibleLogs = logs
-        .mapIndexed { index, entry -> index to entry }
         .asReversed()
-        .filter { (_, entry) -> levels[selectedLevel] == null || entry.level == levels[selectedLevel] }
+        .filter { entry -> levels[selectedLevel] == null || entry.level == levels[selectedLevel] }
     val listState = rememberLazyListState()
     DetailLazyScaffold(
         title = stringResource(R.string.logs_title),
@@ -2684,8 +2643,7 @@ fun LogsScreen(
         actions = {
             IconButton(
                 onClick = {
-                    runCatching { exportSupportReport.launch("hyperlpa-support-report.txt") }
-                        .onFailure { showSnackbar(filePickerUnavailable, SnackbarDuration.Long) }
+                    confirmExport = true
                 },
             ) {
                 Icon(
@@ -2695,21 +2653,7 @@ fun LogsScreen(
             }
         },
     ) { _ ->
-        item(contentType = PageStart.Inset) {
-            TipCard {
-                Text(
-                    text = stringResource(R.string.logs_support_included),
-                    fontSize = 13.sp,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = stringResource(R.string.logs_support_excluded),
-                    fontSize = 13.sp,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                )
-            }
-        }
+
         item {
             GroupedCard {
                 OverlayDropdownPreference(
@@ -2732,17 +2676,30 @@ fun LogsScreen(
                     stringResource(R.string.logs_empty),
                     stringResource(R.string.logs_empty_message),
                     icon = MiuixIcons.Notes,
+                    actionText = stringResource(R.string.common_clear).takeIf { selectedLevel != 0 },
+                    onAction = { selectedLevel = 0 },
                     modifier = stateModifier,
                 )
             }
         } else {
-            visibleLogs.forEach { (sourceIndex, entry) ->
-                item(key = sourceIndex) {
-                    LogCard(entry)
-                }
+            items(visibleLogs, key = { it.id }, contentType = { "log" }) { entry ->
+                Box(Modifier.animateItem()) { LogCard(entry) }
             }
         }
     }
+    OverlayDialog(show = confirmExport, title = stringResource(R.string.logs_export_report),
+        summary = stringResource(R.string.logs_support_included) + "\n" + stringResource(R.string.logs_support_excluded),
+        onDismissRequest = { confirmExport = false },
+        onDismissFinished = {
+            if (exportAfterExit) { exportAfterExit = false
+                runCatching { exportSupportReport.launch("hyperlpa-support-report.txt") }
+                    .onFailure { showSnackbar(filePickerUnavailable, SnackbarDuration.Long) }
+            }
+        }) {
+        DialogActionRow(onCancel = { confirmExport = false }, confirmText = stringResource(R.string.common_save),
+            onConfirm = { exportAfterExit = true; confirmExport = false })
+    }
+
 }
 
 internal fun isProfileDetailsLoading(
@@ -3094,41 +3051,14 @@ private fun StatRow(label: String, value: String) {
 @Composable
 private fun LogCard(entry: ActivityLogEntry) {
     GroupedCard {
-        Column(Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = when (entry.level) {
-                        LogLevel.ERROR -> MiuixIcons.Delete
-                        LogLevel.WARNING -> MiuixIcons.Info
-                        LogLevel.DEBUG -> MiuixIcons.Search
-                        LogLevel.INFO -> MiuixIcons.Refresh
-                    },
-                    contentDescription = null,
-                    modifier = Modifier.size(24.dp),
-                    tint = when (entry.level) {
-                        LogLevel.ERROR -> MiuixTheme.colorScheme.error
-                        LogLevel.WARNING -> MiuixTheme.colorScheme.secondary
-                        else -> MiuixTheme.colorScheme.primary
-                    },
-                )
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(entry.tag, style = MiuixTheme.textStyles.title3, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        entry.timestamp.formatDateTime(),
-                        style = MiuixTheme.textStyles.footnote1,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    )
-                }
-                Text(
-                    stringResource(entry.level.labelResource()),
-                    style = MiuixTheme.textStyles.footnote1,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantActions,
-                )
-            }
-            Spacer(Modifier.height(12.dp))
-            Text(entry.message, style = MiuixTheme.textStyles.body2)
-        }
+        BasicComponent(
+            title = entry.tag.ifBlank { stringResource(R.string.app_name) },
+            summary = "${entry.message}\n${stringResource(entry.level.labelResource())} · ${entry.timestamp.formatDateTime()}",
+            startAction = { app.hyperlpa.ui.components.AppIcon(
+                packageName = app.hyperlpa.BuildConfig.APPLICATION_ID, label = stringResource(R.string.app_name),
+                modifier = Modifier.padding(end = 12.dp),
+            ) },
+        )
     }
 }
 

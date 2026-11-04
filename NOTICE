@@ -31,7 +31,10 @@ adaptations of NekokoLPA2 behavior under the MIT License. Public size-reference
 data is downloaded from the NekokoLPA2 repository when that feature is enabled.
 HyperLPA does not use NekokoLPA branding or submit Nekoko installation telemetry.
 
-Miuix libraries are consumed as Maven dependencies under Apache-2.0.
+Miuix libraries are built from the pinned third_party/miuix source under
+Apache-2.0. Gradle substitutes every Miuix module consistently. The app-owned
+patches in third_party/patches preserve source provenance and are applied by
+settings.gradle.kts. See docs/reference-audit.md for exact revisions.
 
 Phone-number detection and international formatting use Google's
 libphonenumber under Apache-2.0.

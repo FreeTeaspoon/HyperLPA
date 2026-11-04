@@ -31,13 +31,48 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.async
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import kotlin.math.roundToInt
 
-private val appIconCache = LruCache<String, ImageBitmap>(64)
+private const val MetadataCacheMillis = 5 * 60_000L
+private data class CachedIcon(val bitmap: ImageBitmap?, val loadedAt: Long = android.os.SystemClock.elapsedRealtime())
+private data class CachedLabel(val label: String, val loadedAt: Long = android.os.SystemClock.elapsedRealtime())
+private val appIconCache = LruCache<String, CachedIcon>(128)
+private val metadataScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+private val iconLoads = mutableMapOf<String, kotlinx.coroutines.Deferred<ImageBitmap?>>()
+private val appLabels = LruCache<String, CachedLabel>(256)
+private val labelLoads = mutableMapOf<String, kotlinx.coroutines.Deferred<String>>()
+
+private fun labelKey(packageName: String) = "$packageName@${java.util.Locale.getDefault().toLanguageTag()}"
+
+fun cachedAppLabel(packageName: String): String = appLabels.get(labelKey(packageName))?.label ?: packageName
+
+suspend fun appLabel(context: Context, packageName: String): String {
+    val key = labelKey(packageName)
+    appLabels.get(key)?.takeIf { android.os.SystemClock.elapsedRealtime() - it.loadedAt < MetadataCacheMillis }?.let { return it.label }
+    val load = synchronized(labelLoads) {
+        labelLoads.getOrPut(key) { metadataScope.async {
+            runCatching { context.applicationContext.packageManager.let { pm ->
+                pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString()
+            } }.getOrDefault(packageName).also { appLabels.put(key, CachedLabel(it)) }
+        } }
+    }
+    return try { load.await() } finally { synchronized(labelLoads) { if (load.isCompleted && labelLoads[key] === load) labelLoads.remove(key) } }
+}
+
+private suspend fun appIcon(context: Context, packageName: String, pixels: Int): ImageBitmap? {
+    val key = "$packageName@$pixels"
+    appIconCache.get(key)?.takeIf { android.os.SystemClock.elapsedRealtime() - it.loadedAt < MetadataCacheMillis }?.let { return it.bitmap }
+    val load = synchronized(iconLoads) {
+        iconLoads.getOrPut(key) { metadataScope.async {
+            loadAppIcon(context.applicationContext, packageName, pixels).also { appIconCache.put(key, CachedIcon(it)) }
+        } }
+    }
+    return try { load.await() } finally { synchronized(iconLoads) { if (load.isCompleted && iconLoads[key] === load) iconLoads.remove(key) } }
+}
 
 @Composable
 fun AppIcon(
@@ -48,8 +83,8 @@ fun AppIcon(
 ) {
     val context = LocalContext.current
     val pixels = with(LocalDensity.current) { size.roundToPx() }
-    val bitmap by produceState(appIconCache.get("$packageName@$pixels"), packageName, pixels) {
-        if (value == null) value = withContext(Dispatchers.IO) { loadAppIcon(context, packageName, pixels) }
+    val bitmap by produceState(appIconCache.get("$packageName@$pixels")?.bitmap, packageName, pixels) {
+        value = appIcon(context, packageName, pixels)
     }
     val shape = RoundedCornerShape(size * 0.25f)
     val frame = modifier
@@ -72,7 +107,7 @@ fun AppIcon(
 
 private fun loadAppIcon(context: Context, packageName: String, size: Int): ImageBitmap? = runCatching {
     val drawable = context.packageManager.getApplicationIcon(packageName)
-    drawable.toFilledIcon(size).asImageBitmap().also { appIconCache.put("$packageName@$size", it) }
+    drawable.toFilledIcon(size).asImageBitmap()
 }.getOrNull()
 
 /** Adaptive layers overhang the tile so the 72-in-108 safe zone fills it without a launcher mask. */

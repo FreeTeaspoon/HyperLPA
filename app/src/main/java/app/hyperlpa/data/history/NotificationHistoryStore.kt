@@ -67,6 +67,7 @@ data class NotificationHistoryEntry(
     val sequenceNumber: Long? = null,
     /** Base64 signed notification content retained for Nekoko-style resend after card removal. */
     val pendingNotificationPayload: String? = null,
+    val id: String = java.util.UUID.randomUUID().toString(),
 ) {
     val timestamp: Instant
         get() = Instant.ofEpochMilli(timestampEpochMillis)
@@ -98,6 +99,10 @@ class NotificationHistoryStore(
 
     suspend fun initialize() = withContext(ioDispatcher) {
         mutex.withLock { ensureLoadedLocked() }
+    }
+
+    suspend fun reload() = withContext(ioDispatcher) {
+        mutex.withLock { mutableHistory.value = loadFromDisk(); initialized = true }
     }
 
     suspend fun record(
@@ -169,7 +174,7 @@ class NotificationHistoryStore(
 
     private fun ensureLoadedLocked() {
         if (initialized) return
-        mutableHistory.value = loadFromDisk()
+        mutableHistory.value = runCatching { loadFromDisk() }.getOrDefault(emptyList())
         initialized = true
     }
 
@@ -179,7 +184,7 @@ class NotificationHistoryStore(
         // a missing base file while that recovery artifact exists.
         val backupFile = File("${file.baseFile.path}.bak")
         if (!file.baseFile.isFile && !backupFile.isFile) return emptyList()
-        return runCatching {
+        return run {
             val bytes = file.openRead().use { input ->
                 val output = ByteArrayOutputStream()
                 val buffer = ByteArray(8 * 1024)
@@ -195,9 +200,14 @@ class NotificationHistoryStore(
             }
             val document = json.decodeFromString<NotificationHistoryDocument>(bytes.decodeToString())
             require(document.version == HistoryVersion) { "Unsupported notification history version" }
-            boundedHistory(
+            val seenIds = mutableSetOf<String>()
+            val entries = boundedHistory(
                 document.entries.map { entry ->
+                    val stableId = entry.id.takeIf { candidate ->
+                        runCatching { java.util.UUID.fromString(candidate).toString() == candidate }.getOrDefault(false) && seenIds.add(candidate)
+                    } ?: java.util.UUID.randomUUID().toString().also(seenIds::add)
                     entry.copy(
+                        id = stableId,
                         timestampEpochMillis = entry.timestampEpochMillis.coerceAtLeast(0),
                         notificationOperation = entry.notificationOperation
                             .takeIf(AllowedOperations::contains)
@@ -220,7 +230,11 @@ class NotificationHistoryStore(
                     )
                 },
             )
-        }.getOrDefault(emptyList())
+            // Persist generated legacy IDs once, including IDs repaired after malformed input.
+            val normalized = json.encodeToString(NotificationHistoryDocument(HistoryVersion, entries))
+            if (normalized != bytes.decodeToString()) writeToDisk(entries)
+            entries
+        }
     }
 
     private fun writeToDisk(entries: List<NotificationHistoryEntry>) {

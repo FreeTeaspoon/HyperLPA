@@ -7,7 +7,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
-import androidx.compose.foundation.layout.add
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.displayCutout
@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
@@ -54,9 +53,7 @@ import app.hyperlpa.ui.adaptive.horizontalCutoutPadding
 import app.hyperlpa.ui.components.BlurredBar
 import app.hyperlpa.ui.components.effect.AboutBackgroundEffect
 import app.hyperlpa.ui.components.rememberAppBackdrop
-import app.hyperlpa.ui.theme.LocalBlurEnabled
 import app.hyperlpa.ui.theme.LocalDarkTheme
-import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.Icon
@@ -64,16 +61,13 @@ import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
-import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.SmallTopAppBar
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.blur.BlendColorEntry
 import top.yukonga.miuix.kmp.blur.BlurBlendMode
 import top.yukonga.miuix.kmp.blur.BlurColors
 import top.yukonga.miuix.kmp.blur.LayerBackdrop
-import top.yukonga.miuix.kmp.blur.isRuntimeShaderSupported
 import top.yukonga.miuix.kmp.blur.layerBackdrop
-import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import top.yukonga.miuix.kmp.blur.textureBlur
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Back
@@ -103,7 +97,7 @@ fun AboutScreen(onBack: () -> Unit) {
     }
 
     val backdrop = rememberAppBackdrop()
-    val blurActive = backdrop != null && scrollProgress == 1f
+    val blurActive = backdrop != null
     val barColor = when {
         blurActive -> Color.Transparent
         scrollProgress == 1f -> MiuixTheme.colorScheme.surface
@@ -113,7 +107,7 @@ fun AboutScreen(onBack: () -> Unit) {
     Scaffold(
         topBar = {
             BlurredBar(
-                backdrop = if (blurActive) backdrop else null,
+                backdrop = backdrop,
                 alpha = 0.8f,
                 progressive = true,
                 scrollBehavior = scrollBehavior,
@@ -144,7 +138,7 @@ fun AboutScreen(onBack: () -> Unit) {
             }
         },
         contentWindowInsets = WindowInsets.systemBars
-            .add(WindowInsets.displayCutout)
+            .union(WindowInsets.displayCutout)
             .only(WindowInsetsSides.Horizontal),
     ) { innerPadding ->
         Box(modifier = if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier) {
@@ -152,7 +146,7 @@ fun AboutScreen(onBack: () -> Unit) {
                 innerPadding = innerPadding,
                 scrollBehavior = scrollBehavior,
                 lazyListState = lazyListState,
-                scrollProgress = scrollProgress,
+                scrollProgress = { scrollProgress },
             )
         }
     }
@@ -163,14 +157,14 @@ private fun AboutContent(
     innerPadding: PaddingValues,
     scrollBehavior: ScrollBehavior,
     lazyListState: LazyListState,
-    scrollProgress: Float,
+    scrollProgress: () -> Float,
 ) {
     val layoutDirection = LocalLayoutDirection.current
     val density = LocalDensity.current
     val uriHandler = LocalUriHandler.current
-    val contentBackdrop = rememberLayerBackdrop()
+    val contentBackdrop = app.hyperlpa.ui.components.rememberContentBackdrop()
     val isDark = LocalDarkTheme.current
-    val blurEnabled = LocalBlurEnabled.current && isRuntimeShaderSupported()
+    val blurEnabled = contentBackdrop != null
     val cardBlendColors = remember(isDark) {
         if (isDark) {
             listOf(
@@ -201,9 +195,6 @@ private fun AboutContent(
     }
 
     var logoHeight by remember { mutableStateOf(300.dp) }
-    val versionProgress = ((scrollProgress - 0.05f) / 0.15f).coerceIn(0f, 1f)
-    val projectNameProgress = ((scrollProgress - 0.20f) / 0.15f).coerceIn(0f, 1f)
-    val iconProgress = ((scrollProgress - 0.35f) / 0.15f).coerceIn(0f, 1f)
     val scrollPadding = PaddingValues(
         top = innerPadding.calculateTopPadding(),
         start = innerPadding.calculateStartPadding(layoutDirection),
@@ -218,8 +209,8 @@ private fun AboutContent(
     AboutBackgroundEffect(
         dynamicBackground = blurEnabled,
         modifier = Modifier.fillMaxSize(),
-        backdropModifier = Modifier.layerBackdrop(contentBackdrop),
-        alpha = { 1f - scrollProgress },
+        backdropModifier = if (contentBackdrop != null) Modifier.layerBackdrop(contentBackdrop) else Modifier,
+        alpha = { 1f - scrollProgress() },
     ) {
         Column(
             modifier = Modifier
@@ -240,21 +231,29 @@ private fun AboutContent(
                     .size(100.dp)
                     .clipToBounds()
                     .graphicsLayer {
+                        val iconProgress = ((scrollProgress() - 0.35f) / 0.15f).coerceIn(0f, 1f)
                         alpha = 1f - iconProgress
                         scaleX = 1f - iconProgress * 0.05f
                         scaleY = 1f - iconProgress * 0.05f
                     },
             ) {
                 Image(
-                    modifier = Modifier.requiredSize(108.dp),
-                    painter = painterResource(R.drawable.about_logo),
+                    modifier = Modifier.size(100.dp).then(
+                        if (contentBackdrop != null) Modifier.textureBlur(
+                            backdrop = checkNotNull(contentBackdrop), shape = RoundedCornerShape(0.dp), blurRadius = 150f,
+                            colors = BlurColors(blendColors = logoBlendColors), contentBlendMode = BlendMode.DstIn,
+                        ) else Modifier,
+                    ),
+                    painter = painterResource(R.drawable.about_logo_monochrome),
                     contentDescription = stringResource(R.string.app_name),
+                    colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(MiuixTheme.colorScheme.onBackground),
                 )
             }
             Text(
                 modifier = Modifier
                     .padding(top = 12.dp, bottom = 5.dp)
                     .graphicsLayer {
+                        val projectNameProgress = ((scrollProgress() - 0.20f) / 0.15f).coerceIn(0f, 1f)
                         alpha = 1f - projectNameProgress
                         scaleX = 1f - projectNameProgress * 0.05f
                         scaleY = 1f - projectNameProgress * 0.05f
@@ -262,7 +261,7 @@ private fun AboutContent(
                     .then(
                         if (blurEnabled) {
                             Modifier.textureBlur(
-                                backdrop = contentBackdrop,
+                                backdrop = checkNotNull(contentBackdrop),
                                 shape = RoundedCornerShape(16.dp),
                                 blurRadius = 150f,
                                 colors = BlurColors(blendColors = logoBlendColors),
@@ -282,6 +281,7 @@ private fun AboutContent(
                 modifier = Modifier
                     .fillMaxWidth()
                     .graphicsLayer {
+                        val versionProgress = ((scrollProgress() - 0.05f) / 0.15f).coerceIn(0f, 1f)
                         alpha = 1f - versionProgress
                         scaleX = 1f - versionProgress * 0.05f
                         scaleY = 1f - versionProgress * 0.05f
@@ -299,6 +299,7 @@ private fun AboutContent(
 
         LazyColumn(
             state = lazyListState,
+            overscrollEffect = null,
             modifier = Modifier
                 .fillMaxSize()
                 .scrollEndHaptic()
@@ -327,23 +328,7 @@ private fun AboutContent(
                 Box {
                     Spacer(Modifier.fillParentMaxHeight())
                     Column(modifier = Modifier.padding(bottom = 12.dp)) {
-                        SmallTitle(text = stringResource(R.string.about_info))
-                        AboutCard(
-                            blurEnabled = blurEnabled,
-                            backdrop = contentBackdrop,
-                            blendColors = cardBlendColors,
-                        ) {
-                            BasicComponent(
-                                title = stringResource(R.string.about_app_version),
-                                summary = BuildConfig.VERSION_NAME,
-                            )
-                            BasicComponent(
-                                title = stringResource(R.string.about_build_version),
-                                summary = "${BuildConfig.VERSION_CODE}",
-                            )
-                        }
-
-                        SmallTitle(text = stringResource(R.string.about_project))
+                        app.hyperlpa.ui.components.SectionHeading(text = stringResource(R.string.about_project))
                         AboutCard(
                             blurEnabled = blurEnabled,
                             backdrop = contentBackdrop,
@@ -386,7 +371,7 @@ private fun AboutContent(
 @Composable
 private fun AboutCard(
     blurEnabled: Boolean,
-    backdrop: LayerBackdrop,
+    backdrop: LayerBackdrop?,
     blendColors: List<BlendColorEntry>,
     content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
 ) {
@@ -398,7 +383,7 @@ private fun AboutCard(
             .then(
                 if (blurEnabled) {
                     Modifier.textureBlur(
-                        backdrop = backdrop,
+                        backdrop = checkNotNull(backdrop),
                         shape = RoundedCornerShape(16.dp),
                         blurRadius = 60f,
                         colors = BlurColors(blendColors = blendColors),
