@@ -5,6 +5,7 @@ import { controller } from "@/lib/controller";
 import { exportRecovery, importRecovery } from "@/lib/storage";
 import type { Command, Identity, Peer, Profile, Reader, RemoteSettings, Snapshot, ViewState } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { useTabInput } from "@/lib/use-tab-input";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -89,6 +90,7 @@ function Setup({ onRun }: { onRun: (fn: () => Promise<unknown>) => Promise<void>
 }
 
 export function App() {
+  const tabInput = useTabInput();
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const [page, setPage] = useState<Page>("devices");
   const [phoneId, setPhoneId] = useState(""); const [readerId, setReaderId] = useState("");
@@ -158,7 +160,7 @@ export function App() {
         {page === "group" && <div className="toolbar"><Button variant="outline" onClick={() => showForm({ type: "recovery" })}><KeyRound data-icon="inline-start" />Recovery</Button>
           {owner && <Button onClick={() => showForm({ type: "invite" })} disabled={!state.connected}><Plus data-icon="inline-start" />Invite browser</Button>}</div>}
       </div>
-      <Tabs value={page} onValueChange={value => { setPage(value as Page); setQuery(""); }}><TabsList className="main-tabs">
+      <Tabs value={page} onValueChange={value => { setPage(value as Page); setQuery(""); }}><TabsList className="main-tabs" {...tabInput}>
         <TabsTrigger value="devices">Devices</TabsTrigger><TabsTrigger value="profiles">Profiles</TabsTrigger><TabsTrigger value="notifications">Notifications</TabsTrigger><TabsTrigger value="history">History</TabsTrigger><TabsTrigger value="tools">Tools</TabsTrigger><TabsTrigger value="group">Group</TabsTrigger><TabsTrigger value="activity">Activity</TabsTrigger>
       </TabsList><TabsContent value={page}>
       {state.error && <Alert variant="destructive" className="page-alert"><AlertTitle>Connection needs attention</AlertTitle><AlertDescription>{state.error}<Button variant="ghost" size="sm" onClick={() => controller.reconnect()}>Reconnect</Button></AlertDescription></Alert>}

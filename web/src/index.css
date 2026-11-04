@@ -47,9 +47,13 @@
 .connection-dot.connected { background: var(--foreground); opacity: 1; }
 .page-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
 .page-heading p { font-size: 14px; color: var(--muted-foreground); margin-top: 4px; }
-.main-tabs { width: 100%; justify-content: flex-start; background: transparent; border-bottom: 1px solid var(--border); border-radius: 0; padding: 0; height: 40px; gap: 24px; overflow-x: auto; scrollbar-width: none; }
-.main-tabs [data-slot=tabs-trigger] { flex: none; height: 40px; padding-inline: 0; background: transparent; box-shadow: none; color: var(--muted-foreground); border: 0; border-radius: 0; position: relative; }
+.main-tabs { width: 100%; flex-wrap: wrap; justify-content: flex-start; background: transparent; border-bottom: 1px solid var(--border); border-radius: 0; padding: 0; height: auto; min-height: 40px; gap: 4px 8px; }
+.main-tabs [data-slot=tabs-trigger] { flex: none; height: 40px; padding-inline: 8px; background: transparent; box-shadow: none; color: var(--muted-foreground); border: 0; border-radius: 0; position: relative; transition-property: color; }
+.main-tabs [data-slot=tabs-trigger]:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.main-tabs[data-pointer-focus] [data-slot=tabs-trigger]:focus,
+.main-tabs [data-slot=tabs-trigger]:not(:focus-visible) { outline: none; }
 .main-tabs [data-slot=tabs-trigger][data-state=active] { color: var(--foreground); background: transparent; box-shadow: none; }
+.main-tabs [data-slot=tabs-trigger]::after { inset: auto 0 0; }
 .main-tabs [data-slot=tabs-trigger][data-state=active]::after { content: ""; position: absolute; inset: auto 0 0; height: 2px; background: var(--foreground); opacity: 1; }
 .content-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 24px 0 16px; flex-wrap: wrap; }
 .picks { flex-wrap: wrap; min-width: 0; }
@@ -169,8 +173,7 @@
   .shell { padding-bottom: 40px; }
   .setup { margin-top: 24px; }
   .page-heading { align-items: flex-start; flex-wrap: wrap; margin-bottom: 18px; }
-  .main-tabs { gap: 20px; }
-  .main-tabs { height: 44px; }
+  .main-tabs { column-gap: 4px; min-height: 44px; }
   .main-tabs [data-slot=tabs-trigger] { min-height: 44px; font-size: 13px; }
   [data-slot=button] { min-height: 40px; }
   [data-slot=button][data-size=icon] { width: 40px; }
