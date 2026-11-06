@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ArrowLeft, ArrowUpRight, Bell, Check, ChevronRight, Download, Ellipsis, History, Info, KeyRound, Laptop, LoaderCircle, Monitor, Moon, Plus, RadioTower, RefreshCw, RotateCcw, Search, Settings2, ShieldCheck, Smartphone, SlidersHorizontal, Sun, Trash2, Unplug, Upload, X } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { controller } from "@/lib/controller";
+import { parseInvitation, relayOrigin } from "@/lib/crypto";
 import { exportRecovery, importRecovery } from "@/lib/storage";
 import type { Command, Identity, Peer, Profile, Reader, RemoteSettings, Snapshot, ViewState } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -13,14 +14,14 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
-import { BusyButton, CopyButton, Modal, TextField } from "@/components/common";
+import { BusyButton, CopyButton, Modal, TextField, useFormErrors, validateField } from "@/components/common";
 
 type Page = "devices" | "profiles" | "notifications" | "history" | "tools" | "group" | "activity";
 type FormDialog = { type: "phone" | "invite" | "recovery" | "download" | "batch" | "profile" | "rename" | "tags"; peer?: Peer; profile?: Profile };
-type ConfirmDialog = { title: string; description: string; destructive?: boolean; action: () => Promise<unknown> };
+type ConfirmDialog = { title: string; description: string; destructive?: boolean; actionLabel: string; action: () => Promise<unknown> };
 const profileName = (p: Profile) => p.nickname || p.name || p.providerName || "Unnamed profile";
 const defaultRemoteSettings: RemoteSettings = { autoLoadProfiles: true, autoLoadRemoteReaders: false, enableNBridge: true, enableOmapi: true, enableTelephony: false, enableUsbCcid: true, enableBle: false, enableRemote: false, notificationInitialLoad: true, notificationAfterSwitch: true, notificationAfterDelete: true, notificationBeforeDownload: true, notificationAfterDownload: true, notificationAutoSend: true, notificationAutoRemove: true, scheduledReminders: true, loadOperatorIcons: false, estimateProfileSize: false, hideProfileDeletion: false, hideEuiccMemoryReset: false, apduLogging: false };
 const online = (s: ViewState, id: string) => s.connected && Date.now() - (s.online[id] ?? 0) < 60_000;
@@ -43,10 +44,12 @@ function Choose({ value, onChange, label, children }: { value: string; onChange:
 function ThemeButton() {
   const [theme, setTheme] = useState(() => document.documentElement.dataset.theme ?? "system");
   return <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="Appearance" title="Appearance"><Sun className="light-icon" /><Moon className="dark-icon" /></Button></DropdownMenuTrigger>
-    <DropdownMenuContent align="end"><DropdownMenuGroup>{(["system", "light", "dark"] as const).map(value => <DropdownMenuItem key={value} onSelect={() => {
+    <DropdownMenuContent align="end"><DropdownMenuRadioGroup value={theme} onValueChange={value => {
       setTheme(value); if (value === "system") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = value;
       try { localStorage.setItem("hyperlpa-theme", value); } catch { toast.error("Could not save appearance preference."); }
-    }}>{value === "system" ? <Monitor /> : value === "light" ? <Sun /> : <Moon />}<span className="capitalize">{value}</span>{theme === value && <Check className="menu-check" />}</DropdownMenuItem>)}</DropdownMenuGroup></DropdownMenuContent>
+    }}>{(["system", "light", "dark"] as const).map(value => <DropdownMenuRadioItem key={value} value={value}>
+      {value === "system" ? <Monitor /> : value === "light" ? <Sun /> : <Moon />}<span className="capitalize">{value}</span>
+    </DropdownMenuRadioItem>)}</DropdownMenuRadioGroup></DropdownMenuContent>
   </DropdownMenu>;
 }
 
@@ -54,35 +57,52 @@ function Setup({ onRun }: { onRun: (fn: () => Promise<unknown>) => Promise<void>
   const [mode, setMode] = useState("create");
   const [relay, setRelay] = useState(""); const [key, setKey] = useState(""); const [name, setName] = useState("");
   const [code, setCode] = useState(""); const [recovery, setRecovery] = useState<File>();
-  const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false); const errors = useFormErrors();
+  const { error } = errors;
   const submit = async () => {
-    setBusy(true); setError("");
+    setBusy(true); errors.clear();
     try {
-      if (mode === "create") await controller.create(relay, key, name);
-      else if (mode === "join") await controller.join(code, name);
-      else {
-        if (!recovery || recovery.size > 3_000_000) throw new Error("Choose a HyperLPA recovery file smaller than 3 MB.");
-        await controller.restore(await importRecovery(await recovery.text(), key));
+      if (mode !== "restore") await validateField("browser-name", () => {
+        if (!name.trim()) throw new Error("Enter a browser name.");
+      });
+      if (mode === "create") {
+        await validateField("relay-address", () => {
+          try { return relayOrigin(relay); } catch { throw new Error("Enter an HTTPS relay address without a path, query or credentials."); }
+        });
+        await controller.create(relay, key, name);
       }
-    } catch (error) { setError(errorMessage(error)); }
-    finally { setBusy(false); setKey(""); }
+      else if (mode === "join") {
+        await validateField("group-code", () => {
+          try { return parseInvitation(code.trim(), "hyperlpa-group:"); } catch { throw new Error("Paste a valid pairing code from a current group invitation, or ask the owner for a new invitation."); }
+        });
+        await controller.join(code, name);
+      }
+      else {
+        await validateField("recovery-file", () => {
+          if (!recovery || recovery.size > 3_000_000) throw new Error("Choose a HyperLPA recovery file smaller than 3 MB.");
+        });
+        const restored = await validateField("recovery-key", async () => importRecovery(await recovery!.text(), key));
+        await controller.restore(restored);
+      }
+    } catch (error) { errors.report(error); }
+    finally { setBusy(false); }
   };
   void onRun;
   return <section className="setup"><div className="setup-mark"><RadioTower /></div><h1>Your phones, together.</h1>
     <p className="intro">Connect HyperLPA to manage your eSIM profiles and shared notifications.</p>
-    <Tabs value={mode} onValueChange={value => { setMode(value); setError(""); setKey(""); }}>
+    <Tabs value={mode} onValueChange={value => { setMode(value); errors.clear(); setKey(""); }}>
       <TabsList className="setup-tabs"><TabsTrigger value="create">Create group</TabsTrigger><TabsTrigger value="join">Join group</TabsTrigger><TabsTrigger value="restore">Restore</TabsTrigger></TabsList>
-    <TabsContent value={mode}><form onSubmit={event => { event.preventDefault(); void submit(); }} className="setup-form">
+    <TabsContent value={mode}><form onSubmit={event => { event.preventDefault(); void submit(); }} className="setup-form" onChangeCapture={errors.clear}>
       <FieldGroup>
-        {mode === "create" && <><TextField label="Relay address" placeholder="https://hyperlpa-relay.example.workers.dev" value={relay} onChange={e => setRelay(e.target.value)} type="url" required autoComplete="url" />
-          <TextField label="Enrollment key" type="password" autoComplete="off" value={key} onChange={e => setKey(e.target.value)} required maxLength={256} hint="The private key configured in your Cloudflare relay. Used only during setup." /></>}
-        {mode === "join" && <Field><FieldLabel htmlFor="group-code">Group invitation</FieldLabel><Textarea id="group-code" value={code} onChange={e => setCode(e.target.value)} placeholder="hyperlpa-group:…" required maxLength={4096} spellCheck={false} autoComplete="off" />
+        {mode === "create" && <><TextField {...errors.props("relay-address")} label="Relay address" placeholder="https://hyperlpa-relay.example.workers.dev" value={relay} onChange={e => setRelay(e.target.value)} type="url" required autoComplete="url">{errors.message("relay-address")}</TextField>
+          <TextField {...errors.props("enrollment-key")} label="Enrollment key" type="password" autoComplete="off" value={key} onChange={e => setKey(e.target.value)} required maxLength={256} hint="The private key configured in your Cloudflare relay. Used only during setup.">{errors.message("enrollment-key")}</TextField></>}
+        {mode === "join" && <Field><FieldLabel htmlFor="group-code">Group invitation</FieldLabel><Textarea {...errors.props("group-code")} id="group-code" value={code} onChange={e => setCode(e.target.value)} placeholder="hyperlpa-group:…" required maxLength={4096} spellCheck={false} autoComplete="off" />{errors.message("group-code")}
           <FieldDescription>Ask the owner for an invitation. They will approve this browser before granting phone access.</FieldDescription></Field>}
-        {mode !== "restore" && <TextField label="Browser name" value={name} onChange={e => setName(e.target.value)} placeholder="Personal laptop" autoComplete="off" maxLength={80} required />}
-        {mode === "restore" && <><TextField label="Recovery file" type="file" accept=".json,.hyperlpa" onChange={e => setRecovery(e.target.files?.[0])} required />
-          <TextField label="Recovery key" type="password" value={key} onChange={e => setKey(e.target.value)} autoComplete="off" required hint="Restores this device identity. Its previous window will disconnect." /></>}
+        {mode !== "restore" && <TextField {...errors.props("browser-name")} label="Browser name" value={name} onChange={e => setName(e.target.value)} placeholder="Personal laptop" autoComplete="off" maxLength={80} required>{errors.message("browser-name")}</TextField>}
+        {mode === "restore" && <><TextField {...errors.props("recovery-file")} label="Recovery file" type="file" accept=".json,.hyperlpa" onChange={e => setRecovery(e.target.files?.[0])} required>{errors.message("recovery-file")}</TextField>
+          <TextField {...errors.props("recovery-key")} label="Recovery key" type="password" value={key} onChange={e => setKey(e.target.value)} autoComplete="off" required hint="Restores this device identity. Its previous window will disconnect.">{errors.message("recovery-key")}</TextField></>}
       </FieldGroup>
-      {error && <Alert variant="destructive" role="alert"><AlertTitle>Could not {mode === "restore" ? "restore" : "connect"}</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
+      {error && !errors.field && <Alert variant="destructive" role="alert"><AlertTitle>Could not {mode === "restore" ? "restore" : "connect"}</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
       <BusyButton type="submit" busy={busy} className="setup-submit">{mode === "create" ? "Create trusted group" : mode === "join" ? "Request to join" : "Restore device"}<ArrowUpRight data-icon="inline-end" /></BusyButton>
     </form></TabsContent></Tabs>
     {mode === "create" && <p className="setup-help">Deploy the relay first, then allow this website’s origin in its configuration. <a href="https://github.com/FreeTeaspoon/HyperLPA/blob/main/web/README.md" target="_blank" rel="noreferrer">Setup guide<ArrowUpRight /></a></p>}
@@ -93,6 +113,22 @@ export function App() {
   const tabInput = useTabInput();
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const [page, setPage] = useState<Page>("devices");
+  const focusPage = useRef(false);
+  const navigate = (next: Page) => {
+    if (next === page) {
+      document.querySelector<HTMLElement>(".page-heading h1")?.focus({ preventScroll: true });
+      window.scrollTo({ top: 0, behavior: "instant" });
+    } else { focusPage.current = true; setPage(next); }
+  };
+  useEffect(() => {
+    const title = { devices: "Devices", profiles: "Profiles", notifications: "Notifications", history: "eUICC history", tools: "Phone tools", group: "Trusted group", activity: "Activity" }[page];
+    document.title = state.identity ? `${title} · HyperLPA` : "HyperLPA";
+    if (focusPage.current) {
+      focusPage.current = false;
+      document.querySelector<HTMLElement>(".page-heading h1")?.focus({ preventScroll: true });
+      window.scrollTo({ top: 0, behavior: "instant" });
+    }
+  }, [page, state.identity?.id]);
   const [phoneId, setPhoneId] = useState(""); const [readerId, setReaderId] = useState("");
   const [form, setForm] = useState<FormDialog>(); const [formOpen, setFormOpen] = useState(false);
   const [formGeneration, setFormGeneration] = useState(0);
@@ -143,16 +179,16 @@ export function App() {
   const refreshing = state.activities.some(a => a.peer === phone?.id && ["Sending", "Running"].includes(a.status) && Date.now() - a.time < 60_000);
   const phonePicker = <Choose value={phone?.id ?? ""} onChange={selectPhone} label="Phone">{eligiblePhones.filter(p => p.approved).map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</Choose>;
   return <><a className="skip-link" href="#main">Skip to content</a><header className="app-header"><div className="header-inner">
-    <a href="#" className="brand" onClick={event => { event.preventDefault(); setPage("devices"); }}><RadioTower /><span>HyperLPA</span></a>
+    <a href="#" className="brand" onClick={event => { event.preventDefault(); navigate("devices"); }}><RadioTower /><span>HyperLPA</span></a>
     <div className="header-actions">{identity && <span className="connection-state"><span className={cn("connection-dot", state.connected && "connected")} />{state.connected ? "Connected" : "Disconnected"}</span>}
       <ThemeButton />{identity && <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="Browser settings"><Ellipsis /></Button></DropdownMenuTrigger>
         <DropdownMenuContent align="end"><DropdownMenuGroup><DropdownMenuItem onSelect={() => showForm({ type: "recovery" })}><KeyRound />Recovery export</DropdownMenuItem>
           <DropdownMenuItem onSelect={() => controller.reconnect()}><RefreshCw />Reconnect</DropdownMenuItem></DropdownMenuGroup><DropdownMenuSeparator />
-          <DropdownMenuGroup><DropdownMenuItem variant="destructive" onSelect={() => ask({ title: "Forget this browser?", description: "This clears the identity stored here. It does not revoke the device on the relay. Save a recovery export first, or ask the owner to enroll a new browser.", destructive: true, action: () => controller.forgetLocal() })}><Unplug />Forget this browser</DropdownMenuItem></DropdownMenuGroup></DropdownMenuContent>
+          <DropdownMenuGroup><DropdownMenuItem variant="destructive" onSelect={() => ask({ actionLabel: "Forget browser", title: "Forget this browser?", description: "This clears the identity stored here. It does not revoke the device on the relay. Save a recovery export first, or ask the owner to enroll a new browser.", destructive: true, action: () => controller.forgetLocal() })}><Unplug />Forget this browser</DropdownMenuItem></DropdownMenuGroup></DropdownMenuContent>
       </DropdownMenu>}</div>
   </div></header><main id="main" className="shell" tabIndex={-1}>
     {!state.loaded ? <div className="initial-loading" role="status"><LoaderCircle className="spin" /><span>Opening dashboard</span></div> : !identity ? <><Setup onRun={run} />{state.error && <Alert variant="destructive"><AlertDescription>{state.error}</AlertDescription></Alert>}</> : <>
-      <div className="page-heading"><div><h1>{({ devices: "Devices", profiles: "Profiles", notifications: "Notifications", history: "eUICC history", tools: "Phone tools", group: "Trusted group", activity: "Activity" })[page]}</h1>
+      <div className="page-heading"><div><h1 tabIndex={-1}>{({ devices: "Devices", profiles: "Profiles", notifications: "Notifications", history: "eUICC history", tools: "Phone tools", group: "Trusted group", activity: "Activity" })[page]}</h1>
         <p>{page === "devices" ? `${phones.length} ${phones.length === 1 ? "phone" : "phones"} · ${phones.filter(p => online(state, p.id)).length} online` :
           page === "group" ? `Managed by ${owner ? "this browser" : identity.peers.find(p => p.id === identity.owner)?.name ?? "your owner device"}` :
           page === "activity" ? "Operations from this browser session" : page === "tools" ? phone?.name ?? "Choose a phone" : phone?.name ?? "Your connected phones"}</p></div>
@@ -168,7 +204,7 @@ export function App() {
       {page === "devices" && (phones.length ? <div className="device-grid">{phones.map(p => {
         const connected = online(state, p.id); const catalog = state.snapshots[p.id + "/"];
         const deviceReaders = catalog?.lpa.readers.filter(r => !r.deviceId) ?? [];
-        return <button className="device-tile" key={p.id} onClick={() => { selectPhone(p.id); setPage(p.profiles ? "profiles" : "notifications"); }}>
+        return <button className="device-tile" key={p.id} onClick={() => { selectPhone(p.id); navigate(p.profiles ? "profiles" : "notifications"); }}>
           <div className="tile-top"><div className="device-icon"><Smartphone /></div><ChevronRight /></div>
           <div className="tile-title">{p.name}</div><div className="tile-meta">{!p.approved ? "Approve the group owner on this phone" : connected ? "Online" : "Offline"}</div>
           <div className="tile-readers">{!p.approved ? <span>Settings → Remote devices</span> : deviceReaders.length ? deviceReaders.slice(0, 4).map(r => <span key={r.id}><span>{r.name}</span><span>{r.available ? "Available" : "Unavailable"}</span></span>) : <span>{p.profiles ? connected ? "Discovering readers" : "Waiting for connection" : "Notification access"}</span>}</div>
@@ -181,7 +217,7 @@ export function App() {
             <Button variant="ghost" disabled={!snapshot || !!pending || !phone || !online(state, phone.id)} onClick={() => showForm({ type: "batch" })}><Plus data-icon="inline-start" />Batch</Button></div></div>
           {pending && <Alert className="page-alert"><LoaderCircle className="spin" /><AlertTitle>{pending.action === "DOWNLOAD" ? "Download in progress" : "Operation awaiting a verified result"}</AlertTitle><AlertDescription>Changes run on the phone. Reconnecting queries their status without repeating them.
             <div className="toolbar"><Button variant="outline" size="sm" onClick={() => void run(() => controller.queryPending(pending.id))}>Check status</Button>
-              {Date.now() - pending.started > 150_000 && <Button variant="ghost" size="sm" onClick={() => ask({ title: "Resolve an unknown outcome?", description: "The phone may have completed the change. This clears the pending request without repeating it. You must refresh the reader before another change.", action: () => controller.acknowledgeUnknown(pending.id) })}>Resolve unknown outcome</Button>}</div></AlertDescription></Alert>}
+              {Date.now() - pending.started > 150_000 && <Button variant="ghost" size="sm" onClick={() => ask({ actionLabel: "Resolve outcome", title: "Resolve an unknown outcome?", description: "The phone may have completed the change. This clears the pending request without repeating it. You must refresh the reader before another change.", action: () => controller.acknowledgeUnknown(pending.id) })}>Resolve unknown outcome</Button>}</div></AlertDescription></Alert>}
           {snapshot?.lpa.pendingProfileDownload && pending?.action === "DOWNLOAD" && <Alert className="page-alert"><Download /><AlertTitle>Confirm profile installation</AlertTitle><AlertDescription>{profileName(snapshot.lpa.pendingProfileDownload.profile)}
             <div className="toolbar"><Button variant="outline" onClick={() => void run(() => controller.decision(phone!.id, pending.id, false))}>Cancel download</Button><Button onClick={() => void run(() => controller.decision(phone!.id, pending.id, true))}>Install profile</Button></div></AlertDescription></Alert>}
           {snapshot ? <><div className="reader-summary"><span>{reader?.name}</span>{snapshot.lpa.euiccInfo && <span className="identifier">{snapshot.lpa.euiccInfo.eid}<CopyButton value={snapshot.lpa.euiccInfo.eid} label="Copy EID" /></span>}{!phone || !online(state, phone.id) ? <span>Offline · last received data</span> : null}</div>
@@ -190,10 +226,10 @@ export function App() {
                 <div className="record-subtitle">{profile.providerName || "Unknown provider"}</div><div className="identifier">{profile.iccid}<CopyButton value={profile.iccid} label="Copy ICCID" /></div>
                 {!!profile.tags?.length && <div className="record-tags">{profile.tags.join(" · ")}</div>}</div><span className="profile-state">{profile.state === "ENABLED" ? "Enabled" : "Disabled"}</span>
               <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label={`Actions for ${profileName(profile)}`} disabled={!!pending || !phone || !online(state, phone.id)}><Ellipsis /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuGroup>
-                <DropdownMenuItem onSelect={() => ask({ title: `${profile.state === "ENABLED" ? "Disable" : "Enable"} ${profileName(profile)}?`, description: profile.state === "ENABLED" && snapshot.lpa.profiles.filter(p => p.state === "ENABLED").length === 1 ? "This is the last enabled profile. Disabling it can disconnect the phone. Keep Wi-Fi or another data SIM available." : "Changing the active profile can interrupt the phone’s mobile connection.", action: () => command({ action: "SWITCH", iccid: profile.iccid, enabled: profile.state !== "ENABLED", confirmed: true }) })}>{profile.state === "ENABLED" ? "Disable" : "Enable"}</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => ask({ actionLabel: profile.state === "ENABLED" ? "Disable profile" : "Enable profile", title: `${profile.state === "ENABLED" ? "Disable" : "Enable"} ${profileName(profile)}?`, description: profile.state === "ENABLED" && snapshot.lpa.profiles.filter(p => p.state === "ENABLED").length === 1 ? "This is the last enabled profile. Disabling it can disconnect the phone. Keep Wi-Fi or another data SIM available." : "Changing the active profile can interrupt the phone’s mobile connection.", action: () => command({ action: "SWITCH", iccid: profile.iccid, enabled: profile.state !== "ENABLED", confirmed: true }) })}>{profile.state === "ENABLED" ? "Disable" : "Enable"}</DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => showForm({ type: "profile", profile })}>View details</DropdownMenuItem><DropdownMenuItem onSelect={() => showForm({ type: "rename", profile })}>Rename</DropdownMenuItem><DropdownMenuItem onSelect={() => showForm({ type: "tags", profile })}>Edit tags</DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => void run(() => command({ action: "PIN", iccid: profile.iccid, enabled: !profile.isPinned }))}>{profile.isPinned ? "Unpin" : "Pin"}</DropdownMenuItem>
-              </DropdownMenuGroup><DropdownMenuSeparator /><DropdownMenuGroup><DropdownMenuItem variant="destructive" onSelect={() => ask({ title: `Delete ${profileName(profile)}?`, description: "This permanently deletes the profile from the eUICC. You may need a new activation code to install it again.", destructive: true, action: () => command({ action: "DELETE", iccid: profile.iccid, confirmed: true }) })}>Delete profile</DropdownMenuItem></DropdownMenuGroup></DropdownMenuContent></DropdownMenu>
+              </DropdownMenuGroup><DropdownMenuSeparator /><DropdownMenuGroup><DropdownMenuItem variant="destructive" onSelect={() => ask({ actionLabel: "Delete profile", title: `Delete ${profileName(profile)}?`, description: "This permanently deletes the profile from the eUICC. You may need a new activation code to install it again.", destructive: true, action: () => command({ action: "DELETE", iccid: profile.iccid, confirmed: true }) })}>Delete profile</DropdownMenuItem></DropdownMenuGroup></DropdownMenuContent></DropdownMenu>
             </div>)}</div> : <NoItems icon={RadioTower} title="No profiles installed" description="Download a profile using its carrier activation code." />}
             {!!snapshot.lpa.notifications?.length && <section className="subsection"><h2>Pending eUICC notifications</h2><div className="records">{snapshot.lpa.notifications.map(n => <div className="record-row" key={n.sequenceNumber}><div className="record-main"><span>{n.operation.toLowerCase()}</span><div className="record-subtitle">{n.address}</div></div><Button variant="outline" disabled={!!pending || !phone || !online(state, phone.id)} onClick={() => void run(() => command({ action: "PROCESS_NOTIFICATION", number: n.sequenceNumber }))}>Process</Button></div>)}</div></section>}
           </> : <NoItems icon={RadioTower} title={phone && !online(state, phone.id) ? "Phone is offline" : refreshing ? "Reading profiles" : readers.length ? "Refresh this reader" : "No compatible reader available"} description={phone && !online(state, phone.id) ? "Keep remote access enabled and allow HyperLPA to run in the background." : "The phone must have a working local eUICC reader."} />}
@@ -204,7 +240,7 @@ export function App() {
           {phone && online(state, phone.id) && state.notifications[phone.id]?.available ? <>
             {state.notifications[phone.id].entries.filter(n => `${n.appLabel} ${n.title} ${n.text}`.toLowerCase().includes(query.toLowerCase())).length ? <div className="records">{state.notifications[phone.id].entries.filter(n => `${n.appLabel} ${n.title} ${n.text}`.toLowerCase().includes(query.toLowerCase())).sort((a, b) => b.timestamp - a.timestamp).map(n => <article className="notification-row" key={n.id}>
               <div className="record-main"><div className="notification-meta"><span>{n.appLabel || n.packageName}</span><time dateTime={new Date(n.timestamp).toISOString()}>{localTime(n.timestamp)}</time></div><h2>{n.title || "Notification"}</h2><p>{n.text}</p></div>
-              <div className="toolbar"><CopyButton value={n.text} label="Copy notification text" /><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label={`Actions for notification ${n.title}`}><Ellipsis /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuGroup><DropdownMenuItem variant="destructive" onSelect={() => ask({ title: "Delete this history entry?", description: "Removes this entry from HyperLPA’s notification history on the source phone. It does not delete the original message.", destructive: true, action: () => controller.deleteNotification(phone.id, n.id) })}>Delete history entry</DropdownMenuItem></DropdownMenuGroup></DropdownMenuContent></DropdownMenu></div>
+              <div className="toolbar"><CopyButton value={n.text} label="Copy notification text" /><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label={`Actions for notification ${n.title}`}><Ellipsis /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuGroup><DropdownMenuItem variant="destructive" onSelect={() => ask({ actionLabel: "Delete entry", title: "Delete this history entry?", description: "Removes this entry from HyperLPA’s notification history on the source phone. It does not delete the original message.", destructive: true, action: () => controller.deleteNotification(phone.id, n.id) })}>Delete history entry</DropdownMenuItem></DropdownMenuGroup></DropdownMenuContent></DropdownMenu></div>
             </article>)}</div> : <NoItems icon={Bell} title={query ? "No matching notifications" : "No notifications yet"} description={query ? "Try a different word or clear your search." : "Notifications from the apps allowed on this phone will appear here."} />}
           </> : <NoItems icon={Bell} title={phone && !online(state, phone.id) ? "Phone is offline" : "Notification access required"} description="On the phone, enable notification sharing, choose apps, and allow the group owner to view notifications. Android may hide sensitive content." />}
           <p className="page-note">Shared Android notifications. SMS sending and full conversation history are not supported.</p>
@@ -212,16 +248,16 @@ export function App() {
       </>}
       {page === "history" && <>
         {phones.some(p => p.approved && p.profiles) ? <><div className="content-toolbar"><div className="toolbar picks">{phonePicker}{readers.length > 0 && <Choose value={reader?.id ?? ""} onChange={setReaderId} label="Reader">{readers.map(r => <SelectItem value={r.id} key={r.id}>{r.name}</SelectItem>)}</Choose>}</div><BusyButton variant="ghost" busy={refreshing} disabled={!phone || !reader || !online(state, phone.id) || !!pending} onClick={() => void run(() => command({ action: "REFRESH" }))}><RefreshCw data-icon="inline-start" />Refresh</BusyButton></div>
-          {snapshot?.history?.length ? <div className="records">{[...snapshot.history].sort((a, b) => b.timestampEpochMillis - a.timestampEpochMillis).map(entry => <div className="record-row" key={`${entry.timestampEpochMillis}-${entry.sequenceNumber ?? entry.notificationOperation}`}><History /><div className="record-main"><span>{entry.notificationOperation} notification · {entry.status.toLowerCase()}</span><div className="record-subtitle">{entry.profileName || entry.providerName || "eUICC"} · {localTime(entry.timestampEpochMillis)}</div><div className="record-subtitle identifier">{entry.endpointHost || entry.notificationAddress || "No endpoint"}</div></div><div className="toolbar"><Button variant="ghost" size="icon" aria-label="Resend notification" disabled={!!pending || !phone || !reader || !online(state, phone.id) || entry.action !== "SEND"} onClick={() => void run(() => command({ action: "RESEND_NOTIFICATION", history: entry }))}><RotateCcw /></Button><Button variant="ghost" size="icon" aria-label="Delete history entry" disabled={!!pending || !phone || !reader || !online(state, phone.id)} onClick={() => void run(() => command({ action: "DELETE_HISTORY", history: entry, confirmed: true }))}><Trash2 /></Button></div></div>)}</div> : <NoItems icon={History} title="No eUICC history" description="Notification send and delete outcomes appear here after the phone processes them." />}
+          {snapshot?.history?.length ? <div className="records">{[...snapshot.history].sort((a, b) => b.timestampEpochMillis - a.timestampEpochMillis).map(entry => <div className="record-row" key={`${entry.timestampEpochMillis}-${entry.sequenceNumber ?? entry.notificationOperation}`}><History /><div className="record-main"><span>{entry.notificationOperation} notification · {entry.status.toLowerCase()}</span><div className="record-subtitle">{entry.profileName || entry.providerName || "eUICC"} · {localTime(entry.timestampEpochMillis)}</div><div className="record-subtitle identifier">{entry.endpointHost || entry.notificationAddress || "No endpoint"}</div></div><div className="toolbar"><Button variant="ghost" size="icon" aria-label="Resend notification" disabled={!!pending || !phone || !reader || !online(state, phone.id) || entry.action !== "SEND"} onClick={() => void run(() => command({ action: "RESEND_NOTIFICATION", history: entry }))}><RotateCcw /></Button><Button variant="ghost" size="icon" aria-label="Delete history entry" className="text-destructive" disabled={!!pending || !phone || !reader || !online(state, phone.id)} onClick={() => ask({ actionLabel: "Delete entry", title: "Delete this eUICC history entry?", description: `Remove the ${entry.notificationOperation.toLowerCase()} entry for ${entry.profileName || entry.providerName || "this eUICC"}? This cannot be undone.`, destructive: true, action: () => command({ action: "DELETE_HISTORY", history: entry, confirmed: true }) })}><Trash2 /></Button></div></div>)}</div> : <NoItems icon={History} title="No eUICC history" description="Notification send and delete outcomes appear here after the phone processes them." />}
         </> : <NoItems icon={History} title="No profile access" description="Grant profile access to a phone to view its eUICC history." />}
       </>}
       {page === "tools" && <>
         {phones.some(p => p.approved && p.profiles) ? <><div className="content-toolbar"><div className="toolbar picks">{phonePicker}{readers.length > 0 && <Choose value={reader?.id ?? ""} onChange={setReaderId} label="Reader">{readers.map(r => <SelectItem value={r.id} key={r.id}>{r.name}</SelectItem>)}</Choose>}</div><BusyButton variant="ghost" busy={refreshing} disabled={!phone || !reader || !online(state, phone.id) || !!pending} onClick={() => void run(() => command({ action: "REFRESH" }))}><RefreshCw data-icon="inline-start" />Refresh</BusyButton></div>
           {!snapshot ? <NoItems icon={Settings2} title="Refresh a reader" description="Choose a phone and reader to load eUICC tools." /> : <>
             <section className="tool-grid"><article className="tool-panel"><div className="tool-heading"><Info /><div><h2>eUICC details</h2><p>Hardware and provisioning information from the selected reader.</p></div></div>{snapshot.lpa.euiccInfo ? <dl className="detail-list">{Object.entries({ EID: snapshot.lpa.euiccInfo.eid, Product: snapshot.lpa.euiccInfo.productName, "SM-DP+": snapshot.lpa.euiccInfo.defaultSmdpAddress, "Root SM-DS": snapshot.lpa.euiccInfo.rootSmdsAddress, "Free memory": snapshot.lpa.euiccInfo.freeNonVolatileMemory ? `${snapshot.lpa.euiccInfo.freeNonVolatileMemory} bytes` : "Unknown", Capabilities: snapshot.lpa.euiccInfo.rspCapabilities?.join(", ") }).filter(([, value]) => value).map(([key, value]) => <div key={key}><dt>{key}</dt><dd className={key === "EID" ? "identifier" : undefined}>{value ?? ""}</dd></div>)}</dl> : <p className="page-note">No eUICC identity was returned by this reader.</p>}</article>
-              <article className="tool-panel"><div className="tool-heading"><SlidersHorizontal /><div><h2>Provisioning tools</h2><p>These operations run on the phone and may interrupt the active SIM.</p></div></div><div className="toolbar tool-actions"><Button variant="outline" disabled={!profiles[0] || !!pending || !online(state, phone.id)} onClick={() => profiles[0] && showForm({ type: "rename", profile: profiles[0] })}>Rename selected profile</Button><Button variant="outline" disabled={!!pending || !online(state, phone.id)} onClick={() => void run(() => command({ action: "DISCOVER", text: snapshot.lpa.euiccInfo?.defaultSmdpAddress || undefined }))}>Discover profiles</Button><Button variant="outline" disabled={!!pending || !online(state, phone.id)} onClick={() => showForm({ type: "download" })}>Set up download</Button></div><p className="page-note">Bluetooth, USB, NBridge and remote-reader permissions still need to be enabled in HyperLPA on the phone.</p></article></section>
+              <article className="tool-panel"><div className="tool-heading"><SlidersHorizontal /><div><h2>Provisioning tools</h2><p>These operations run on the phone and may interrupt the active SIM.</p></div></div><div className="toolbar tool-actions"><Button variant="outline" disabled={!!pending || !online(state, phone.id)} onClick={() => void run(() => command({ action: "DISCOVER", text: snapshot.lpa.euiccInfo?.defaultSmdpAddress || undefined }))}>Discover profiles</Button><Button variant="outline" disabled={!!pending || !online(state, phone.id)} onClick={() => showForm({ type: "download" })}>Set up download</Button></div><p className="page-note">Bluetooth, USB, NBridge and remote-reader permissions still need to be enabled in HyperLPA on the phone.</p></article></section>
             <section className="subsection"><div className="content-toolbar"><div className="tool-heading"><Settings2 /><div><h2>Phone settings</h2><p>Safe, non-secret settings mirrored from the native app.</p></div></div></div><div className="records">{Object.entries(snapshot.settings ?? defaultRemoteSettings).map(([key, enabled]) => <label className="setting-row" key={key}><span>{key.replaceAll(/([A-Z])/g, " $1").replace(/^./, value => value.toUpperCase())}</span><Checkbox checked={Boolean(enabled)} disabled={!phone || !online(state, phone.id) || !!pending} onCheckedChange={checked => { const settings = { ...(snapshot.settings ?? defaultRemoteSettings), [key]: checked === true }; void run(() => command({ action: "SETTINGS", settings })); }} /></label>)}</div></section>
-            <section className="subsection"><h2>Destructive tools</h2><div className="records"><div className="record-row"><RotateCcw /><div className="record-main"><span>Reset eUICC memory</span><div className="record-subtitle">Removes profiles and card data. Use the native app if the phone is offline.</div></div><Button variant="destructive" disabled={!!pending || !online(state, phone.id)} onClick={() => ask({ title: "Reset this eUICC?", description: "This permanently removes installed profiles and card data. Make sure you have another way to connect the phone.", destructive: true, action: () => command({ action: "RESET", confirmed: true }) })}>Reset</Button></div></div></section>
+            <section className="subsection"><h2>Destructive tools</h2><div className="records"><div className="record-row"><RotateCcw /><div className="record-main"><span>Reset eUICC memory</span><div className="record-subtitle">Removes profiles and card data. Use the native app if the phone is offline.</div></div><Button variant="destructive" disabled={!!pending || !online(state, phone.id)} onClick={() => ask({ actionLabel: "Reset eUICC", title: "Reset this eUICC?", description: "This permanently removes installed profiles and card data. Make sure you have another way to connect the phone.", destructive: true, action: () => command({ action: "RESET", confirmed: true }) })}>Reset</Button></div></div></section>
           </>}
         </> : <NoItems icon={Settings2} title="No profile access" description="Grant profile access to a phone to use its eUICC tools." />}
       </>}
@@ -231,7 +267,7 @@ export function App() {
           {identity.peers.map(peer => <div className="record-row" key={peer.id}>{peer.kind === "phone" ? <Smartphone /> : <Laptop />}<div className="record-main"><span>{peer.name}</span><div className="record-subtitle">{peer.kind === "owner" ? "Owner" : peer.kind === "phone" ? "Phone" : "Browser"} · {peer.approved ? online(state, peer.id) ? "Online" : "Offline" : "Awaiting approval"}
             {owner && peer.kind === "phone" && peer.approved && state.phoneRevisions[peer.id] !== identity.revision && " · Group update pending"}</div></div>
             {owner && peer.kind === "browser" && !peer.approved && <BusyButton busy={busy} disabled={!state.connected} onClick={() => { setBusy(true); void run(() => controller.approveBrowser(peer.id)).finally(() => setBusy(false)); }}>Approve</BusyButton>}
-            {owner && manage && <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label={`Manage ${peer.name}`}><Ellipsis /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuGroup><DropdownMenuItem onSelect={() => showForm({ type: "rename", peer })}>Rename</DropdownMenuItem><DropdownMenuItem variant="destructive" onSelect={() => ask({ title: `Remove ${peer.name}?`, description: "Blocks this device on the relay immediately. Phones apply the membership removal when the owner and phone reconnect. Data already copied elsewhere cannot be erased.", destructive: true, action: () => controller.revoke(peer.id) })}>Remove device</DropdownMenuItem></DropdownMenuGroup></DropdownMenuContent></DropdownMenu>}
+            {owner && manage && <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label={`Manage ${peer.name}`}><Ellipsis /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuGroup><DropdownMenuItem onSelect={() => showForm({ type: "rename", peer })}>Rename</DropdownMenuItem><DropdownMenuItem variant="destructive" onSelect={() => ask({ actionLabel: "Remove device", title: `Remove ${peer.name}?`, description: "Blocks this device on the relay immediately. Phones apply the membership removal when the owner and phone reconnect. Data already copied elsewhere cannot be erased.", destructive: true, action: () => controller.revoke(peer.id) })}>Remove device</DropdownMenuItem></DropdownMenuGroup></DropdownMenuContent></DropdownMenu>}
           </div>)}</div>
         {owner && browsers.some(p => p.approved) && phones.some(p => p.approved) && <section className="subsection"><div className="content-toolbar"><h2>Browser permissions</h2><Choose value={browserId || browsers.find(p => p.approved)?.id || ""} onChange={setBrowserId} label="Browser">{browsers.filter(p => p.approved).map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</Choose></div>
           <div className="records">{phones.filter(p => p.approved).map(p => {
@@ -252,8 +288,11 @@ export function App() {
     <Modal returnFocus={confirmOpener.current} open={confirmOpen} onClose={() => { if (!busy) setConfirmOpen(false); }} title={confirm?.title ?? "Confirm"} description={confirm?.description} footer={<><Button variant="outline" disabled={busy} onClick={() => setConfirmOpen(false)}>Cancel</Button><BusyButton variant={confirm?.destructive ? "destructive" : "default"} busy={busy} onClick={async () => {
       if (!confirm) return; setBusy(true);
       try { await confirm.action(); setConfirmOpen(false); } catch (error) { toast.error(errorMessage(error)); } finally { setBusy(false); }
-    }}>Confirm</BusyButton></>} />
-    <Toaster position="bottom-center" richColors={false} />
+    }}>{confirm?.actionLabel ?? "Continue"}</BusyButton></>} />
+    <Toaster position="bottom-center" closeButton richColors={false} toastOptions={{
+      className: "app-toast", style: { fontFamily: "var(--font-sans)", background: "var(--card)", color: "var(--card-foreground)",
+        borderColor: "var(--border)", borderRadius: "13px", boxShadow: "var(--surface-shadow)" },
+    }} />
   </>;
 }
 
@@ -261,7 +300,8 @@ function FormModal({ form, open, onClose, identity, command, returnFocus, phoneI
   const [value, setValue] = useState(form?.type === "tags" ? form.profile?.tags?.join(", ") ?? "" : form?.peer?.name ?? form?.profile?.nickname ?? "");
   const [confirmationCode, setConfirmationCode] = useState("");
   const [code, setCode] = useState(""); const [recoveryKey, setRecoveryKey] = useState(""); const [batchCodes, setBatchCodes] = useState(""); const [batchProgress, setBatchProgress] = useState(0);
-  const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false); const errors = useFormErrors();
+  const { error } = errors;
   const file = useRef<string>("");
   const titles = { phone: "Add a phone", invite: "Invite a browser", recovery: "Recovery export", download: "Download a profile", batch: "Batch downloads", profile: "Profile details", rename: form?.peer ? "Rename device" : "Rename profile", tags: "Edit profile tags" };
   const descriptions = { phone: "On the phone, create a pairing code in Settings → Remote devices. Approve this browser as group owner after adding it.",
@@ -270,45 +310,55 @@ function FormModal({ form, open, onClose, identity, command, returnFocus, phoneI
     download: "Paste the activation code supplied by your carrier. The phone will show a preview before installation.", batch: "One activation code per line. Each profile is previewed and confirmed in order.", profile: "Identifiers and policy data returned by the selected reader.", rename: "", tags: "Separate tags with commas." };
   async function submit() {
     if (!form || !identity) return;
-    setBusy(true); setError("");
+    setBusy(true); errors.clear();
     try {
-      if (form.type === "phone") { await controller.addPhone(value); toast.success("Approve this browser on the phone."); onClose(); }
+      if (form.type === "phone") { await validateField("phone-pair-code", () => {
+        try { return parseInvitation(value.trim()); } catch { throw new Error("Paste a current phone pairing code, or create a new code on the phone."); }
+      }); await controller.addPhone(value); toast.success("Approve this browser on the phone."); onClose(); }
       if (form.type === "invite") setCode(await controller.inviteBrowser());
       if (form.type === "recovery") {
         const backup = await exportRecovery(identity); file.current = backup.file; setRecoveryKey(backup.recoveryKey);
       }
       if (form.type === "rename") {
+        await validateField("name", () => { if (!value.trim()) throw new Error("Enter a name."); });
         if (form.peer) await controller.rename(form.peer.id, value);
         else await command({ action: "RENAME", iccid: form.profile!.iccid, text: value });
         onClose();
       }
       if (form.type === "tags") {
         const tags = value.split(",").map(s => s.trim()).filter(Boolean);
-        if (tags.length > 32 || tags.some(s => s.length > 80)) throw new Error("Use up to 32 tags, each up to 80 characters.");
+        await validateField("tags", () => { if (tags.length > 32 || tags.some(s => s.length > 80)) throw new Error("Use up to 32 tags, each up to 80 characters."); });
         await command({ action: "TAGS", iccid: form.profile!.iccid, tags }); onClose();
       }
       if (form.type === "download") {
-        const fields = value.trim().replace(/^LPA:/i, "").split("$");
-        if (fields[0] !== "1" || !fields[1] || fields.length > 5) throw new Error("Enter an activation code beginning with LPA:1$.");
-        const server = new URL("https://" + fields[1]);
-        if (server.username || server.password || server.pathname !== "/" || server.search || server.hash) throw new Error("The activation code has an invalid server address.");
+        const fields = await validateField("activation-code", () => {
+          const fields = value.trim().replace(/^LPA:/i, "").split("$");
+          if (fields[0] !== "1" || !fields[1] || fields.length > 5) throw new Error("Enter an activation code beginning with LPA:1$.");
+          let server: URL;
+          try { server = new URL("https://" + fields[1]); } catch { throw new Error("Check the server address in your carrier activation code."); }
+          if (server.username || server.password || server.pathname !== "/" || server.search || server.hash) throw new Error("The activation code has an invalid server address.");
+          return fields;
+        });
         await command({ action: "DOWNLOAD", confirmBeforeInstall: true, download: { smdpAddress: fields[1], matchingId: fields[2] || null,
           smdpOid: fields[3] || null, confirmationCodeRequired: fields[4] === "1", confirmationCode: confirmationCode.trim() || null } }); onClose();
       }
       if (form.type === "batch") {
         if (!identity || !phoneId || !readerId || !eid) throw new Error("Choose an online phone and reader first.");
-        const requests = batchCodes.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => {
-          const [activation, confirmation] = line.split("|", 2).map(part => part.trim());
-          const fields = activation.replace(/^LPA:/i, "").split("$");
-          if (fields[0] !== "1" || !fields[1] || fields.length > 5) throw new Error("Every line must be an activation code beginning with LPA:1$.");
-          if (fields[4] === "1" && !confirmation) throw new Error("A required confirmation code follows the activation code after |.");
-          return { action: "DOWNLOAD", download: { smdpAddress: fields[1], matchingId: fields[2] || null, smdpOid: fields[3] || null, confirmationCodeRequired: fields[4] === "1", confirmationCode: confirmation || null } } satisfies Command;
+        const requests = await validateField("batch-codes", () => {
+          if (!batchCodes.trim()) throw new Error("Enter at least one activation code.");
+          return batchCodes.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => {
+            const [activation, confirmation] = line.split("|", 2).map(part => part.trim());
+            const fields = activation.replace(/^LPA:/i, "").split("$");
+            if (fields[0] !== "1" || !fields[1] || fields.length > 5) throw new Error("Every line must be an activation code beginning with LPA:1$.");
+            if (fields[4] === "1" && !confirmation) throw new Error("A required confirmation code follows the activation code after |.");
+            return { action: "DOWNLOAD", download: { smdpAddress: fields[1], matchingId: fields[2] || null, smdpOid: fields[3] || null, confirmationCodeRequired: fields[4] === "1", confirmationCode: confirmation || null } } satisfies Command;
+          });
         });
         setBatchProgress(0);
         await controller.batchDownload(phoneId, readerId, eid, requests, setBatchProgress);
         toast.success(`${requests.length} profile${requests.length === 1 ? "" : "s"} installed`); onClose();
       }
-    } catch (error) { setError(errorMessage(error)); } finally { setBusy(false); }
+    } catch (error) { errors.report(error); } finally { setBusy(false); }
   }
   const generated = !!code || !!recoveryKey;
   return <Modal returnFocus={returnFocus} open={open} onClose={() => { if (!busy) onClose(); }} title={form ? titles[form.type] : "Device"} description={form ? descriptions[form.type] : undefined}
@@ -316,18 +366,18 @@ function FormModal({ form, open, onClose, identity, command, returnFocus, phoneI
       {form?.type === "profile" ? <Button onClick={onClose}>Done</Button> : form?.type === "recovery" && recoveryKey ? <Button onClick={() => {
         const url = URL.createObjectURL(new Blob([file.current], { type: "application/json" }));
         const a = document.createElement("a"); a.href = url; a.download = "hyperlpa-recovery.hyperlpa"; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-      }}><Download data-icon="inline-start" />Download export</Button> : !generated && <BusyButton type="submit" form="dialog-form" busy={busy} disabled={(form?.type === "batch" ? !batchCodes.trim() : ["phone", "download", "rename"].includes(form?.type ?? "") && !value.trim())}>{form?.type === "invite" ? "Create invitation" : form?.type === "recovery" ? "Generate export" : form?.type === "phone" ? "Connect phone" : form?.type === "download" ? "Get preview" : form?.type === "batch" ? "Start batch" : "Save"}</BusyButton>}</>}>
-    <form id="dialog-form" onSubmit={e => { e.preventDefault(); void submit(); }}><FieldGroup>
-      {form?.type === "phone" && <Field><FieldLabel htmlFor="phone-pair-code">Phone pairing code</FieldLabel><Textarea id="phone-pair-code" value={value} onChange={e => setValue(e.target.value)} maxLength={4096} required spellCheck={false} autoComplete="off" placeholder="hyperlpa-pair:…" /></Field>}
-      {form?.type === "download" && <><TextField label="Activation code" value={value} onChange={e => setValue(e.target.value)} placeholder="LPA:1$…" maxLength={4600} required autoComplete="off" spellCheck={false} />
-        <TextField label="Confirmation code" value={confirmationCode} onChange={e => setConfirmationCode(e.target.value)} autoComplete="off" type="password" maxLength={64} hint="Only if required by your carrier." /></>}
-      {form?.type === "batch" && <><Field><FieldLabel htmlFor="batch-codes">Activation codes</FieldLabel><Textarea id="batch-codes" value={batchCodes} onChange={e => setBatchCodes(e.target.value)} placeholder="LPA:1$…" maxLength={100000} rows={8} required spellCheck={false} /><FieldDescription>Progress: {batchProgress}. The browser sends the next code only after the phone reports the previous one completed.</FieldDescription></Field></>}
+      }}><Download data-icon="inline-start" />Download export</Button> : !generated && <BusyButton type="submit" form="dialog-form" busy={busy}>{form?.type === "invite" ? "Create invitation" : form?.type === "recovery" ? "Generate export" : form?.type === "phone" ? "Connect phone" : form?.type === "download" ? "Get preview" : form?.type === "batch" ? "Start batch" : "Save"}</BusyButton>}</>}>
+    <form id="dialog-form" onChangeCapture={errors.clear} onSubmit={e => { e.preventDefault(); void submit(); }}><FieldGroup>
+      {form?.type === "phone" && <Field><FieldLabel htmlFor="phone-pair-code">Phone pairing code</FieldLabel><Textarea {...errors.props("phone-pair-code")} id="phone-pair-code" value={value} onChange={e => setValue(e.target.value)} maxLength={4096} required spellCheck={false} autoComplete="off" placeholder="hyperlpa-pair:…" />{errors.message("phone-pair-code")}</Field>}
+      {form?.type === "download" && <><TextField {...errors.props("activation-code")} label="Activation code" value={value} onChange={e => setValue(e.target.value)} placeholder="LPA:1$…" maxLength={4600} required autoComplete="off" spellCheck={false}>{errors.message("activation-code")}</TextField>
+        <TextField {...errors.props("confirmation-code")} label="Confirmation code" value={confirmationCode} onChange={e => setConfirmationCode(e.target.value)} autoComplete="off" type="password" maxLength={64} hint="Only if required by your carrier.">{errors.message("confirmation-code")}</TextField></>}
+      {form?.type === "batch" && <><Field><FieldLabel htmlFor="batch-codes">Activation codes</FieldLabel><Textarea {...errors.props("batch-codes")} id="batch-codes" value={batchCodes} onChange={e => setBatchCodes(e.target.value)} placeholder="LPA:1$…" maxLength={100000} rows={8} required spellCheck={false} />{errors.message("batch-codes")}<FieldDescription>Progress: {batchProgress}. The browser sends the next code only after the phone reports the previous one completed.</FieldDescription></Field></>}
       {form?.type === "profile" && form.profile && <dl className="detail-list">{Object.entries({ Name: profileName(form.profile), Provider: form.profile.providerName, ICCID: form.profile.iccid, State: form.profile.state, Class: form.profile.profileClass, "SM-DP+": form.profile.smdpAddress, "ISD-P AID": form.profile.isdPAid, MCC: form.profile.mcc, MNC: form.profile.mnc, "Profile policy": form.profile.profilePolicyRules?.join(", "), Tags: form.profile.tags?.join(", "), Reminder: form.profile.reminderAt ? localTime(Date.parse(form.profile.reminderAt)) : undefined }).filter(([, item]) => item).map(([key, item]) => <div key={key}><dt>{key}</dt><dd className={key.includes("ICCID") || key.includes("AID") ? "identifier" : undefined}>{item}</dd></div>)}</dl>}
-      {form?.type === "rename" && <TextField label="Name" value={value} onChange={e => setValue(e.target.value)} maxLength={80} required autoFocus />}
-      {form?.type === "tags" && <TextField label="Tags" value={value} onChange={e => setValue(e.target.value)} maxLength={2592} autoFocus />}
+      {form?.type === "rename" && <TextField {...errors.props("name")} label="Name" value={value} onChange={e => setValue(e.target.value)} maxLength={80} required autoFocus>{errors.message("name")}</TextField>}
+      {form?.type === "tags" && <TextField {...errors.props("tags")} label="Tags" value={value} onChange={e => setValue(e.target.value)} maxLength={2592} autoFocus>{errors.message("tags")}</TextField>}
       {code && <Field><FieldLabel htmlFor="invitation-code">Invitation code</FieldLabel><div className="copy-field"><Textarea id="invitation-code" value={code} readOnly spellCheck={false} /><CopyButton value={code} label="Copy invitation code" /></div></Field>}
       {recoveryKey && <Field><FieldLabel htmlFor="recovery-key">Recovery key</FieldLabel><div className="copy-field"><Input id="recovery-key" value={recoveryKey} readOnly /><CopyButton value={recoveryKey} label="Copy recovery key" /></div><FieldDescription>Save this key before downloading the export. Anyone with both can control this device identity.</FieldDescription></Field>}
     </FieldGroup></form>
-    {error && <Alert variant="destructive" role="alert"><AlertTitle>Could not complete the action</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
+    {error && !errors.field && <Alert variant="destructive" role="alert"><AlertTitle>Could not complete the action</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
   </Modal>;
 }

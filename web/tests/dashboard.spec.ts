@@ -1,5 +1,6 @@
 import { test, expect, type BrowserContext, type Page, type Route } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { dashboard, seedDashboard } from "./ui-fixture";
 import { localRelay, Phone, remoteRelay } from "./phone";
 
 async function bridge(context: BrowserContext) {
@@ -50,7 +51,7 @@ test("enroll once, authorize another browser, manage profiles, recover results a
     await page.getByRole("menuitem", { name: "Disable", exact: true }).click();
     await expect(page.getByRole("dialog")).toContainText("last enabled profile");
     phone.dropMutationResult = true;
-    await page.getByRole("button", { name: "Confirm", exact: true }).click();
+    await page.getByRole("button", { name: "Disable profile", exact: true }).click();
     await expect(page.getByText("Operation awaiting a verified result")).toBeVisible();
     await page.getByRole("button", { name: "Check status", exact: true }).click();
     await expect(page.getByText("Operation awaiting a verified result")).not.toBeVisible();
@@ -144,7 +145,7 @@ test("enroll once, authorize another browser, manage profiles, recover results a
     expect(styles.height).toBe(32); expect(styles.radius).toBe("10px"); expect(styles.font).toContain("IBM Plex Sans");
     await viewer.setViewportSize({ width: 375, height: 812 });
     await viewer.getByRole("button", { name: "Appearance" }).click();
-    await viewer.getByRole("menuitem", { name: /^dark$/i }).click();
+    await viewer.getByRole("menuitemradio", { name: /^dark$/i }).click();
     await viewer.reload();
     await expect(viewer.locator("html")).toHaveAttribute("data-theme", "dark");
     await nav(viewer, "Profiles");
@@ -178,7 +179,7 @@ test("enroll once, authorize another browser, manage profiles, recover results a
     await page.getByRole("button", { name: "Manage", exact: true }).click();
     await page.getByRole("button", { name: "Manage Second browser" }).click();
     await page.getByRole("menuitem", { name: "Remove device" }).click();
-    await page.getByRole("button", { name: "Confirm", exact: true }).click();
+    await page.getByRole("button", { name: "Remove device", exact: true }).click();
     await expect(viewer.getByText(/This device was removed/)).toBeVisible();
     await expect(viewer.getByText("Your verification code is 482916.", { exact: true })).not.toBeVisible();
     expect(errors).toEqual([]);
@@ -198,18 +199,88 @@ test("enroll once, authorize another browser, manage profiles, recover results a
   } finally { phone.close(); secondPhone.close(); }
 });
 
-test("dashboard tabs reflow and distinguish pointer from keyboard focus after reload", async ({ page, context }) => {
-  await bridge(context);
-  await page.goto("/");
-  await page.getByLabel("Relay address").fill(remoteRelay);
-  await page.getByLabel("Enrollment key").fill("test-only-enrollment-key");
-  await page.getByLabel("Browser name").fill("Navigation test");
-  await page.getByRole("button", { name: "Create trusted group" }).click();
-  await expect(page.getByText("Connected", { exact: true })).toBeVisible();
+test("dialogs keep the sticky top bar visible on scrolled pages", async ({ page }) => {
+  await dashboard(page);
+  const geometry = () => page.evaluate(() => ({
+    scrollY,
+    bounds: [".app-header", ".header-inner", "main", '[aria-label="Browser settings"]'].map(selector => {
+      const { x, y, width, height } = document.querySelector(selector)!.getBoundingClientRect();
+      return { x, y, width, height };
+    }),
+  }));
 
   for (const theme of ["light", "dark"]) {
     await page.evaluate(theme => localStorage.setItem("hyperlpa-theme", theme), theme);
     await page.reload();
+    await seedDashboard(page);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+    await expect(page.getByRole("button", { name: "Browser settings" })).toBeVisible();
+    // Stand in for a long list without requiring extra paired devices.
+    await page.locator("main").evaluate(el => { el.style.minHeight = "1800px"; });
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 800 });
+      expect(await page.evaluate(() => innerWidth - document.documentElement.clientWidth)).toBeGreaterThan(0);
+      for (const scrollY of [0, 300]) {
+        await page.evaluate(y => window.scrollTo(0, y), scrollY);
+        const header = page.locator(".app-header");
+        const before = await header.boundingBox();
+        expect(before!.y).toBe(0);
+        const beforeGeometry = await geometry();
+        for (const item of ["Forget this browser", "Recovery export"]) {
+          const trigger = await page.getByRole("button", { name: "Browser settings" }).boundingBox();
+          if (item === "Recovery export") await page.keyboard.press("ArrowDown");
+          else await page.mouse.click(trigger!.x + trigger!.width / 2, trigger!.y + trigger!.height / 2);
+          await expect(page.getByRole("menu")).toBeVisible();
+          await expect(page.locator("body")).not.toHaveAttribute("data-scroll-locked");
+          expect(await geometry()).toEqual(beforeGeometry);
+          if (theme === "dark" && width === 390 && scrollY === 300) {
+            await page.mouse.move(width / 2, 700);
+            await page.mouse.wheel(0, 100);
+            await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(scrollY);
+            await page.evaluate(y => window.scrollTo(0, y), scrollY);
+          }
+          await page.getByRole("menuitem", { name: item, exact: true }).click();
+          await expect(page.getByRole("dialog")).toBeVisible();
+          await expect(page.locator("body")).toHaveAttribute("data-scroll-locked", "1");
+          expect(await header.boundingBox()).toEqual(before);
+          expect(await geometry()).toEqual(beforeGeometry);
+          expect(await page.evaluate(() => window.scrollY)).toBe(scrollY);
+          await page.mouse.wheel(0, 200);
+          expect(await page.evaluate(() => window.scrollY)).toBe(scrollY);
+          const [exitFrames] = await Promise.all([
+            page.evaluate(async () => {
+              const frames = [];
+              const started = performance.now();
+              while (performance.now() - started < 180) {
+                frames.push({ scrollY, bounds: [".app-header", ".header-inner", "main", '[aria-label="Browser settings"]'].map(selector => {
+                  const { x, y, width, height } = document.querySelector(selector)!.getBoundingClientRect();
+                  return { x, y, width, height };
+                }) });
+                await new Promise(requestAnimationFrame);
+              }
+              return frames;
+            }),
+            page.keyboard.press("Escape"),
+          ]);
+          for (const frame of exitFrames) expect(frame).toEqual(beforeGeometry);
+          await expect(page.getByRole("dialog")).not.toBeVisible();
+          await expect(page.locator("body")).not.toHaveAttribute("data-scroll-locked");
+          expect(await header.boundingBox()).toEqual(before);
+          expect(await page.evaluate(() => window.scrollY)).toBe(scrollY);
+          await expect(page.getByRole("button", { name: "Browser settings" })).toBeFocused();
+        }
+      }
+    }
+  }
+});
+
+test("dashboard tabs reflow and distinguish pointer from keyboard focus after reload", async ({ page, context }) => {
+  await dashboard(page);
+
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate(theme => localStorage.setItem("hyperlpa-theme", theme), theme);
+    await page.reload();
+    await seedDashboard(page);
     await expect(page.getByRole("tab", { name: "Devices", exact: true })).toBeVisible();
     await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
     // Explicitly cover the first pointer interaction after a reload.
@@ -285,7 +356,9 @@ test("setup keyboard navigation, validation, system theme and narrow layout", as
   await page.getByRole("tab", { name: "Join group" }).click();
   await page.getByLabel("Group invitation", { exact: true }).fill("invalid");
   await page.getByLabel("Browser name").fill("Test"); await page.getByRole("button", { name: "Request to join" }).click();
-  await expect(page.getByRole("alert")).toContainText("valid pairing code");
+  await expect(page.getByLabel("Group invitation", { exact: true })).toHaveAttribute("aria-invalid", "true");
+  await expect(page.locator("#group-code-error")).toContainText("valid pairing code");
+  await expect(page.getByLabel("Group invitation", { exact: true })).toBeFocused();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   const a11y = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
   expect(a11y.violations).toEqual([]);
