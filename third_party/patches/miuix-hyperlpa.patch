@@ -23,7 +23,7 @@ index 26c54453..e6f775c6 100644
 --- a/docs/demo/src/commonMain/kotlin/PullToRefreshDemo.kt
 +++ b/docs/demo/src/commonMain/kotlin/PullToRefreshDemo.kt
 @@ -58,6 +58,7 @@ fun PullToRefreshDemo() {
- 
+
              PullToRefresh(
                  isRefreshing = isRefreshing,
 +                enabled = true,
@@ -37,27 +37,27 @@ index d4bc2d92..bb1054d7 100644
 @@ -68,6 +68,11 @@ val backdropScaffoldSupported = isRenderEffectSupported()
  val blurAndBlendSupported = isRuntimeShaderSupported()
  ```
- 
+
 +Blend shaders compile only the blend modes used by each surface. This keeps the same
 +color and alpha calculations while avoiding driver compiler memory limits for
 +small chains that include Lab or linear-light modes. Changing the mode set
 +selects a matching shader; changing colors keeps the existing shader.
 +
  ## Basic Usage
- 
+
  Applying a backdrop blur involves three steps:
 diff --git a/docs/guide/miuix-nav.md b/docs/guide/miuix-nav.md
-index 7a657660..3f1ad756 100644
+index 7a657660..c7aaeeeb 100644
 --- a/docs/guide/miuix-nav.md
 +++ b/docs/guide/miuix-nav.md
 @@ -66,6 +66,8 @@ while (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
- 
+
  The reconciler classifies each change as `Push` / `Pop` / `MultiPush(n)` / `MultiPop(n)` / `Replace` / `ReplaceAll`, surfaced to transitions via `NavTransitionScope.change` so you can animate a multi-pop differently from a single pop.
- 
-+During an interrupted pop followed by a push, the current entry draws above any removing entry at the same stack position. Reopening a retained page brings its existing content to the front immediately; it does not wait for the previous page to finish closing. Motion and covered-layer transitions use the same ordering, and only the uppermost visible entry owns the dim scrim.
+
++When a push interrupts a pop, the removed entry is unloaded as soon as a current entry occupies its stack position. The selected page appears immediately and keeps its content throughout a subsequent close. Only the uppermost visible entry owns the dim scrim, including the composition before replacement cleanup runs.
 +
  ## Transitions
- 
+
  A built-in preset library is available as `NavTransitions`:
 diff --git a/docs/zh_CN/components/pulltorefresh.md b/docs/zh_CN/components/pulltorefresh.md
 index e82ec1cf..a5b08b11 100644
@@ -86,24 +86,24 @@ index d30eaff7..83fb20d8 100644
 @@ -31,6 +31,8 @@ dependencies {
  }
  ```
- 
+
 +混合着色器只编译当前表面使用的混合模式，保持颜色和透明度计算不变，避免包含 Lab 或线性光模式的小型混合链触发驱动编译器的内存限制。模式集合改变时选择对应着色器，仅改变颜色时复用原着色器。
 +
  ## 平台支持
- 
+
  | 平台          | 最低要求            |
 diff --git a/docs/zh_CN/guide/miuix-nav.md b/docs/zh_CN/guide/miuix-nav.md
-index 2ae0243e..f1602b4d 100644
+index 2ae0243e..007993ab 100644
 --- a/docs/zh_CN/guide/miuix-nav.md
 +++ b/docs/zh_CN/guide/miuix-nav.md
 @@ -66,6 +66,8 @@ while (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
- 
+
  reconciler 把每次变化分类为 `Push` / `Pop` / `MultiPush(n)` / `MultiPop(n)` / `Replace` / `ReplaceAll`，并经 `NavTransitionScope.change` 暴露给转场，使你能对「连续 pop n 层」与「单次 pop」做不同动画。
- 
-+当 pop 动画被后续 push 打断时，同一栈位置的当前 entry 会绘制在正在移除的 entry 上方。重新打开仍被保留的页面时，会立即将原有内容移到前面，无需等待上一页关闭完成。运动曲线与被覆盖层转场使用相同的排序规则，且只有最上方的可见 entry 拥有暗色遮罩。
+
++当 push 打断 pop 动画时，一旦当前 entry 占据了相同的栈位置，已移除的 entry 就会卸载。所选页面会立即显示，并在随后关闭的整个过程中保持自身内容。只有最上方的可见 entry 拥有暗色遮罩，包括替换清理执行前的那次组合。
 +
  ## 转场
- 
+
  内置预设库 `NavTransitions`：
 diff --git a/example/shared/src/commonMain/kotlin/PullToRefreshPage.kt b/example/shared/src/commonMain/kotlin/PullToRefreshPage.kt
 index 5f2c0dd9..e1f35cd9 100644
@@ -151,7 +151,7 @@ index baf9acff..72ca2898 100644
  import top.yukonga.miuix.kmp.blur.internal.createBlurEffect
 @@ -283,9 +280,10 @@ internal fun obtainBlendColorsEffect(scope: BackdropEffectScopeImpl, colors: Blu
      if (cached != null && scope.cachedBlendColors == colors) return cached
- 
+
      val needsExtended = colors.needsExtendedBlend()
 +    val modes = colors.blendColors.take(MAX_BLEND_LAYERS).map { it.mode.value }.toSet()
      val shader = scope.obtainRuntimeShader(
@@ -182,7 +182,7 @@ index 171b6b91..ea8b199b 100644
 @@ -537,6 +537,19 @@ internal fun buildBlendModeShader(includeExtended: Boolean, rampMix: Boolean = f
      )
  }
- 
+
 +/** Keeps unused blend branches out of GPU programs on drivers with limited compiler memory. */
 +internal fun buildSpecializedBlendModeShader(modes: Set<Int>, rampMix: Boolean = false): String = buildBlendModeShader(includeExtended = modes.any { it >= 100 }, rampMix = rampMix)
 +    .lineSequence()
@@ -200,101 +200,29 @@ index 171b6b91..ea8b199b 100644
  internal val BLEND_MODE_SHADER_EXTENDED: String = buildBlendModeShader(includeExtended = true)
  internal val BLEND_MODE_SHADER_STANDARD_RAMP: String = buildBlendModeShader(includeExtended = false, rampMix = true)
 diff --git a/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt b/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt
-index c6f6c28f..7799c3d9 100644
+index c6f6c28f..11c8b5b4 100644
 --- a/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt
 +++ b/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt
-@@ -310,6 +310,20 @@ private class PredictiveBackSession(
-     var progressVelocity: Float = 0f,
- )
- 
-+/** Prefer the current entry when interrupted navigation retains another entry at the same index. */
-+private fun NavEntry<*>.drawsAbove(other: NavEntry<*>, index: Int, otherIndex: Int): Boolean =
-+    index > otherIndex || (index == otherIndex && (!presentation.isRemoving || other.presentation.isRemoving))
-+
-+/** Resolve the same uppermost entry used by draw order, including a revived current entry. */
-+private fun List<NavEntry<*>>.topEntryAt(index: Int, indices: Map<Any, Int>): NavEntry<*>? {
-+    var top: NavEntry<*>? = null
-+    for (i in this.indices) {
-+        val entry = this[i]
-+        if (indices[entry.contentKey] == index && (top == null || entry.drawsAbove(top, index, index))) top = entry
-+    }
-+    return top
-+}
-+
- /**
-  * Private rendering core shared by all [NavDisplay] overloads.
-  *
-@@ -443,7 +457,7 @@ private fun NavDisplayLayout(
-             val presented = presentation.presented
-             for (i in presented.indices) {
-                 val idx = indexByContentKey[presented[i].contentKey] ?: continue
--                if (idx > topIdx) {
-+                if (topEntry == null || presented[i].drawsAbove(topEntry, idx, topIdx)) {
-                     topIdx = idx
-                     topEntry = presented[i]
-                 }
-@@ -577,7 +591,12 @@ private fun NavDisplayLayout(
-                 val e = presented[i]
-                 if (!e.presentation.isRemoving) continue
-                 val index = indexByContentKey[e.contentKey]
--                if (index == null || top - index <= -1f || index < currentSize) {
-+                // An interrupted pop followed by a push can reuse this index. Retain the
-+                // outgoing entry until the new boundary settles, rather than dropping it
-+                // in the first composition of the push.
-+                val replacementSettled = index != null && index < currentSize &&
-+                    !presentation.animatedTop.isRunning && top == backStack.lastIndex.toFloat()
-+                if (index == null || top - index <= -1f || replacementSettled) {
-                     (result ?: ArrayList<NavEntry<*>>(presented.size).also { result = it }).add(e)
-                 }
-             }
-@@ -675,10 +694,11 @@ private fun NavDisplayLayout(
-                     if (isVisibleAt(relativeDepth(top, index), windowDepth)) {
-                         val list = result ?: ArrayList<NavEntry<*>>(presented.size).also { result = it }
-                         // Insertion-sorted by stack index: composition order is draw order, and a
--                        // pure back-stack reorder leaves `presented` in its old order. Stable, so a
--                        // replace transient (equal index) keeps the newer instance on top.
-+                        // pure back-stack reorder leaves `presented` in its old order. At an
-+                        // equal index, current content must draw above removing content even when
-+                        // the current entry was revived from an earlier interrupted pop.
-                         var at = list.size
--                        while (at > 0 && (indexByContentKey[list[at - 1].contentKey] ?: -1) > index) at--
-+                        while (at > 0 && !entry.drawsAbove(list[at - 1], index, indexByContentKey[list[at - 1].contentKey] ?: -1)) at--
-                         list.add(at, entry)
-                     }
-                 }
-@@ -687,9 +707,7 @@ private fun NavDisplayLayout(
+@@ -687,9 +687,7 @@ private fun NavDisplayLayout(
          }
- 
+
          // Highest visible layer; the fullscreen dim scrim renders just beneath it.
 -        val topMostVisibleIndex = visibleEntries.fold(-1) { acc, e ->
 -            maxOf(acc, indexByContentKey[e.contentKey] ?: -1)
 -        }
 +        val topMostVisibleKey = visibleEntries.lastOrNull()?.contentKey
- 
+
          visibleEntries.fastForEach { entry ->
              key(entry.contentKey) {
-@@ -710,10 +728,10 @@ private fun NavDisplayLayout(
-                     // (e.g. a bottom-up Modal) is popped, revert this covered layer to the global transition
-                     // mid-dismiss — for a Modal over the horizontal-slide default that wrongly parallaxes the
-                     // layer below sideways while the modal is still sliding down (§4.3 boundary ownership).
--                    val upperEntry = presentation.presented.firstOrNull { indexByContentKey[it.contentKey] == entryIndex + 1 }
-+                    val upperEntry = presentation.presented.topEntryAt(entryIndex + 1, indexByContentKey)
+@@ -713,7 +711,7 @@ private fun NavDisplayLayout(
+                     val upperEntry = presentation.presented.firstOrNull { indexByContentKey[it.contentKey] == entryIndex + 1 }
                      val upperTransition = upperEntry?.transitionOrNull() ?: transition
- 
+
 -                    if (effects.dimAmount > 0f && entryIndex == topMostVisibleIndex && entryIndex > 0) {
 +                    if (effects.dimAmount > 0f && entry.contentKey == topMostVisibleKey && entryIndex > 0) {
                          // Fullscreen dim scrim UNDER the top-most visible layer (reference shell
                          // behavior): it must cover the entering page AND the backdrop revealed
                          // around it when a card-style transition scales layers down — a scrim
-@@ -726,7 +744,7 @@ private fun NavDisplayLayout(
-                         // 1 = covered). The effects layer only caps the darkness (dimAmount). The
-                         // fraction is read inside the deferred graphicsLayer, so the per-frame float
-                         // never recomposes this layout.
--                        val belowEntry = presentation.presented.firstOrNull { indexByContentKey[it.contentKey] == entryIndex - 1 }
-+                        val belowEntry = presentation.presented.topEntryAt(entryIndex - 1, indexByContentKey)
-                         val scrimScope = LiveNavTransitionScope(
-                             presentation = presentation,
-                             entryIndex = entryIndex - 1,
 diff --git a/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeDismiss.kt b/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeDismiss.kt
 index 766097ae..b71a8ef4 100644
 --- a/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeDismiss.kt
@@ -325,6 +253,47 @@ index 766097ae..b71a8ef4 100644
                  // Unclamped here; anchoredProgress clamps the total to [min(anchor, 0), MAX_FINGER_PROGRESS].
                  val fingerProgress = dismissTravelPx / extent
                  val touchY = change.position.y
+diff --git a/miuix-nav/src/desktopTest/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeScrollConflictTest.kt b/miuix-nav/src/desktopTest/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeScrollConflictTest.kt
+index e52830c2..030e0b7d 100644
+--- a/miuix-nav/src/desktopTest/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeScrollConflictTest.kt
++++ b/miuix-nav/src/desktopTest/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeScrollConflictTest.kt
+@@ -255,7 +255,7 @@ class NavSwipeScrollConflictTest {
+     }
+
+     @Test
+-    fun secondPointerAfterClaimCancelsInsteadOfCommitting() = runComposeUiTest {
++    fun initiatingPointerKeepsOwnershipAfterSecondPointer() = runComposeUiTest {
+         var commits = 0
+         var cancels = 0
+         setContent {
+@@ -281,15 +281,23 @@ class NavSwipeScrollConflictTest {
+         onRoot().performTouchInput {
+             down(pointerId = 0, position = Offset(width * 0.05f, centerY))
+             moveTo(pointerId = 0, position = Offset(width * 0.4f, centerY))
++        }
++        waitForIdle()
++        onRoot().performTouchInput {
+             down(pointerId = 1, position = Offset(width * 0.7f, centerY))
+-            moveTo(pointerId = 0, position = Offset(width * 0.95f, centerY))
++            moveTo(pointerId = 0, position = Offset(width * 0.8f, centerY), delayMillis = 160)
+             up(pointerId = 1)
+-            up(pointerId = 0)
+         }
+         waitForIdle()
+
+-        assertEquals(0, commits, "a multi-touch interruption must never commit the pop")
+-        assertEquals(1, cancels, "a claimed sequence must settle back after multi-touch interruption")
++        assertEquals(0, commits, "lifting the second pointer must not commit the pop")
++        assertEquals(0, cancels, "a second pointer must not cancel the initiating pointer's swipe")
++
++        onRoot().performTouchInput { up(pointerId = 0) }
++        waitForIdle()
++
++        assertEquals(1, commits, "lifting the initiating pointer commits its swipe")
++        assertEquals(0, cancels, "the claimed swipe keeps its original owner")
+     }
+
+     @Test
 diff --git a/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/PullToRefresh.kt b/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/PullToRefresh.kt
 index 235dd9a2..cd9b6967 100644
 --- a/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/PullToRefresh.kt
@@ -362,7 +331,7 @@ index 235dd9a2..cd9b6967 100644
 +                enabled = { currentEnabled },
              )
          }
- 
+
 @@ -192,7 +196,7 @@ fun PullToRefresh(
              awaitPointerEventScope {
                  while (true) {
@@ -383,7 +352,7 @@ index 235dd9a2..cd9b6967 100644
                      }
 @@ -501,14 +505,14 @@ class PullToRefreshState(
      }
- 
+
      /** Handles the pointer release event to either trigger a refresh or rebound the indicator. */
 -    internal suspend fun handlePointerRelease(onRefresh: () -> Unit, isRefreshingNow: () -> Boolean) {
 +    internal suspend fun handlePointerRelease(onRefresh: () -> Unit, isRefreshingNow: () -> Boolean, canRefresh: () -> Boolean = { true }) {
@@ -411,7 +380,7 @@ index 235dd9a2..cd9b6967 100644
                  val consumedByAppBar = topAppBarScrollBehavior?.nestedScrollConnection?.onPreScroll(available, source) ?: Offset.Zero
 @@ -657,6 +663,7 @@ private fun createPullToRefreshConnection(
      }
- 
+
      override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
 +        if (!enabled()) return topAppBarScrollBehavior?.nestedScrollConnection?.onPostScroll(consumed, available, source) ?: Offset.Zero
          when (pullToRefreshState.refreshState) {
@@ -419,7 +388,7 @@ index 235dd9a2..cd9b6967 100644
                  return available
 @@ -675,6 +682,7 @@ private fun createPullToRefreshConnection(
      }
- 
+
      override suspend fun onPreFling(available: Velocity): Velocity {
 +        if (!enabled()) return Velocity.Zero
          if (pullToRefreshState.refreshState != RefreshState.Idle) {
@@ -427,7 +396,7 @@ index 235dd9a2..cd9b6967 100644
          }
 @@ -682,6 +690,7 @@ private fun createPullToRefreshConnection(
      }
- 
+
      override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
 +        if (!enabled()) return topAppBarScrollBehavior?.nestedScrollConnection?.onPostFling(consumed, available) ?: Velocity.Zero
          if (pullToRefreshState.refreshState != RefreshState.Idle) {
