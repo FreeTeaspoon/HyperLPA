@@ -32,6 +32,7 @@ import top.yukonga.miuix.kmp.nav.core.navBackStackOf
 import top.yukonga.miuix.kmp.nav.transition.NavMotion
 import top.yukonga.miuix.kmp.nav.transition.NavSettleSpec
 import top.yukonga.miuix.kmp.nav.transition.NavSwipeDirection
+import top.yukonga.miuix.kmp.nav.transition.NavTransitions
 import top.yukonga.miuix.kmp.nav.transition.navGraphicsTransition
 
 /** Frozen-clock rendered regression for outgoing/incoming entries sharing a stack index. */
@@ -46,6 +47,89 @@ class NavigationRenderingTest {
     @Test fun revisitedPageReplacesClosingPageInRtlAndNestedStack() = checkRevisitedPage(LayoutDirection.Rtl, nested = true)
     @Test fun swipeThenRevisitReplacesClosingPageBeforeSettling() = checkRevisitedPage(LayoutDirection.Ltr, swipe = true)
     @Test fun swipeThenRevisitReplacesClosingPageInRtlAndNestedStack() = checkRevisitedPage(LayoutDirection.Rtl, nested = true, swipe = true)
+
+    @Test fun closingRevisitedPageKeepsItsContentInLtr() = checkClosingRevisitedPage(LayoutDirection.Ltr)
+    @Test fun closingRevisitedPageKeepsItsContentInRtl() = checkClosingRevisitedPage(LayoutDirection.Rtl, nested = true)
+    @Test fun swipingRevisitedPageKeepsItsContentInLtr() = checkClosingRevisitedPage(LayoutDirection.Ltr, swipe = true)
+    @Test fun swipingRevisitedPageKeepsItsContentInRtl() = checkClosingRevisitedPage(LayoutDirection.Rtl, nested = true, swipe = true)
+
+    private fun checkClosingRevisitedPage(direction: LayoutDirection, nested: Boolean = false, swipe: Boolean = false) {
+        val stack = navBackStackOf(PaintRoute(0))
+        compose.setContent {
+            HyperLpaTheme(AppSettings(blurEnabled = false)) {
+                CompositionLocalProvider(LocalLayoutDirection provides direction) {
+                    NavDisplay(backStack = stack, modifier = Modifier.size(300.dp, 400.dp).testTag("closing-nav"),
+                        transition = NavTransitions.MiuixDefault,
+                        effects = NavDisplayEffects(enableCornerClip = false, dimAmount = .5f,
+                            blockInputDuringTransition = false, backdropColor = Color.White)) {
+                        entry<PaintRoute>(swipeDismiss = if (direction == LayoutDirection.Ltr)
+                            NavSwipeDirection.LeftToRight else NavSwipeDirection.RightToLeft) { route ->
+                            Box(Modifier.fillMaxSize().background(when (route.id) {
+                                1 -> Color.Red; 2 -> Color.Green; else -> Color.White
+                            }))
+                        }
+                    }
+                }
+            }
+        }
+        compose.mainClock.autoAdvance = false
+        if (nested) {
+            compose.runOnIdle { stack.add(PaintRoute(10)) }
+            compose.mainClock.advanceTimeBy(1200)
+        }
+        val rootSize = stack.size
+        compose.runOnIdle { stack.add(PaintRoute(1)) }
+        compose.mainClock.advanceTimeBy(1200)
+        compose.runOnIdle { stack.removeAt(stack.lastIndex) }
+        compose.mainClock.advanceTimeBy(64)
+        compose.runOnIdle { stack.add(PaintRoute(2)) }
+        compose.mainClock.advanceTimeBy(64)
+        compose.runOnIdle { stack.removeAt(stack.lastIndex) }
+        compose.mainClock.advanceTimeBy(32)
+        compose.runOnIdle { stack.add(PaintRoute(1)) }
+        compose.mainClock.advanceTimeBy(64)
+        val node = compose.onNodeWithTag("closing-nav")
+        fun assertRed(message: String) {
+            val pixels = node.captureToImage().toPixelMap()
+            val x = if (direction == LayoutDirection.Ltr) pixels.width * 19 / 20 else pixels.width / 20
+            val pixel = pixels[x, pixels.height / 2]
+            assertEquals("$message red channel, actual=$pixel", 1f, pixel.red, .025f)
+            assertEquals("$message green channel, actual=$pixel", 0f, pixel.green, .025f)
+        }
+        assertRed("Reopened page is red before the next Back")
+        if (swipe) {
+            fun x(fraction: Float, width: Float) = width * if (direction == LayoutDirection.Ltr) fraction else 1f - fraction
+            node.performTouchInput {
+                down(Offset(x(.03f, width.toFloat()), height * .5f))
+                moveTo(Offset(x(.2f, width.toFloat()), height * .5f), 120)
+            }
+            compose.mainClock.advanceTimeByFrame()
+            node.performTouchInput { moveTo(Offset(x(.7f, width.toFloat()), height * .5f), 80) }
+            compose.mainClock.advanceTimeByFrame()
+            assertRed("Held swipe keeps the selected page")
+            node.performTouchInput { up() }
+        } else compose.runOnIdle { stack.removeAt(stack.lastIndex) }
+        compose.mainClock.advanceTimeByFrame()
+        compose.runOnIdle { assertEquals("Back commits during the closing animation", rootSize, stack.size) }
+        assertRed("Closing must not resurrect the earlier green page")
+        // Inspect the entire close, rather than only an opening frame and the settled result.
+        repeat(36) { frame ->
+            compose.mainClock.advanceTimeByFrame()
+            val pixels = node.captureToImage().toPixelMap()
+            val y = pixels.height / 2
+            for (x in pixels.width / 20 until pixels.width step pixels.width / 10) {
+                val pixel = pixels[x, y]
+                assertTrue("Earlier green page reappeared in closing frame $frame at $x: $pixel",
+                    !(pixel.green > .7f && pixel.red < .2f))
+            }
+        }
+        compose.mainClock.advanceTimeBy(1200)
+        val pixels = node.captureToImage().toPixelMap()
+        val parent = pixels[pixels.width / 2, pixels.height / 2]
+        assertEquals("Closing returns to the white parent", 1f, parent.red, .01f)
+        assertEquals("Closing removes the red page", 1f, parent.green, .01f)
+        assertEquals("Closing removes the green page", 1f, parent.blue, .01f)
+    }
 
     private fun checkRevisitedPage(direction: LayoutDirection, nested: Boolean = false, swipe: Boolean = false) {
         val stack = navBackStackOf(PaintRoute(0))
@@ -101,25 +185,31 @@ class NavigationRenderingTest {
             }
             compose.runOnIdle { assertEquals("Back commits before its animation completes", rootSize, stack.size) }
         }
-        // Reuse the same two identities without letting their previous removals finish.
-        // Append-only presentation order must not allow the newer outgoing entry to cover a revived entry.
-        repeat(4) { turn ->
+        // Repeatedly reopen the same two routes while each previous pop is still animating.
+        // Replaced entries must unload instead of resurfacing during a later close.
+        repeat(if (swipe) 2 else 4) { turn ->
             val outgoing = if (turn % 2 == 0) 1 else 2
             val incoming = if (turn % 2 == 0) 2 else 1
             pop()
             compose.runOnIdle {
-                assertTrue("Outgoing page is still presented before the push", outgoing in visible)
+                assertTrue("Outgoing page is still presented before the push, turn=$turn visible=$visible", outgoing in visible)
                 stack.add(PaintRoute(incoming))
             }
-            compose.mainClock.advanceTimeBy(32)
+            // Allow the incoming page's first moving frames, while staying well before settle.
+            compose.mainClock.advanceTimeBy(96)
             compose.waitForIdle()
-            assertTrue("The new page must be composed while the old one is closing", incoming in visible && outgoing in visible)
+            compose.runOnIdle {
+                assertTrue("Replacement unloads the old page, turn=$turn visible=$visible", outgoing !in visible && incoming in visible)
+            }
             val pixels = node.captureToImage().toPixelMap()
             val x = if (direction == LayoutDirection.Ltr) pixels.width * 19 / 20 else pixels.width / 20
             val actual = pixels[x, pixels.height / 2]
             val expected = color(incoming)
-            assertEquals("Visible page changes before settling, turn=$turn", expected.red, actual.red, .025f)
+            assertEquals("Visible page changes before settling, turn=$turn actual=$actual visible=$visible", expected.red, actual.red, .025f)
             assertEquals("Visible page changes before settling, turn=$turn", expected.green, actual.green, .025f)
+            val revealedX = if (direction == LayoutDirection.Ltr) pixels.width / 20 else pixels.width * 19 / 20
+            assertEquals("The sampled frame is still moving and has one scrim, turn=$turn", .5f,
+                pixels[revealedX, pixels.height / 2].red, .025f)
         }
         compose.mainClock.advanceTimeBy(1200)
         compose.runOnIdle { assertEquals(PaintRoute(1), stack.last()) }
@@ -170,7 +260,7 @@ class NavigationRenderingTest {
             compose.mainClock.advanceTimeBy(64)
             compose.waitForIdle()
             val pixels = compose.onNodeWithTag("paint-nav").captureToImage().toPixelMap()
-            assertTrue("Both entries must still be presented before sampling, turn=$turn visible=$visible", outgoing.id in visible && incoming.id in visible)
+            assertTrue("Replacement keeps only the incoming entry at this position, turn=$turn visible=$visible", outgoing.id !in visible && incoming.id in visible)
             val x = if (direction == LayoutDirection.Ltr) pixels.width / 20 else pixels.width * 19 / 20
             assertEquals("One fullscreen dim layer during interruption $turn", 0.5f, pixels[x, pixels.height / 2].red, 0.025f)
             compose.mainClock.advanceTimeBy(1200)
