@@ -14,290 +14,99 @@
   <a href="https://github.com/FreeTeaspoon/HyperLPA/releases"><img src="https://img.shields.io/github/v/release/FreeTeaspoon/HyperLPA?display_name=tag&sort=semver" alt="GitHub release"></a>
 </p>
 
-HyperLPA implements the user-facing part of GSMA SGP.22 profile management in
-Kotlin, Jetpack Compose, and Miuix. The LPA engine is provided by the
-`lpac-jni` integration and the app can connect to an eUICC through Android,
-USB, Bluetooth, bridge, remote, or explicitly privileged telephony backends.
+Manage eSIM profiles, download new plans, and switch between them in a Miuix interface.
+Connect through a compatible phone, USB or Bluetooth reader, or a paired Android device.
 
-> [!WARNING]
-> eUICC access is hardware-, firmware-, carrier-, and signing-dependent. An
-> Android phone having an eSIM is not by itself enough: the device or reader
-> must expose a compatible backend, and removable cards may restrict which APK
-> certificates can access them.
+## Screenshots
 
-## What HyperLPA does
+<table>
+  <tr>
+    <td align="center"><img src="screenshots/profiles.png" alt="Profiles with sample Telstra, Vodafone and travel plans" width="250"><br>Profiles</td>
+    <td align="center"><img src="screenshots/profile-details.png" alt="Sample Orange Holiday Europe profile with tags and a reminder" width="250"><br>Profile details</td>
+    <td align="center"><img src="screenshots/download.png" alt="Orange Holiday Europe download confirmation with estimated storage" width="250"><br>Download a profile</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="screenshots/notifications.png" alt="Sample notifications from paired travel and home phones" width="250"><br>Notifications</td>
+    <td align="center"><img src="screenshots/tools.png" alt="Profile management, organisation and diagnostic tools" width="250"><br>Tools</td>
+    <td align="center"><img src="screenshots/profiles-dark.png" alt="Sample profiles in dark mode" width="250"><br>Dark mode</td>
+  </tr>
+</table>
 
-- Discover installed eSIM profiles and enable, disable, rename, or delete them.
-- Download profiles from activation codes, QR codes, and `lpa:` links.
-- Queue multiple downloads with durable, foreground progress and cancellation.
-- Process pending eUICC notifications and keep a local outcome history.
-- Inspect eUICC identity, capabilities, storage, SM-DP+, SM-DS, and profile data.
-- Organise profiles with tags, dates, reminders, provider artwork, and statistics.
-- Create password-encrypted backups of app settings, profile metadata, and custom
-  artwork. Installed eSIM profiles remain on the eUICC and are not copied into
-  the backup.
-- Export redacted diagnostics and privacy-safe support reports.
-- Pair Android devices through an encrypted Cloudflare relay and manage their
-  SIM adapters from the same active-reader dropdown, including across networks.
-- Use adaptive layouts, predictive back, system/light/dark themes, Monet and
-  accent palettes, pure black mode, and a Miuix-style interface.
+Screenshots use fictional profiles, identifiers, and messages. Carrier names are
+illustrative and do not imply affiliation.
 
-## Download and install
+## Get started
 
-**Most people should download `app-arm64-v8a-release.apk`** from the
-[GitHub Releases](https://github.com/FreeTeaspoon/HyperLPA/releases) page.
-That is the ordinary build for modern 64-bit phones and tablets. Pick a
-different `…-release.apk` only when the device has another ABI:
+Requires Android 13 or newer, a compatible eUICC, and a supported reader.
 
-| APK file | Typical target |
-| --- | --- |
-| `app-arm64-v8a-release.apk` | Modern 64-bit phones and tablets (most devices) |
-| `app-armeabi-v7a-release.apk` | Older 32-bit ARM devices |
-| `app-x86_64-release.apk` | Most x86 Android emulators |
-| `app-x86-release.apk` | Older x86 Android emulators |
+1. Download **`app-arm64-v8a-release.apk`** from [GitHub Releases](https://github.com/FreeTeaspoon/HyperLPA/releases) for most modern phones and tablets.
+2. Open **Settings → eUICC readers**, enable your reader backend, and discover readers.
+3. Select your reader, then download a profile using your operator's activation code or QR code.
 
-The `SHA256SUMS` release asset lists the checksum of every APK so a download
-can be verified with `sha256sum --check`.
+> [!IMPORTANT]
+> A phone having an eSIM does not guarantee access. Hardware, firmware, Android
+> privileges, and the card's APK signing allowlist determine which readers work.
+> The ordinary release uses the public [9eSIM Community Key](https://github.com/9esim/9eSIMCommunityKey).
+> Sideloading a privileged APK does not grant system permissions.
 
-The ordinary release uses the `app.hyperlpa` application ID and does not
-declare privileged telephony permissions. The distribution build is signed
-with the public [9eSIM Community Key](https://github.com/9esim/9eSIMCommunityKey)
-so that compatible 9eSIM cards can authorise it. A different removable eUICC
-may require its matching vendor/community build, NBridge, USB CCID, or a
-privileged/root installation.
+Reader backends include Android OMAPI, NBridge / OTBridge, USB CCID,
+Bluetooth LE, RemoCard v2, and privileged telephony. For Bluetooth, pair your reader
+in Android settings first and grant Nearby devices permission.
 
-Do not install a `…-privilegedRelease.apk` build unless you administer a
-compatible system image. Sideloading it does not grant Android's protected
-telephony permissions; the APK must be installed or allowlisted with the
-required platform or carrier privileges, and it is signed with the private
-HyperLPA key, so removable cards that allowlist only the community key will
-reject it.
+Other release APKs support older ARM devices and x86 emulators. Use the ABI that
+matches your device and check the download against the release's `SHA256SUMS`.
 
-## Supported reader backends
+## Features
 
-Enable the backends you need in **Settings → eUICC readers**. HyperLPA only
-discovers a backend when the device and its permissions make that backend
-available.
+- Enable, disable, rename, delete, and organise profiles with tags, reminders, and provider artwork.
+- Download from activation codes, QR codes, or `lpa:` links, with batch queues and foreground progress.
+- Inspect eUICC storage and profile details, process pending notifications, and view operation history.
+- Manage readers on paired Android devices and view shared phone notifications through an encrypted relay.
+- Back up settings and profile metadata with password encryption. Installed eSIM profiles stay on the card.
+- Export redacted support reports and choose light, dark, or system themes with configurable colours and navigation.
 
-| Backend | Use it for | Important requirements |
-| --- | --- | --- |
-| Android OMAPI | Secure elements exposed by the device | The device must advertise a usable OMAPI reader. Removable cards also enforce their ARA-M certificate allowlist. |
-| NBridge / OTBridge | A compatible installed bridge provider | The provider authority and signing certificate must match HyperLPA's verified trust policy. |
-| USB CCID | External smart-card and eUICC readers | A compatible USB CCID reader and USB host/OTG support. |
-| Bluetooth LE | External APDU readers | Pair the reader in Android settings first, grant Nearby devices permission, and grant Location on Android versions that require it for discovery. Each reader search waits a few seconds for a Bluetooth scan. Supported protocol families include ESTKme RED/RED 2, SimLink, and BeeSIM. |
-| Remote / RemoCard v2 | A network-attached reader | Configure an HTTPS endpoint. Bearer credentials are optional for servers that do not require them and are stored in Android Keystore-protected storage. Use only a reader you trust. |
-| Privileged telephony | The phone's built-in telephony eUICC interface | Only the explicitly privileged builds include this backend. System, carrier, or equivalent platform access is still required. |
+## Remote access
 
-## Requirements
+Pair Android devices through the [encrypted relay](relay/README.md) to manage
+their readers and view shared phone notifications. A [web dashboard](web/README.md)
+is also available. Notification sharing requires Android notification access and
+explicit permission for each paired viewer.
 
-For remote device control, deploy the [encrypted relay](relay/README.md), then
-open **Settings → Remote devices** on each phone to register and pair them.
-The **Notifications** tab combines shared phone notifications from all paired
-devices, with Inbox and Archived views and a device filter. Its red dot marks new
-arrivals until you open the tab. Each message has a menu for copying text,
-archiving or restoring it, and deleting the saved copy. These actions affect only
-this app's saved list. New content from the same source notification can still
-appear. Open the tab's menu for optional
-**Notification alerts**.
-The history button opens eUICC history; pending eUICC operations appear only when
-there are operations to process. Cached phone notifications remain readable while
-a source device is offline.
+## Privacy
 
-On the source phone, **Share phone notifications** in Remote devices lets you
-enable Android notification access, choose apps after they first post a notification,
-and explicitly allow individual paired devices to view their history. The phone
-retains up to 150 entries for seven days in Keystore-encrypted local storage;
-viewers request them over the existing encrypted relay and do not save an archive.
-Android can hide sensitive notification contents from ordinary listeners. This
-feature does not read SMS directly or override Android's notification restrictions.
-The phone holding the SIM performs downloads and other card operations. The
-relay forwards encrypted commands and results. The [web dashboard](web/README.md)
-can run on Vercel with the same Cloudflare relay. Enroll each phone with a trusted
-group owner once, then approve additional browsers and assign per-phone permissions
-without accounts or passwords. Install the updated app and relay together.
-
-- Android 13 / API 33 or newer.
-- A compatible eUICC and at least one usable reader backend.
-- Network access when downloading a profile or using a remote reader.
-- An activation code or QR code from the mobile operator for profile download.
-- Camera access only when scanning a QR code.
-- Bluetooth Nearby devices permission, and on some older Android versions
-  Location permission, when using a Bluetooth reader.
+HyperLPA stores settings and profile metadata locally. Optional artwork and size
+references use third-party services; icon requests can reveal your IP address
+and operator. HyperLPA does not upload installation reports.
 
 ## Build from source
 
-The project uses Gradle 9.7.1, Android Gradle Plugin 9.4.1, Android SDK
-Platform 37, NDK `29.0.14206865`, and Java 21.
-
-All Miuix modules build from the submodule at `2afdbb39`, based on 0.9.4
-with the subsequent pager gesture and navigation focus fixes. Tab navigation
-uses Miuix's spring animation and cross-axis pager gestures, with HyperLPA's
-coordinator retaining stable selection during rapid taps and Back navigation.
-Set `ANDROID_HOME` to your Android SDK, or set `sdk.dir` in both the root
-`local.properties` and `third_party/miuix/local.properties` for the composite build.
+Requires Java 21, Android SDK 37, and NDK `29.0.14206865`.
 
 ```shell
 git clone --recurse-submodules https://github.com/FreeTeaspoon/HyperLPA.git
 cd HyperLPA
-
-# If you already cloned without submodules:
-git submodule update --init --recursive
-
-# macOS / Linux
 ./gradlew :app:assembleDebug
-
-# Windows
-./gradlew.bat :app:assembleDebug
 ```
 
-The ABI-specific debug APKs are written to
-`app/build/outputs/apk/debug/`. A development build with the privileged
-telephony code path can be assembled without release credentials:
+Debug APKs are written to `app/build/outputs/apk/debug/`.
 
-```shell
-./gradlew :app:assemblePrivilegedDebug
-```
+## Credits
 
-Those APKs are written to `app/build/outputs/apk/privilegedDebug/` and use the
-`app.hyperlpa.privileged.debug` application ID. They still require compatible
-system or carrier privileges on the target device.
-
-## Release builds
-
-Release packaging is deliberately separated by signing identity and
-permission set.
-
-| Variant | Application ID | Signing input | Output |
-| --- | --- | --- | --- |
-| `release` | `app.hyperlpa` | `nineesim-keystore.properties` using the 9eSIM Community Key | `app/build/outputs/apk/release/` and `app/build/outputs/bundle/release/` |
-| `privilegedRelease` | `app.hyperlpa.privileged` | Private `keystore.properties`, pinned to `signing/hyperlpa-release-cert.pem` | `app/build/outputs/apk/privilegedRelease/` and `app/build/outputs/bundle/privilegedRelease/` |
-
-Because the ordinary release uses a public community signing key, its AAB is
-not suitable for Google Play distribution; app bundles are kept as workflow
-artifacts only and are not attached to GitHub Releases.
-
-The signing property files and private key files are ignored by Git. They are
-required for the corresponding release tasks and must never be committed.
-Each property file contains `storeFile`, `storePassword`, `keyAlias`, and
-`keyPassword`. The build verifies the configured certificate against the
-public certificate committed under `signing/` before packaging.
-
-Build ordinary release APKs or an app bundle with:
-
-```shell
-./gradlew :app:assembleRelease
-./gradlew :app:bundleRelease
-```
-
-The privileged release task is:
-
-```shell
-./gradlew :app:assemblePrivilegedRelease
-```
-
-Set release versions without editing the build script:
-
-```shell
-./gradlew :app:bundleRelease \
-  -PhyperLpaVersionCode=42 \
-  -PhyperLpaVersionName=1.2.0
-```
-
-The [Release workflow](https://github.com/FreeTeaspoon/HyperLPA/actions/workflows/release.yml)
-runs when a version tag such as `v0.1.4` is pushed. The tag must match the
-version name in `gradle.properties`, and each update must increase the version
-code. It builds and verifies ordinary and privileged APK/AAB artifacts, checks
-their permission separation and signing certificates, publishes the APKs and
-checksums on GitHub Releases, and saves the bundles as workflow artifacts.
-It uses the `release` environment and the private signing secrets described
-in the workflow.
-
-## Privacy and security
-
-- App settings and profile metadata are stored locally. Android backup is
-  disabled; use HyperLPA's manual backup feature when you need to move them.
-- Manual backups use password-based AES-GCM encryption. They can contain
-  sensitive identifiers such as ICCIDs, EIDs, IMEI, remote-reader addresses,
-  and custom images. The password cannot be recovered, so keep it safe.
-- Profile installation sends the activation data to the selected SM-DP+ as
-  required by the eSIM provisioning protocol. HyperLPA does not upload
-  installation reports.
-- Optional operator artwork is fetched from
-  [operator-icons.pages.dev](https://operator-icons.pages.dev/). Such a request
-  can reveal the device IP address and inferred operator. Optional profile-size
-  reference data is downloaded from GitHub. Both caches can be cleared in the
-  app's privacy settings.
-- Configured remote-reader credentials are kept in Android Keystore-protected
-  storage and are excluded from HyperLPA backups. Remote readers require
-  authenticated HTTPS endpoints.
-- Support reports intentionally omit activation and confirmation codes,
-  matching IDs, APDUs, ICCIDs, EIDs, IMEI, profile names, reader IDs, remote
-  credentials, and full notification addresses. Review every report before
-  sharing it.
-- Never post an activation code, eUICC identifier, bearer token, private key,
-  or raw APDU trace in an issue or support request.
-
-## Troubleshooting
-
-### No reader is found
-
-Open **Settings → eUICC readers**, enable the relevant backend, then use
-**Discover readers now**. For USB, connect the reader with a working OTG
-adapter. For Bluetooth, pair the reader in Android settings, turn Bluetooth on,
-and grant the requested permissions. For NBridge, install a compatible trusted
-bridge. For a remote reader, check that the endpoint is HTTPS and implements
-RemoCard v2.
-
-### Access to the eUICC is denied
-
-This usually means the card does not allow the installed APK's signing
-certificate, the OMAPI service is not exposed, or the selected backend lacks
-platform privileges. Try the card's matching vendor/community build or another
-backend such as NBridge, USB CCID, or a privileged installation.
-
-### A download result is uncertain
-
-If the SM-DP+ session completes but the eUICC cannot be reconnected, the profile
-may already have been installed. Reconnect the same reader and refresh the
-profile list before attempting the download again.
-
-## Verification and development
-
-Run the same lint, unit-test, dependency-verification, and packaging checks used
-by continuous integration:
-
-```shell
-./gradlew --dependency-verification strict \
-  :app:lintDebug \
-  :app:lintPrivilegedDebug \
-  :app:testDebugUnitTest \
-  :libs:lpac-jni:testDebugUnitTest \
-  :app:assembleDebug \
-  :app:assemblePrivilegedDebug \
-  :app:assembleDebugAndroidTest
-```
-
-Instrumentation and Compose accessibility tests can be run on an API 33+
-emulator or device with:
-
-```shell
-./gradlew :app:connectedDebugAndroidTest
-```
-
-Dependency verification is backed by
-`gradle/verification-metadata.xml`. When changing a dependency, update only the
-required SHA-256 entries with `--write-verification-metadata`, review the diff,
-and rerun the strict verification command.
+[OpenEUICC](https://github.com/estkme-group/openeuicc) and
+[lpac](https://github.com/estkme-group/lpac) provide the LPA engine.
+[NekokoLPA2](https://github.com/iebb/NekokoLPA2) informed reader support,
+operator-icon lookup, and profile-size predictions, including the optional
+profile-size reference database. Carrier artwork comes from
+[operator-icons](https://operator-icons.pages.dev/).
+The interface uses [Miuix](https://github.com/compose-miuix-ui/miuix), with About
+screen and UI references from [Mishka](https://github.com/YuKongA/Mishka).
 
 ## Contributing
 
-Bug reports and pull requests are welcome in the
-[GitHub issue tracker](https://github.com/FreeTeaspoon/HyperLPA/issues). Please
-include the affected reader backend, Android API level, device model, and a
-redacted diagnostic or support report when useful. Do not include secrets or
-eUICC credentials.
+Report bugs or suggest changes in the [issue tracker](https://github.com/FreeTeaspoon/HyperLPA/issues).
+Include your reader backend, Android version, device model, and a redacted support
+report when useful. Never post activation codes, eUICC identifiers, or credentials.
 
-The source-review and licensing decisions are recorded in
-[`docs/reference-audit.md`](docs/reference-audit.md). Third-party attribution
-and license information is in [`NOTICE`](NOTICE); the project license is
-[`GPL-3.0`](LICENSE).
+HyperLPA uses Kotlin, Jetpack Compose, Miuix, and `lpac-jni`.
+Licensed under [GPL-3.0](LICENSE). See [NOTICE](NOTICE) for third-party attribution
+and the [reference audit](docs/reference-audit.md) for source and licensing decisions.

@@ -6,7 +6,8 @@
     <string name="about_info">Info</string>
     <string name="about_app_version">App Version</string>
     <string name="about_build_version">Build Version</string>
-    <string name="about_project">Project</string>
+    <string name="about_project">Project &amp; credits</string>
+    <string name="about_operator_icons">Operator icons</string>
     <string name="common_back">Back</string>
     <string name="common_close">Close</string>
     <string name="nav_profiles">Profiles</string>

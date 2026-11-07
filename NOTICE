@@ -29,6 +29,10 @@ by NekokoLPA2 under the MIT License.
 Operator-icon catalog resolution and profile-size prediction are Kotlin
 adaptations of NekokoLPA2 behavior under the MIT License. Public size-reference
 data is downloaded from the NekokoLPA2 repository when that feature is enabled.
+NekokoLPA2 source and reference data: https://github.com/iebb/NekokoLPA2
+Operator artwork and its catalog: https://operator-icons.pages.dev/
+Carrier logos remain the property of their respective owners and are used to
+identify the corresponding carriers, including in the sample README screenshots.
 HyperLPA does not use NekokoLPA branding or submit Nekoko installation telemetry.
 
 Miuix libraries are built from the pinned third_party/miuix source under

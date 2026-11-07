@@ -347,6 +347,24 @@ private fun AboutContent(
                                 onOpenUrl = uriHandler::openUri,
                             )
                             ProjectPreference(
+                                title = "NekokoLPA2",
+                                summary = "github.com/iebb/NekokoLPA2",
+                                url = "https://github.com/iebb/NekokoLPA2",
+                                onOpenUrl = uriHandler::openUri,
+                            )
+                            ProjectPreference(
+                                title = stringResource(R.string.about_operator_icons),
+                                summary = "operator-icons.pages.dev",
+                                url = "https://operator-icons.pages.dev/",
+                                onOpenUrl = uriHandler::openUri,
+                            )
+                            ProjectPreference(
+                                title = "Mishka",
+                                summary = "github.com/YuKongA/Mishka",
+                                url = "https://github.com/YuKongA/Mishka",
+                                onOpenUrl = uriHandler::openUri,
+                            )
+                            ProjectPreference(
                                 title = "miuix",
                                 summary = "github.com/compose-miuix-ui/miuix",
                                 url = "https://github.com/compose-miuix-ui/miuix",
