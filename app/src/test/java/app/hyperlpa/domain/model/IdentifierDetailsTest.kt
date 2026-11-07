@@ -5,6 +5,7 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class IdentifierDetailsTest {
+    // Fabricated ICCIDs. The valid example has a calculated Luhn check digit.
     @Test
     fun `analyzes a valid ICCID`() {
         val details = analyzeIccid("89000000000000000004")

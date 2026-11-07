@@ -12,6 +12,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ProfileDisplayNameFormatterTest {
+    // AU and UK phone examples use reserved fictional ranges. ICCIDs are fabricated.
+
     @Test
     fun providerOnlyRedactionKeepsProviderWhenItIsNotInTheDisplayName() {
         val result = formatProfileDisplayName(
