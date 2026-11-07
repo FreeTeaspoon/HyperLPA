@@ -46,6 +46,8 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -104,6 +106,13 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import top.yukonga.miuix.kmp.basic.Badge
+import top.yukonga.miuix.kmp.basic.BadgedBox
+import top.yukonga.miuix.kmp.basic.DropdownEntry
+import top.yukonga.miuix.kmp.basic.DropdownItem
+import top.yukonga.miuix.kmp.menu.OverlayIconDropdownMenu
+import top.yukonga.miuix.kmp.icon.extended.More
+import top.yukonga.miuix.kmp.icon.extended.Back
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.FloatingNavigationBar
 import top.yukonga.miuix.kmp.basic.Icon
@@ -168,6 +177,7 @@ fun HyperLpaApp(
     onResolveReaderAccess: () -> Unit,
     onRequestBluetoothPermission: () -> Unit,
     onOpenBluetoothSettings: () -> Unit,
+    onRequestRemoteNotificationPermission: ((Boolean) -> Unit) -> Unit = onRequestNotificationPermission,
 ) {
     val currentState = rememberUpdatedState(state)
     val currentNotificationPermissionGranted = rememberUpdatedState(notificationPermissionGranted)
@@ -454,10 +464,43 @@ fun HyperLpaApp(
                     onOpenPhoneNotifications = { viewModel.navigate(AppRoute.PhoneNotificationSettings) },
                 )
             }
+            entry<AppRoute.PhoneInboxSettings>(swipeDismiss = swipeBackDirection) {
+                app.hyperlpa.ui.screens.PhoneInboxSettingsScreen(
+                    devices = viewModel.remoteDevices,
+                    onBack = viewModel::navigateBack,
+                    onRequestPermission = onRequestRemoteNotificationPermission,
+                    onOpenSystemSettings = onOpenNotificationSettings,
+                    onOpenSharing = { viewModel.navigate(AppRoute.PhoneNotificationSettings) },
+                )
+            }
+            entry<AppRoute.PendingEuiccNotifications>(swipeDismiss = swipeBackDirection) {
+                val scroll = MiuixScrollBehavior()
+                val backdrop = rememberAppBackdrop()
+                Scaffold(containerColor = MiuixTheme.colorScheme.surface,
+                    topBar = {
+                        BlurredBar(backdrop = backdrop, progressive = true, scrollBehavior = scroll) {
+                            AdaptiveTopAppBar(title = stringResource(app.hyperlpa.R.string.phone_inbox_pending_euicc),
+                                color = if (backdrop != null) Color.Transparent else MiuixTheme.colorScheme.surface,
+                                scrollBehavior = scroll,
+                                navigationIcon = {
+                                    IconButton(onClick = viewModel::navigateBack) {
+                                        Icon(MiuixIcons.Back, stringResource(app.hyperlpa.R.string.common_back))
+                                    }
+                                })
+                        }
+                    }) { padding ->
+                    NotificationsScreen(state = currentState.value,
+                        modifier = Modifier.fillMaxSize().horizontalCutoutPadding().then(if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier),
+                        contentPadding = padding, scrollBehavior = scroll,
+                        onProcess = viewModel::processNotification, onDelete = viewModel::deleteNotification,
+                        refreshPending = viewModel.profileRefreshPending, onRefresh = viewModel::refreshProfiles)
+                }
+            }
             entry<AppRoute.PhoneNotificationSettings>(swipeDismiss = swipeBackDirection) {
                 app.hyperlpa.ui.screens.PhoneNotificationSettingsScreen(
                     viewModel.remoteDevices, viewModel::navigateBack,
                     onOpenHistory = { viewModel.navigate(AppRoute.PhoneNotificationHistory("local")) },
+                    apps = viewModel.phoneNotificationApps.collectAsStateWithLifecycle().value,
                 )
             }
             entry<AppRoute.PhoneNotificationHistory>(swipeDismiss = swipeBackDirection) { route ->
@@ -657,6 +700,18 @@ private fun MainShell(
     snackbarHostState: SnackbarHostState,
     rootTabBack: RootTabBackState,
 ) {
+    val inbox by viewModel.remoteDevices.phoneInbox.collectAsStateWithLifecycle()
+    val arrivalCount = remember(inbox) { inbox.values.sumOf { history -> history.entries.count(history::isNew) } }
+    val arrivalDescription = stringResource(app.hyperlpa.R.string.phone_inbox_new_arrivals)
+    val inboxBadge: (@Composable () -> Unit)? = if (arrivalCount > 0) ({
+        Badge(modifier = Modifier.semantics {
+            contentDescription = arrivalDescription
+        })
+    }) else null
+    val inboxOpen = state.selectedTab == AppTab.NOTIFICATIONS && viewModel.navigationBackStack.lastOrNull() == AppRoute.Shell
+    LaunchedEffect(inboxOpen, inbox) {
+        if (inboxOpen && arrivalCount > 0) viewModel.remoteDevices.acknowledgePhoneInboxArrivals()
+    }
     val tabs = AppTab.entries
     val pagerState = rememberPagerState(initialPage = state.selectedTab.ordinal) { tabs.size }
     val mainPagerState = rememberMainPagerState(pagerState, rootTabBack)
@@ -725,6 +780,7 @@ private fun MainShell(
                             onClick = { navigateTo(index) },
                             icon = item.icon,
                             label = item.label,
+                            badge = inboxBadge.takeIf { index == AppTab.NOTIFICATIONS.ordinal },
                         )
                     }
                 }
@@ -762,6 +818,7 @@ private fun MainShell(
                     if (state.settings.floatingBottomBarStyle == FloatingBottomBarStyle.IOS_LIKE) {
                         NzbLiquidGlassNavigationBar(
                             items = navigationItems,
+                            badge = { index -> inboxBadge.takeIf { index == AppTab.NOTIFICATIONS.ordinal } },
                             selectedIndex = mainPagerState.selectedPage,
                             onItemClick = navigateTo,
                             backdrop = backdrop,
@@ -787,6 +844,7 @@ private fun MainShell(
                                     selected = mainPagerState.selectedPage == index,
                                     onClick = { navigateTo(index) },
                                     showLabel = showLabels,
+                                    badge = inboxBadge.takeIf { index == AppTab.NOTIFICATIONS.ordinal },
                                 )
                             }
                         }
@@ -807,6 +865,7 @@ private fun MainShell(
                                     onClick = { navigateTo(index) },
                                     icon = item.icon,
                                     label = item.label,
+                                    badge = inboxBadge.takeIf { index == AppTab.NOTIFICATIONS.ordinal },
                                 )
                             }
                         }
@@ -845,6 +904,12 @@ private fun MainTabPage(
     bluetoothReaderState: BluetoothReaderUiState,
     onResolveReaderAccess: () -> Unit,
 ) {
+    val inbox by viewModel.remoteDevices.phoneInbox.collectAsStateWithLifecycle()
+    val remoteState by viewModel.remoteDevices.ui.collectAsStateWithLifecycle()
+    val notificationViews by viewModel.remoteDevices.phoneNotificationViews.collectAsStateWithLifecycle()
+    val inboxRefreshing by viewModel.remoteDevices.inboxRefreshing.collectAsStateWithLifecycle()
+    val inboxRefreshFailure by viewModel.remoteDevices.inboxRefreshFailure.collectAsStateWithLifecycle()
+    val inboxTarget by viewModel.phoneInboxTarget.collectAsStateWithLifecycle()
     val profilesLoading = state.isProfilesLoading
     val useStaticBackdrop = profilesLoading && tab == AppTab.PROFILES
     val backdrop = rememberAppBackdrop()
@@ -880,6 +945,14 @@ private fun MainTabPage(
                                             app.hyperlpa.R.string.notification_history_title,
                                         ),
                                     )
+                                }
+                                OverlayIconDropdownMenu(entry = DropdownEntry(buildList {
+                                    add(DropdownItem(text = stringResource(app.hyperlpa.R.string.phone_inbox_alerts_title),
+                                        onClick = { viewModel.navigate(AppRoute.PhoneInboxSettings) }))
+                                    add(DropdownItem(text = stringResource(app.hyperlpa.R.string.remote_title),
+                                        onClick = { viewModel.navigate(AppRoute.RemoteDevices) }))
+                                })) {
+                                    Icon(MiuixIcons.More, stringResource(app.hyperlpa.R.string.remote_more_options))
                                 }
                             }
                             AppTab.TOOLS,
@@ -926,15 +999,18 @@ private fun MainTabPage(
                     refreshPending = viewModel.profileRefreshPending,
                     onRefresh = viewModel::refreshProfiles,
                 )
-                AppTab.NOTIFICATIONS -> NotificationsScreen(
-                    state = state,
-                    modifier = modifier,
-                    contentPadding = contentPadding,
-                    scrollBehavior = scrollBehavior,
-                    onProcess = viewModel::processNotification,
-                    onDelete = viewModel::deleteNotification,
-                    refreshPending = viewModel.profileRefreshPending,
-                    onRefresh = viewModel::refreshProfiles,
+                AppTab.NOTIFICATIONS -> app.hyperlpa.ui.screens.PhoneNotificationInboxScreen(
+                    inbox = inbox, devices = remoteState, views = notificationViews, refreshing = inboxRefreshing,
+                    refreshFailure = inboxRefreshFailure,
+                    modifier = modifier, contentPadding = contentPadding, scrollBehavior = scrollBehavior,
+                    pendingEuiccCount = state.lpa.notifications.size,
+                    target = inboxTarget,
+                    onTargetConsumed = { viewModel.phoneInboxTarget.value = null },
+                    onArchive = { id, entry, archived -> viewModel.remoteDevices.archivePhoneInboxEntry(id, entry, archived) },
+                    onDelete = { id, entry -> viewModel.remoteDevices.deletePhoneInboxEntry(id, entry) },
+                    onRefresh = { deviceId -> viewModel.remoteDevices.refreshPhoneInbox(deviceId) },
+                    onOpenDevices = { viewModel.navigate(AppRoute.RemoteDevices) },
+                    onOpenPendingEuicc = { viewModel.navigate(AppRoute.PendingEuiccNotifications) },
                 )
                 AppTab.TOOLS -> ToolsScreen(
                     state = state,
@@ -975,6 +1051,7 @@ private fun FloatingTabItem(
     onClick: () -> Unit,
     showLabel: Boolean,
     modifier: Modifier = Modifier,
+    badge: (@Composable () -> Unit)? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
@@ -998,12 +1075,14 @@ private fun FloatingTabItem(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Icon(
-            imageVector = item.icon,
-            contentDescription = if (showLabel) null else item.label,
-            tint = tint,
-            modifier = Modifier.size(22.dp),
-        )
+        BadgedBox(badge = { badge?.invoke() }) {
+            Icon(
+                imageVector = item.icon,
+                contentDescription = if (showLabel) null else item.label,
+                tint = tint,
+                modifier = Modifier.size(22.dp),
+            )
+        }
         if (showLabel) {
             Text(
                 text = item.label,

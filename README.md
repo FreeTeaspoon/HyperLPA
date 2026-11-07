@@ -92,6 +92,17 @@ available.
 
 For remote device control, deploy the [encrypted relay](relay/README.md), then
 open **Settings → Remote devices** on each phone to register and pair them.
+The **Notifications** tab combines shared phone notifications from all paired
+devices, with Inbox and Archived views and a device filter. Its red dot marks new
+arrivals until you open the tab. Each message has a menu for copying text,
+archiving or restoring it, and deleting the saved copy. These actions affect only
+this app's saved list. New content from the same source notification can still
+appear. Open the tab's menu for optional
+**Notification alerts**.
+The history button opens eUICC history; pending eUICC operations appear only when
+there are operations to process. Cached phone notifications remain readable while
+a source device is offline.
+
 On the source phone, **Share phone notifications** in Remote devices lets you
 enable Android notification access, choose apps after they first post a notification,
 and explicitly allow individual paired devices to view their history. The phone
@@ -192,11 +203,14 @@ Set release versions without editing the build script:
   -PhyperLpaVersionName=1.2.0
 ```
 
-The manual [Release workflow](https://github.com/FreeTeaspoon/HyperLPA/actions/workflows/release.yml)
-builds and verifies ordinary and privileged APK/AAB artifacts, checks their
-permission separation and signing certificates, and uploads the artifacts to
-the workflow run. It runs only from `main` and requires the protected `release`
-environment plus the private signing secrets described in the workflow.
+The [Release workflow](https://github.com/FreeTeaspoon/HyperLPA/actions/workflows/release.yml)
+runs when a version tag such as `v0.1.4` is pushed. The tag must match the
+version name in `gradle.properties`, and each update must increase the version
+code. It builds and verifies ordinary and privileged APK/AAB artifacts, checks
+their permission separation and signing certificates, publishes the APKs and
+checksums on GitHub Releases, and saves the bundles as workflow artifacts.
+It uses the `release` environment and the private signing secrets described
+in the workflow.
 
 ## Privacy and security
 

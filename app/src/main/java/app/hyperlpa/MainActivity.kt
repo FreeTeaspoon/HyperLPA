@@ -70,6 +70,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var qrLauncher: ActivityResultLauncher<ScannerConfig>
     private lateinit var permissionLauncher: ActivityResultLauncher<Array<String>>
     private lateinit var notificationPermissionLauncher: ActivityResultLauncher<String>
+    private lateinit var remoteNotificationPermissionLauncher: ActivityResultLauncher<String>
     private var notificationPermissionGranted by mutableStateOf(true)
     private var bluetoothSupported by mutableStateOf(false)
     private var bluetoothPermissionGranted by mutableStateOf(false)
@@ -121,6 +122,11 @@ class MainActivity : ComponentActivity() {
         notificationPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
             notificationPermissionGranted = it && hasProfileReminderPermission(this)
             viewModel.completeNotificationPermissionRequest(notificationPermissionGranted)
+        }
+
+        remoteNotificationPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+            notificationPermissionGranted = hasProfileReminderPermission(this)
+            viewModel.completeNotificationPermissionRequest(it && app.hyperlpa.remote.hasRemoteNotificationPermission(this))
         }
 
         qrLauncher = registerForActivityResult(ScanCustomCode()) { result ->
@@ -190,6 +196,7 @@ class MainActivity : ComponentActivity() {
                     snackbarHostState = snackbarHostState,
                     notificationPermissionGranted = notificationPermissionGranted,
                     onRequestNotificationPermission = ::requestNotificationPermission,
+                    onRequestRemoteNotificationPermission = ::requestRemoteNotificationPermission,
                     onOpenNotificationSettings = ::openNotificationSettings,
                     onTestProfileReminder = { showTestProfileReminder(applicationContext) },
                     onScanQr = {
@@ -288,14 +295,18 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun consumeActivationIntent(source: Intent) {
-        val activationCode = source.dataString
+        val inboxTarget = source.takeIf { it.action == app.hyperlpa.remote.PhoneNotificationAlerts.OpenInboxAction }
+            ?.data?.takeIf { it.scheme == "hyperlpa-inbox" && it.host == "notification" }?.pathSegments
+        val activationCode = source.dataString.takeUnless { inboxTarget != null }
         // Do not retain an activation/matching identifier in the Activity's task Intent. The
         // parsed draft remains in volatile ViewModel memory only.
         source.data = null
         source.clipData = null
         source.replaceExtras(null as Bundle?)
         setIntent(source)
-        activationCode?.let(viewModel::handleActivationCode)
+        if (inboxTarget?.size == 2 && inboxTarget.all { it.matches(Regex("[a-f0-9-]{36}")) }) {
+            viewModel.openPhoneInbox(inboxTarget[0], inboxTarget[1])
+        } else activationCode?.let(viewModel::handleActivationCode)
     }
 
     private fun requestRuntimePermissions(
@@ -401,6 +412,18 @@ class MainActivity : ComponentActivity() {
         }.onFailure {
             viewModel.completeNotificationPermissionRequest(false)
         }
+    }
+
+    private fun requestRemoteNotificationPermission(onResult: (Boolean) -> Unit) {
+        if (hasPermission(Manifest.permission.POST_NOTIFICATIONS)) {
+            val enabled = app.hyperlpa.remote.hasRemoteNotificationPermission(this)
+            if (!enabled) openNotificationSettings()
+            onResult(enabled)
+            return
+        }
+        viewModel.retainNotificationPermissionContinuation(onResult)
+        runCatching { remoteNotificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
+            .onFailure { viewModel.completeNotificationPermissionRequest(false) }
     }
 
     private fun showScannerMessage(messageRes: Int) {

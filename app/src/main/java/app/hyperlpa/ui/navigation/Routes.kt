@@ -32,6 +32,8 @@ sealed interface AppRoute : NavKey {
     data object CompatibilityWizard : AppRoute
     data object FirstRunSetup : AppRoute
     data object NotificationSettings : AppRoute
+    data object PendingEuiccNotifications : AppRoute
+    data object PhoneInboxSettings : AppRoute
     data object NotificationHistory : AppRoute
     data object AppearanceSettings : AppRoute
     data object ProfileDisplaySettings : AppRoute

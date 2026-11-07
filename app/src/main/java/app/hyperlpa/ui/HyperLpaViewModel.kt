@@ -222,6 +222,12 @@ class HyperLpaViewModel(
     initialSettings: AppSettings,
 ) : AndroidViewModel(application) {
     internal val remoteDevices = (application as app.hyperlpa.HyperLpaApplication).remoteDevices
+    internal val phoneNotificationApps = phoneNotificationApps(
+        states = remoteDevices.ui,
+        scope = viewModelScope,
+        defaultMessagesApp = { runCatching { android.provider.Telephony.Sms.getDefaultSmsPackage(application) }.getOrNull() },
+        label = { app.hyperlpa.ui.components.appLabel(application, it) },
+    )
     private val backupManager = HyperLpaBackupManager(application, settingsStore, metadataStore)
     private val profileIconStorage = ProfileIconStorage(application)
     private val backStack = navBackStackOf(AppRoute.Shell)
@@ -615,6 +621,15 @@ class HyperLpaViewModel(
                 firstEmission = false
             }
         }
+    }
+
+    internal val phoneInboxTarget = MutableStateFlow<app.hyperlpa.ui.screens.PhoneInboxTarget?>(null)
+
+    fun openPhoneInbox(deviceId: String, entryId: String) {
+        backStack.clear()
+        backStack.add(AppRoute.Shell)
+        selectedTab.value = AppTab.NOTIFICATIONS
+        phoneInboxTarget.value = app.hyperlpa.ui.screens.PhoneInboxTarget(deviceId, entryId)
     }
 
     fun selectTab(tab: AppTab) {
@@ -1669,6 +1684,8 @@ private fun NavKey?.toPersistedRoute(): String? = when (val route = this as? App
     is AppRoute.PhoneNotificationHistory -> "phone-notifications:${route.deviceId}"
     AppRoute.NotificationSettings -> "notifications"
     AppRoute.NotificationHistory -> "notification-history"
+    AppRoute.PendingEuiccNotifications -> "pending-euicc-notifications"
+    AppRoute.PhoneInboxSettings -> "phone-inbox-settings"
     AppRoute.AppearanceSettings -> "appearance"
     AppRoute.ProfileDisplaySettings -> "profile-display"
     AppRoute.PrivacySettings -> "privacy"
@@ -1705,6 +1722,8 @@ private fun String?.toAppRoute(): AppRoute? = when {
         "phone-notification-settings" -> AppRoute.PhoneNotificationSettings
         "notifications" -> AppRoute.NotificationSettings
         "notification-history" -> AppRoute.NotificationHistory
+        "pending-euicc-notifications" -> AppRoute.PendingEuiccNotifications
+        "phone-inbox-settings" -> AppRoute.PhoneInboxSettings
         "appearance" -> AppRoute.AppearanceSettings
         "profile-display" -> AppRoute.ProfileDisplaySettings
         "privacy" -> AppRoute.PrivacySettings

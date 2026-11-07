@@ -50,6 +50,31 @@ class RemoteDevicesIntegrationTest {
     }
 
     @Test
+    fun inboxCacheAndDispositionsSurviveEncryptedJournalReload() {
+        val isolated = isolatedContext()
+        try {
+            val peer = PairedDevice(newDeviceId(), "Travel phone", newDeviceId(), DeviceCrypto.secret(), approved = true)
+            val entry = PhoneNotificationEntry(newDeviceId(), "org.example.messages", "Private title", "Private body",
+                System.currentTimeMillis(), appLabel = "Messages")
+            val history = PhoneInboxDevice().snapshot(listOf(entry), true, System.currentTimeMillis()).acknowledgeArrivals().archive(entry)
+            val stored = StoredDevices(peers = listOf(peer), phoneInbox = mapOf(peer.id to history), remoteNotificationAlerts = true)
+            val store = DeviceStore(isolated)
+            store.write(stored)
+            val restored = DeviceStore(isolated).read()
+            assertEquals(stored, restored)
+            assertFalse(restored.phoneInbox.getValue(peer.id).isNew(entry))
+            assertTrue(restored.phoneInbox.getValue(peer.id).isArchived(entry))
+            store.write(restored.copy(phoneInbox = mapOf(peer.id to history.delete(entry))))
+            val deleted = DeviceStore(isolated).read().phoneInbox.getValue(peer.id)
+            assertTrue(deleted.snapshot(listOf(entry), true, System.currentTimeMillis()).entries.isEmpty())
+            val bytes = File(isolated.noBackupFilesDir, "remote-devices.v1").readText(Charsets.ISO_8859_1)
+            assertFalse(bytes.contains("Private body"))
+            assertFalse(bytes.contains("Private title"))
+            assertFalse(bytes.contains(peer.secret))
+        } finally { isolated.noBackupFilesDir.deleteRecursively() }
+    }
+
+    @Test
     fun foregroundRelayConnectionSurvivesActivityStop() = runBlocking {
         val configFile = File(context.filesDir, "remote-test-config.json")
         assumeTrue("Supply the ignored live relay test configuration", configFile.exists())

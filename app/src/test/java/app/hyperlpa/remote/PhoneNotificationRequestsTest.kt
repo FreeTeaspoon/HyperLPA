@@ -66,4 +66,71 @@ class PhoneNotificationRequestsTest {
         assertFalse(requests.complete("phone", token, saved, true, "Unavailable"))
     }
 
+    @Test fun requestsForDifferentPhonesFinishIndependentlyOfVisibleDetails() {
+        val requests = PhoneNotificationRequests()
+        requests.seed("one", PhoneInboxDevice())
+        requests.seed("two", PhoneInboxDevice())
+        requests.select("one")
+        val first = requireNotNull(requests.begin("one", false, false, select = false))
+        val second = requireNotNull(requests.begin("two", false, false, select = false))
+        assertEquals("one", requests.state.value.deviceId)
+        assertTrue(requests.complete("two", second, saved, true, "Unavailable"))
+        assertTrue(requests.state.value.entries.isEmpty())
+        assertEquals(saved, requests.views.value.getValue("two").entries)
+        requests.close("one")
+        assertTrue(requests.complete("one", first, saved, true, "Unavailable"))
+        assertEquals("", requests.state.value.deviceId)
+        assertEquals(saved, requests.views.value.getValue("one").entries)
+        requests.remove("two")
+        assertFalse(requests.complete("two", second, saved, true, "Unavailable"))
+    }
+
+    @Test fun revokingOnePhoneDoesNotCancelAnotherPhoneAndDisconnectRejectsBothLateReplies() {
+        val requests = PhoneNotificationRequests()
+        val first = requireNotNull(requests.begin("one", false, true))
+        val second = requireNotNull(requests.begin("two", false, true))
+        assertTrue(requests.complete("one", "", emptyList(), false, "Unavailable"))
+        assertTrue(requests.views.value.getValue("two").loading)
+        assertFalse(requests.complete("one", first, saved, true, "Unavailable"))
+        requests.disconnected("Disconnected")
+        assertFalse(requests.complete("two", second, saved, true, "Unavailable"))
+        assertTrue(requests.views.value.values.none { it.loading })
+    }
+
+    @Test fun backgroundTimeoutAndIdleDisconnectDoNotCreateRefreshErrors() {
+        val requests = loaded()
+        val token = requireNotNull(requests.begin("phone", false, false, select = false))
+        requests.fail(token, "Timeout")
+        assertNull(requests.state.value.error)
+        assertNull(requests.state.value.refreshError)
+        requests.disconnected("Disconnected")
+        assertNull(requests.state.value.error)
+        assertNull(requests.state.value.refreshError)
+        assertEquals(saved, requests.state.value.entries)
+    }
+
+    @Test fun explicitRefreshErrorSurvivesRetryUntilSuccessfulReply() {
+        val requests = loaded()
+        val token = requireNotNull(requests.begin("phone", false, true))
+        requests.fail(token, "Timeout")
+        assertEquals("Timeout", requests.state.value.refreshError)
+        val retry = requireNotNull(requests.begin("phone", false, true))
+        assertEquals("Timeout", requests.state.value.refreshError)
+        requests.disconnected("Disconnected")
+        assertEquals("Disconnected", requests.state.value.refreshError)
+        assertFalse(requests.complete("phone", retry, saved, true, "Unavailable"))
+        val success = requireNotNull(requests.begin("phone", false, true))
+        assertTrue(requests.complete("phone", success, saved, true, "Unavailable"))
+        assertNull(requests.state.value.refreshError)
+    }
+
+    @Test fun manualRefreshJoinsBackgroundRequestAndReportsItsFailure() {
+        val requests = loaded()
+        val token = requireNotNull(requests.begin("phone", false, false, select = false))
+        assertNull(requests.begin("phone", false, true, select = false))
+        assertTrue(requests.state.value.refreshing)
+        requests.fail(token, "Timeout")
+        assertEquals("Timeout", requests.state.value.refreshError)
+        assertFalse(requests.state.value.loading)
+    }
 }

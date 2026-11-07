@@ -38,7 +38,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 data class RemotePeerUi(val id: String, val name: String, val approved: Boolean, val incoming: Boolean, val online: Boolean,
-    val groupOwner: Boolean = false)
+    val groupOwner: Boolean = false, val notificationSource: Boolean = true)
 data class RemoteDevicesUiState(
     val loaded: Boolean = false,
     val relay: String = "",
@@ -54,6 +54,7 @@ data class RemoteDevicesUiState(
     val notificationApps: Set<String> = emptySet(),
     val allowedNotificationApps: Set<String> = emptySet(),
     val notificationPeers: Set<String> = emptySet(),
+    val remoteNotificationAlerts: Boolean = false,
 )
 
 data class PhoneNotificationView(
@@ -65,6 +66,7 @@ data class PhoneNotificationView(
     val refreshing: Boolean = false,
     val clearing: Boolean = false,
     val error: String? = null,
+    val refreshError: String? = null,
 )
 
 internal class RemoteDevices(
@@ -81,11 +83,21 @@ internal class RemoteDevices(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val store = DeviceStore(context)
     private val phoneNotifications = PhoneNotificationStore(context)
-    private var phoneRequestJob: Job? = null
+    private val phoneRequestJobs = mutableMapOf<String, Job>()
+    private val phoneChangesPending = mutableSetOf<String>()
+    private val notificationAlerts = PhoneNotificationAlerts(context)
+    private val mutablePhoneInbox = MutableStateFlow<Map<String, PhoneInboxDevice>>(emptyMap())
+    val phoneInbox = mutablePhoneInbox.asStateFlow()
+    private val mutableInboxRefreshing = MutableStateFlow(false)
+    val inboxRefreshing = mutableInboxRefreshing.asStateFlow()
+    private val mutableInboxRefreshFailure = MutableStateFlow<PhoneInboxRefreshFailure?>(null)
+    val inboxRefreshFailure = mutableInboxRefreshFailure.asStateFlow()
+    private var inboxRefreshJob: Job? = null
     private val phoneRequestLock = Any()
     private val phoneRequests = PhoneNotificationRequests()
     private val mutablePhoneView = phoneRequests.state
     val phoneView = mutablePhoneView.asStateFlow()
+    val phoneNotificationViews = phoneRequests.views.asStateFlow()
     private val mutableLocalNotifications = MutableStateFlow<List<PhoneNotificationEntry>>(emptyList())
     val localNotifications = mutableLocalNotifications.asStateFlow()
     private val configLock = Any()
@@ -138,6 +150,11 @@ internal class RemoteDevices(
             try {
                 config = store.read().let { stored -> stored.copy(name = stored.name.ifBlank { Build.MODEL.take(80) }) }
                 initialized = true
+                update { it.copy(phoneInbox = boundedPhoneInbox(it.phoneInbox.filterKeys { id ->
+                    it.peers.any { peer -> peer.id == id && peer.canHostPhoneNotifications() }
+                }, System.currentTimeMillis())) }
+                config.phoneInbox.forEach { (id, history) -> phoneRequests.seed(id, history) }
+                if (config.remoteNotificationAlerts) notificationAlerts.reconcile(config.phoneInbox) else notificationAlerts.clear()
                 runCatching { phoneNotifications.list() }
                     .onSuccess { mutableLocalNotifications.value = it }
                 publishUi()
@@ -177,7 +194,7 @@ internal class RemoteDevices(
     private fun update(transform: (StoredDevices) -> StoredDevices) = synchronized(configLock) {
         check(initialized) { context.getString(R.string.remote_storage_unavailable) }
         val next = transform(config)
-        store.write(next)
+        if (next !== config) store.write(next)
         config = next
         publishUi()
     }
@@ -188,11 +205,13 @@ internal class RemoteDevices(
         mutableUi.update { it.copy(loaded = true, relay = saved.relay, name = saved.name,
             enabled = saved.enabled, connected = connected,
             peers = saved.peers.map { RemotePeerUi(it.id, it.name, it.approved, it.incoming,
-                connected && now - (livePeers[it.id] ?: 0) < 60_000, it.groupOwner) },
+                connected && now - (livePeers[it.id] ?: 0) < 60_000, it.groupOwner,
+                notificationSource = it.canHostPhoneNotifications()) },
             invitation = saved.invitation?.takeIf { it.expires > now }?.let(DeviceCrypto::invitationCode),
             pendingOperations = saved.pending.size, sharePhoneNotifications = saved.sharePhoneNotifications,
             notificationApps = saved.notificationApps, allowedNotificationApps = saved.allowedNotificationApps,
-            notificationPeers = saved.notificationPeers) }
+            notificationPeers = saved.notificationPeers, remoteNotificationAlerts = saved.remoteNotificationAlerts) }
+        mutablePhoneInbox.value = saved.phoneInbox
     }
 
     private fun action(onComplete: ((Boolean) -> Unit)? = null, block: suspend () -> Unit) {
@@ -335,25 +354,122 @@ internal class RemoteDevices(
         }
     }
 
-    fun refreshPhoneNotifications(id: String, userInitiated: Boolean = false) =
+    fun refreshPhoneNotifications(id: String, userInitiated: Boolean = false) {
+        synchronized(phoneRequestLock) { phoneRequests.select(id) }
         requestPhoneNotifications(id, clear = false, userInitiated = userInitiated)
+    }
 
-    private fun requestPhoneNotifications(id: String, clear: Boolean, userInitiated: Boolean) = synchronized(phoneRequestLock) {
-        val requestId = phoneRequests.begin(id, clear, userInitiated) ?: return@synchronized
-        phoneRequestJob?.cancel()
-        phoneRequestJob = scope.launch {
-            val device = peer(id)?.takeIf { it.approved }
-            val accepted = device != null && connected && send(device, DeviceMessage(
+    private fun canReceiveNotifications(device: PairedDevice): Boolean =
+        device.canHostPhoneNotifications()
+
+    private fun requestPhoneNotifications(id: String, clear: Boolean = false, userInitiated: Boolean = false,
+        changed: Boolean = false): Unit = synchronized(phoneRequestLock) {
+        val device = peer(id)?.takeIf(::canReceiveNotifications) ?: return@synchronized
+        phoneRequests.seed(id, config.phoneInbox[id] ?: PhoneInboxDevice())
+        if (!connected && !clear && !userInitiated) return@synchronized
+        val requestId = phoneRequests.begin(id, clear, userInitiated, select = false)
+        if (requestId == null) {
+            if (changed) phoneChangesPending += id
+            return@synchronized
+        }
+        phoneRequestJobs.remove(id)?.cancel()
+        phoneRequestJobs[id] = scope.launch {
+            val accepted = connected && send(device, DeviceMessage(
                 if (clear) "phone_notifications_clear" else "phone_notifications_request", requestId = requestId,
             ))
             if (accepted) delay(12_000)
-            phoneRequests.fail(requestId, context.getString(
-                if (accepted) R.string.phone_notifications_timeout else R.string.remote_delivery_failed))
+            synchronized(phoneRequestLock) {
+                phoneRequests.fail(requestId, context.getString(
+                    if (accepted) R.string.phone_notifications_timeout else R.string.remote_delivery_failed))
+                phoneRequestJobs.remove(id)
+                if (phoneChangesPending.remove(id) && connected) requestPhoneNotifications(id)
+            }
         }
     }
 
+    fun refreshPhoneInbox(deviceId: String? = null): Job = synchronized(phoneRequestLock) {
+        inboxRefreshJob?.takeIf { it.isActive }?.let { return@synchronized it }
+        mutableInboxRefreshing.value = true
+        scope.launch {
+            try {
+                ready.await()
+                val sources = config.peers.filter(::canReceiveNotifications).filter { deviceId == null || it.id == deviceId }
+                if (sources.isEmpty()) {
+                    mutableInboxRefreshFailure.value = null
+                    return@launch
+                }
+                refresh()
+                if (!connected) {
+                    mutableInboxRefreshFailure.value = PhoneInboxRefreshFailure(deviceId,
+                        context.getString(R.string.remote_disconnected))
+                    return@launch
+                }
+                val online = sources.filter { System.currentTimeMillis() - (livePeers[it.id] ?: 0) < 60_000 }
+                if (online.isEmpty()) {
+                    mutableInboxRefreshFailure.value = PhoneInboxRefreshFailure(deviceId,
+                        context.getString(R.string.phone_inbox_no_devices_online))
+                    return@launch
+                }
+                online.forEach { requestPhoneNotifications(it.id, userInitiated = true) }
+                val jobs = synchronized(phoneRequestLock) { online.mapNotNull { phoneRequestJobs[it.id] } }
+                jobs.forEach { it.join() }
+            } finally { mutableInboxRefreshing.value = false }
+        }.also { inboxRefreshJob = it }
+    }
+
     fun closePhoneNotifications(deviceId: String) = synchronized(phoneRequestLock) {
-        if (phoneRequests.close(deviceId)) phoneRequestJob?.cancel()
+        // Leaving a detail page does not stop inbox delivery or another phone's request.
+        phoneRequests.close(deviceId)
+    }
+
+    fun acknowledgePhoneInboxArrivals() {
+        val receipts = config.phoneInbox.mapValues { (_, history) -> history.seenVersions }
+        action {
+            update { saved -> saved.copy(phoneInbox = saved.phoneInbox.mapValues { (id, history) ->
+                history.acknowledgeArrivals(receipts[id].orEmpty())
+            }) }
+            notificationAlerts.reconcile(config.phoneInbox)
+        }
+    }
+
+    fun archivePhoneInboxEntry(deviceId: String, entry: PhoneNotificationEntry, archived: Boolean) = action {
+        update { saved -> saved.copy(phoneInbox = saved.phoneInbox.mapValues { (id, history) ->
+            if (id != deviceId) history else if (archived) history.archive(entry) else history.restore(entry)
+        }) }
+        notificationAlerts.reconcile(config.phoneInbox)
+    }
+
+    fun deletePhoneInboxEntry(deviceId: String, entry: PhoneNotificationEntry) = action {
+        update { saved -> saved.copy(phoneInbox = saved.phoneInbox.mapValues { (id, history) ->
+            if (id == deviceId) history.delete(entry) else history
+        }) }
+        notificationAlerts.reconcile(config.phoneInbox)
+    }
+
+    fun setRemoteNotificationAlerts(enabled: Boolean) = action {
+        update { it.copy(remoteNotificationAlerts = enabled) }
+        if (!enabled) notificationAlerts.clear()
+    }
+
+    private fun acceptPhoneInbox(device: PairedDevice, entries: List<PhoneNotificationEntry>, available: Boolean) {
+        mutableInboxRefreshFailure.update { failure -> if (failure == null || failure.deviceId == null || failure.deviceId == device.id) null else failure }
+        var arrivals = emptyList<PhoneNotificationEntry>()
+        update { saved ->
+            if (saved.peers.none { it.id == device.id && canReceiveNotifications(it) }) return@update saved
+            val previous = saved.phoneInbox[device.id] ?: PhoneInboxDevice()
+            val next = previous.snapshot(entries, available, System.currentTimeMillis())
+            if (next == previous) return@update saved
+            arrivals = previous.arrivals(next)
+            saved.copy(phoneInbox = boundedPhoneInbox(saved.phoneInbox + (device.id to next), System.currentTimeMillis()))
+        }
+        synchronized(configLock) {
+            val current = config.phoneInbox[device.id]
+            val newArrivals = arrivals.filter { current?.isNew(it) == true }
+            if (config.remoteNotificationAlerts && newArrivals.isNotEmpty()) {
+                notificationAlerts.show(device.id, device.name, newArrivals)
+            }
+            notificationAlerts.reconcile(config.phoneInbox)
+        }
     }
 
     fun reloadLocalPhoneNotifications(): Job = scope.launch {
@@ -456,8 +572,13 @@ internal class RemoteDevices(
         }
         update { it.copy(peers = it.peers.filterNot { p -> p.id == id }, pending = it.pending.filterNot { p -> p.peer == id },
             refreshRequired = it.refreshRequired.filterNot { key -> key.startsWith("$id/") }.toSet(),
-            notificationPeers = it.notificationPeers - id) }
-        closePhoneNotifications(id)
+            notificationPeers = it.notificationPeers - id, phoneInbox = it.phoneInbox - id) }
+        synchronized(phoneRequestLock) {
+            phoneRequests.remove(id)
+            phoneRequestJobs.remove(id)?.cancel()
+            phoneChangesPending.remove(id)
+        }
+        notificationAlerts.reconcile(config.phoneInbox)
         livePeers.remove(id)
         synchronized(readerSnapshots) { readerSnapshots.keys.removeAll { it.startsWith("device:$id:") } }
         mutableReaders.value = mutableReaders.value.filterNot { it.deviceId == id }
@@ -472,7 +593,13 @@ internal class RemoteDevices(
         update { StoredDevices(name = config.name) }
         phoneNotifications.clear()
         mutableLocalNotifications.value = emptyList()
-        mutablePhoneView.value = PhoneNotificationView()
+        synchronized(phoneRequestLock) {
+            phoneRequestJobs.values.forEach { it.cancel() }
+            phoneRequestJobs.clear()
+            phoneChangesPending.clear()
+            phoneRequests.views.value.keys.toList().forEach(phoneRequests::remove)
+        }
+        notificationAlerts.clear()
         mutableReaders.value = emptyList()
         synchronized(readerSnapshots) { readerSnapshots.clear() }
         mutableView.value = null
@@ -482,7 +609,9 @@ internal class RemoteDevices(
     private fun onConnection(value: Boolean) {
         connected = value
         if (!value) synchronized(phoneRequestLock) {
-            phoneRequestJob?.cancel()
+            phoneRequestJobs.values.forEach { it.cancel() }
+            phoneRequestJobs.clear()
+            phoneChangesPending.clear()
             phoneRequests.disconnected(context.getString(R.string.remote_delivery_failed))
         }
         publishUi()
@@ -568,14 +697,28 @@ internal class RemoteDevices(
                             }
                             send(existing, DeviceMessage("hello_reply", name = config.name, groupVersion = 1))
                             if (mutableReaders.value.none { it.deviceId == existing.id }) requestCatalog(existing)
+                            if (canReceiveNotifications(existing) && config.phoneInbox[existing.id]?.loaded != true)
+                                requestPhoneNotifications(existing.id)
                         }
-                        "hello_reply" -> if (mutablePhoneView.value.deviceId == existing.id) refreshPhoneNotifications(existing.id)
+                        "hello_reply" -> if (canReceiveNotifications(existing)) requestPhoneNotifications(existing.id)
                         "group_sync" -> {
                             val sync = requireNotNull(message.groupSync)
                             val previous = config.peers.filter { it.managedBy == existing.id }.map { it.id }.toSet()
                             val next = TrustedGroup.apply(config, existing.id, sync)
                             (previous - next.peers.map { it.id }.toSet()).forEach(::removePeer)
-                            update { TrustedGroup.apply(it, existing.id, sync) }
+                            update { saved -> TrustedGroup.apply(saved, existing.id, sync).let { next ->
+                                next.copy(phoneInbox = next.phoneInbox.filterKeys { id ->
+                                    next.peers.any { it.id == id && canReceiveNotifications(it) }
+                                })
+                            } }
+                            synchronized(phoneRequestLock) {
+                                config.peers.filterNot(::canReceiveNotifications).forEach {
+                                    phoneRequests.remove(it.id)
+                                    phoneRequestJobs.remove(it.id)?.cancel()
+                                    phoneChangesPending.remove(it.id)
+                                }
+                            }
+                            notificationAlerts.reconcile(config.phoneInbox)
                             send(existing, DeviceMessage("group_synced", revision = config.groupRevision, groupVersion = 1))
                             config.peers.filter { it.managedBy == existing.id }.forEach {
                                 send(it, DeviceMessage("hello", name = config.name, groupVersion = 1))
@@ -585,17 +728,20 @@ internal class RemoteDevices(
                             phoneNotifications = if (TrustedGroup.canViewNotifications(config, existing))
                                 phoneNotifications.list().filter { it.packageName in config.allowedNotificationApps }.map { it.copy(notificationKey = "") } else emptyList(),
                             phoneNotificationsAvailable = TrustedGroup.canViewNotifications(config, existing)))
-                        "phone_notifications_changed" -> if (mutablePhoneView.value.deviceId == existing.id)
-                            refreshPhoneNotifications(existing.id)
+                        "phone_notifications_changed" -> if (canReceiveNotifications(existing))
+                            requestPhoneNotifications(existing.id, changed = true)
                         "phone_notifications" -> synchronized(phoneRequestLock) {
                             val entries = message.phoneNotifications.take(150).filter {
                                 it.id.length == 36 && it.packageName.length in 1..255 &&
                                     it.title.length <= 256 && it.text.length <= 2048 && it.appLabel.length <= 80 &&
                                     (it.title.isNotBlank() || it.text.isNotBlank())
                             }
-                            if (phoneRequests.complete(existing.id, message.requestId, entries,
+                            if (canReceiveNotifications(existing) && phoneRequests.complete(existing.id, message.requestId, entries,
                                 message.phoneNotificationsAvailable, context.getString(R.string.phone_notifications_unavailable))) {
-                                phoneRequestJob?.cancel()
+                                phoneRequestJobs.remove(existing.id)?.cancel()
+                                acceptPhoneInbox(existing, entries, message.phoneNotificationsAvailable)
+                                if (phoneChangesPending.remove(existing.id) && message.phoneNotificationsAvailable)
+                                    requestPhoneNotifications(existing.id)
                             }
                         }
                         "phone_notifications_delete" -> if (TrustedGroup.canViewNotifications(config, existing) &&
@@ -649,8 +795,12 @@ internal class RemoteDevices(
     private fun requestCatalog(device: PairedDevice) {
         // Trusted-group owners and their provisioned controllers are browsers.
         // They cannot host readers; polling them creates unanswered durable commands.
-        if (device.groupOwner || device.managedBy.isNotEmpty()) return
-        if (!connected || catalogRequests.containsValue(device.id)) return
+        if (device.groupOwner || device.managedBy.isNotEmpty()) {
+            return
+        }
+        if (!connected || catalogRequests.containsValue(device.id)) {
+            return
+        }
         val id = newDeviceId()
         catalogRequests[id] = device.id
         send(device, DeviceMessage("command", requestId = id, command = DeviceCommand(DeviceAction.READERS)))

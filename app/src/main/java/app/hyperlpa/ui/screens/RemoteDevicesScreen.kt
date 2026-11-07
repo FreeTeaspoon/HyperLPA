@@ -9,9 +9,14 @@ import android.content.Intent
 import android.os.Build
 import android.os.PersistableBundle
 import android.provider.Settings
-import android.provider.Telephony
+import android.text.format.DateUtils
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,7 +31,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -51,7 +55,6 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.hyperlpa.R
@@ -79,8 +82,6 @@ import app.hyperlpa.ui.components.PageStateKind
 import app.hyperlpa.ui.components.SectionHeading
 import app.hyperlpa.ui.components.TextInputDialog
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
 import top.yukonga.miuix.kmp.basic.DropdownEntry
@@ -511,7 +512,12 @@ private fun StatusDot(online: Boolean, description: String) {
 }
 
 @Composable
-internal fun PhoneNotificationSettingsScreen(devices: RemoteDevices, onBack: () -> Unit, onOpenHistory: () -> Unit) {
+internal fun PhoneNotificationSettingsScreen(
+    devices: RemoteDevices,
+    onBack: () -> Unit,
+    onOpenHistory: () -> Unit,
+    apps: List<Pair<String, String>>?,
+) {
     val state by devices.ui.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val showSnackbar = LocalMiuixSnackbar.current
@@ -521,17 +527,13 @@ internal fun PhoneNotificationSettingsScreen(devices: RemoteDevices, onBack: () 
     val sensitiveNotificationCommand = remember(context.packageName) {
         "adb shell cmd appops set --user 0 ${context.packageName} RECEIVE_SENSITIVE_NOTIFICATIONS allow"
     }
-    val notificationApps = state.notificationApps
-    val apps by produceState(notificationApps.map { it to cachedAppLabel(it) }, notificationApps) {
-        value = withContext(Dispatchers.IO) {
-            val messagesApp = runCatching { Telephony.Sms.getDefaultSmsPackage(context) }.getOrNull()
-            notificationApps.map { it to (appLabel(context, it)) }
-                .sortedWith(compareBy({ it.first != messagesApp }, { it.second.lowercase() }))
-        }
-    }
-    val appGroups = remember(apps) { apps.chunked(6) }
     DisposableEffect(devices) { onDispose(devices::clearError) }
-    DetailLazyScaffold(title = stringResource(R.string.phone_notifications_title), onBack = onBack) { _ ->
+    DetailLazyScaffold(
+        title = stringResource(R.string.phone_notifications_title),
+        onBack = onBack,
+        pageState = if (apps == null) PageStateKind.LOADING else PageStateKind.CONTENT,
+        pageStateContent = { LoadingState(stringResource(R.string.common_loading), Modifier.fillMaxSize()) },
+    ) { _ ->
         state.error?.let { message -> item(contentType = PageStart.Inset) { ErrorCard(message) } }
         item {
             GroupedCard {
@@ -562,20 +564,17 @@ internal fun PhoneNotificationSettingsScreen(devices: RemoteDevices, onBack: () 
                 )
             }
         }
-            items(appGroups, key = { it.first().first }, contentType = { "notification-sources" }) { group ->
-                ExpandingPreferenceGroup(state.sharePhoneNotifications) { GroupedCard {
-                    group.forEach { (packageName, label) ->
-                        key(packageName) {
-                            SwitchPreference(
-                                title = label,
-                                checked = packageName in state.allowedNotificationApps,
-                                startAction = { AppIcon(packageName, label, Modifier.padding(end = 12.dp)) },
-                                onCheckedChange = { devices.setNotificationApp(packageName, it) },
-                            )
-                        }
-                    }
-                }
-            }
+        lazyGroup(
+            entries = if (state.sharePhoneNotifications) apps.orEmpty() else emptyList(),
+            key = { it.first },
+            contentType = "notification-sources",
+        ) { (packageName, label) ->
+            SwitchPreference(
+                title = label,
+                checked = packageName in state.allowedNotificationApps,
+                startAction = { AppIcon(packageName, label, Modifier.padding(end = 12.dp)) },
+                onCheckedChange = { devices.setNotificationApp(packageName, it) },
+            )
         }
     }
     val adbTitle = stringResource(R.string.phone_notifications_adb_title)
@@ -607,6 +606,7 @@ internal fun PhoneNotificationSettingsScreen(devices: RemoteDevices, onBack: () 
 internal fun PhoneNotificationHistoryScreen(devices: RemoteDevices, deviceId: String, onBack: () -> Unit) {
     val state by devices.ui.collectAsStateWithLifecycle()
     val phoneView by devices.phoneView.collectAsStateWithLifecycle()
+    val inbox by devices.phoneInbox.collectAsStateWithLifecycle()
     val localNotifications by devices.localNotifications.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val showSnackbar = LocalMiuixSnackbar.current
@@ -631,7 +631,8 @@ internal fun PhoneNotificationHistoryScreen(devices: RemoteDevices, deviceId: St
     var clearingPopupLocked by remember { mutableStateOf(false) }
     val refreshScope = rememberCoroutineScope()
     val view = phoneView.takeIf { it.deviceId == deviceId }
-    val entries = if (local) localNotifications else view?.entries.orEmpty()
+    val history = inbox[deviceId]
+    val entries = if (local) localNotifications else history?.entries.orEmpty().filterNot { history?.isArchived(it) == true }
     val available = local || view?.available == true
     val firstLoad = !local && (view == null || (view.loading && !view.loaded))
     val title = if (local) state.name else peer?.name.orEmpty()
@@ -697,8 +698,9 @@ internal fun PhoneNotificationHistoryScreen(devices: RemoteDevices, deviceId: St
             firstLoad -> Unit
             !available -> Unit
             entries.isEmpty() -> Unit
-            else -> items(entries.asReversed(), key = { it.id }, contentType = { "phone-notification" }) { entry ->
-                PhoneNotificationRow(entry, Modifier.animateItem(), onCopyCode = copyCode)
+            else -> items(entries.sortedByDescending { it.timestamp }, key = { it.id }, contentType = { "phone-notification" }) { entry ->
+                PhoneNotificationRow(entry, Modifier.animateItem(),
+                    onCopyCode = copyCode)
             }
         }
     }
@@ -744,43 +746,101 @@ internal fun PhoneNotificationHistoryScreen(devices: RemoteDevices, deviceId: St
 }
 
 @Composable
-private fun PhoneNotificationRow(entry: PhoneNotificationEntry, modifier: Modifier, onCopyCode: (String) -> Unit) {
+internal fun PhoneNotificationRow(
+    entry: PhoneNotificationEntry,
+    modifier: Modifier,
+    onCopyCode: (String) -> Unit,
+    sourceName: String? = null,
+    offline: Boolean = false,
+    archived: Boolean = false,
+    onArchive: (() -> Unit)? = null,
+    onDelete: (() -> Unit)? = null,
+) {
     val context = LocalContext.current
+    val snackbar = LocalMiuixSnackbar.current
     val appName by produceState(entry.appLabel.ifBlank { cachedAppLabel(entry.packageName) }, entry.packageName, entry.appLabel) {
         if (entry.appLabel.isBlank()) value = appLabel(context, entry.packageName)
     }
     val hidden = entry.text.trim().equals(HiddenNotificationText, ignoreCase = true)
     val body = if (hidden) stringResource(R.string.phone_notifications_content_hidden) else entry.text.trim()
-    val time = remember(entry.timestamp) {
-        DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(entry.timestamp))
-    }
+    val time = if (DateUtils.isToday(entry.timestamp)) {
+        DateFormat.getTimeInstance(DateFormat.SHORT)
+    } else {
+        DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+    }.format(Date(entry.timestamp))
     val codeStyle = TextLinkStyles(SpanStyle(color = MiuixTheme.colorScheme.primary, fontWeight = FontWeight.Bold))
-    val summary = buildAnnotatedString {
+    val message = buildAnnotatedString {
         val code = if (hidden) null else detectOtp(body)
-        if (code == null) {
-            append(body)
-        } else {
+        if (code == null) append(body)
+        else {
             append(body, 0, code.first)
             val value = body.substring(code)
             withLink(LinkAnnotation.Clickable("otp", codeStyle) { onCopyCode(value) }) { append(value) }
             append(body, code.last + 1, body.length)
         }
-        if (body.isNotEmpty()) append("\n")
-        append(time)
     }
+    val copyLabel = stringResource(R.string.phone_notifications_copy_text)
+    val copied = stringResource(R.string.phone_notifications_text_copied)
+    val title = entry.title.trim().ifBlank { appName }
+    val showTitle = body.isBlank() || !title.equals(appName, ignoreCase = true)
+    val source = sourceName?.takeIf(String::isNotBlank)?.let {
+        stringResource(R.string.phone_inbox_source, appName, it)
+    } ?: appName
+    val origin = if (offline) "$source, ${stringResource(R.string.phone_inbox_offline)}" else source
+    val actions = buildList {
+        if (!hidden && (body.isNotBlank() || entry.title.isNotBlank())) {
+            add(DropdownItem(text = stringResource(R.string.phone_inbox_copy), onClick = {
+                context.copySensitive(copyLabel, body.ifBlank { entry.title.trim() })
+                snackbar(copied, SnackbarDuration.Short)
+            }))
+        }
+        if (onArchive != null) add(DropdownItem(
+            text = stringResource(if (archived) R.string.phone_inbox_restore else R.string.phone_inbox_archive),
+            onClick = onArchive))
+        if (onDelete != null) add(DropdownItem(text = stringResource(R.string.phone_inbox_delete_copy), onClick = onDelete))
+    }
+    // The approved message layout keeps one text column beside the icon.
+    // The card has no click action, so selection and the menu do not shrink it.
     GroupedCard(modifier) {
-        BasicComponent(startAction = { AppIcon(entry.packageName, appName, Modifier.padding(end = 12.dp)) }) {
-            Text(
-                text = entry.title.trim().ifBlank { appName },
-                fontSize = MiuixTheme.textStyles.headline1.fontSize,
-                fontWeight = FontWeight.Medium,
-                color = MiuixTheme.colorScheme.onSurface,
-            )
-            Text(
-                text = summary,
-                fontSize = MiuixTheme.textStyles.body2.fontSize,
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-            )
+        Row(Modifier.fillMaxWidth().padding(12.dp)) {
+            AppIcon(entry.packageName, appName, Modifier.padding(top = 4.dp))
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Row(Modifier.fillMaxWidth()) {
+                    SelectionContainer(Modifier.weight(1f).padding(top = 6.dp)) {
+                        if (showTitle) {
+                            Text(text = title, style = MiuixTheme.textStyles.body1,
+                                fontWeight = FontWeight.Medium, color = MiuixTheme.colorScheme.onSurface)
+                        } else {
+                            Text(text = message, style = MiuixTheme.textStyles.body2.copy(lineHeight = 22.sp),
+                                color = MiuixTheme.colorScheme.onSurface)
+                        }
+                    }
+                    if (actions.isNotEmpty()) {
+                        OverlayIconDropdownMenu(entry = DropdownEntry(actions)) {
+                            Icon(MiuixIcons.More, contentDescription = stringResource(R.string.phone_inbox_message_actions),
+                                modifier = Modifier.size(20.dp))
+                        }
+                    }
+                }
+                if (showTitle && body.isNotEmpty()) {
+                    SelectionContainer(Modifier.fillMaxWidth().padding(top = 2.dp)) {
+                        Text(text = message, style = MiuixTheme.textStyles.body2.copy(lineHeight = 22.sp),
+                            color = MiuixTheme.colorScheme.onSurface)
+                    }
+                }
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(text = origin, style = MiuixTheme.textStyles.footnote2,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        modifier = Modifier.padding(end = 12.dp))
+                    Text(text = time, style = MiuixTheme.textStyles.footnote2,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                }
+            }
         }
     }
 }
@@ -789,12 +849,15 @@ private fun PhoneNotificationRow(entry: PhoneNotificationEntry, modifier: Modifi
 private fun rememberNotificationListenerGranted(): Boolean {
     val context = LocalContext.current
     val lifecycle by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsStateWithLifecycle()
-    return lifecycle.isAtLeast(Lifecycle.State.STARTED) &&
+    // Navigation composes the page before STARTED. Read the real permission even
+    // then, so the summary does not shrink and move the app list on resume.
+    return remember(context, lifecycle) {
         context.getSystemService(NotificationManager::class.java).isNotificationListenerAccessGranted(
             ComponentName(context, PhoneNotificationListener::class.java))
+    }
 }
 
-private fun Context.copySensitive(label: String, value: String) {
+internal fun Context.copySensitive(label: String, value: String) {
     val clip = ClipData.newPlainText(label, value)
     clip.description.extras = PersistableBundle().apply { putBoolean("android.content.extra.IS_SENSITIVE", true) }
     getSystemService(ClipboardManager::class.java).setPrimaryClip(clip)
