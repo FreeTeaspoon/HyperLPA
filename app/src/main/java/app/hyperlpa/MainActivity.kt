@@ -159,6 +159,7 @@ class MainActivity : ComponentActivity() {
             val state = viewModel.state.collectAsStateWithLifecycle().value
             var firstReaderConfiguration by remember { mutableStateOf(true) }
             LaunchedEffect(
+                state.settings.compatibilityWizardCompleted,
                 state.lpa.initialized,
                 state.settings.enableNBridge,
                 state.settings.enableOmapi,
@@ -167,6 +168,8 @@ class MainActivity : ComponentActivity() {
                 state.settings.enableBle,
                 state.settings.enableRemote,
             ) {
+                // Onboarding requests hardware access from its reader step, never its welcome page.
+                if (!state.settings.compatibilityWizardCompleted) return@LaunchedEffect
                 val permissionRequestStarted = requestRuntimePermissions(
                     settings = state.settings,
                     userInitiated = false,
@@ -217,7 +220,7 @@ class MainActivity : ComponentActivity() {
                     ),
                     onResolveReaderAccess = { resolveBluetoothReaderAccess(state.settings) },
                     onRequestBluetoothPermission = {
-                        requestRuntimePermissions(state.settings, userInitiated = true)
+                        requestRuntimePermissions(state.settings.copy(enableBle = true), userInitiated = true)
                     },
                     onOpenBluetoothSettings = ::openBluetoothSettings,
                 )

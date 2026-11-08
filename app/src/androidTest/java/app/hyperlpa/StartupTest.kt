@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.Application
 import android.os.Bundle
 import android.view.ViewTreeObserver
+import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ActivityScenario
@@ -13,13 +14,17 @@ import androidx.test.platform.app.InstrumentationRegistry
 import app.hyperlpa.data.settings.AppSettings
 import app.hyperlpa.data.settings.FloatingBottomBarStyle
 import app.hyperlpa.data.settings.NavigationStyle
+import app.hyperlpa.data.settings.ProfileLayout
 import app.hyperlpa.data.settings.ThemeMode
 import app.hyperlpa.ui.HyperLpaViewModel
+import app.hyperlpa.ui.OnboardingPreference
 import app.hyperlpa.ui.navigation.AppRoute
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
@@ -68,34 +73,93 @@ class StartupTest {
     @Test
     fun incompleteFirstRunIsChosenBeforeCompositionAndSurvivesRestore() {
         val settings = AppSettings(compatibilityWizardCompleted = false)
-        withInitialSettings(settings) { viewModel ->
-            viewModel.resolveStartRoute(settings)
-            assertEquals(listOf(AppRoute.FirstRunSetup), viewModel.navigationBackStack.toList())
-            val snapshot = viewModel.navigationSnapshot()
-            viewModel.restoreNavigation(snapshot)
-            viewModel.resolveStartRoute(settings)
-            assertEquals(listOf(AppRoute.FirstRunSetup), viewModel.navigationBackStack.toList())
+        withAsyncInitialSettings(settings) { viewModel ->
+            withContext(Dispatchers.Main) {
+                viewModel.resolveStartRoute(settings)
+                assertEquals(listOf(AppRoute.FirstRunSetup), viewModel.navigationBackStack.toList())
+                val snapshot = viewModel.navigationSnapshot()
+                viewModel.restoreNavigation(snapshot)
+                viewModel.resolveStartRoute(settings)
+                assertEquals(listOf(AppRoute.FirstRunSetup), viewModel.navigationBackStack.toList())
 
-            viewModel.finishFirstRunSetup()
-            viewModel.completeFirstRunHandoff()
-            // Recreation must not reopen setup while its completion write is pending.
-            viewModel.resolveStartRoute(settings)
-            assertEquals(listOf(AppRoute.Shell), viewModel.navigationBackStack.toList())
+                viewModel.finishFirstRunSetup()
+            }
+            withTimeout(10_000) { snapshotFlow { viewModel.firstRunHandoffPending }.first { it } }
+            withContext(Dispatchers.Main) {
+                viewModel.completeFirstRunHandoff()
+                // Completion is durable before the shell opens.
+                viewModel.resolveStartRoute(settings)
+                assertEquals(listOf(AppRoute.Shell), viewModel.navigationBackStack.toList())
+            }
         }
     }
 
     @Test
     fun activationIntentWaitsForFirstRunAndOpensAfterHandoff() {
         val settings = AppSettings(compatibilityWizardCompleted = false)
-        withInitialSettings(settings) { viewModel ->
-            assertTrue(viewModel.handleActivationCode("LPA:1\$example.org\$test-code"))
-            viewModel.resolveStartRoute(settings)
-            assertEquals(listOf(AppRoute.FirstRunSetup), viewModel.navigationBackStack.toList())
-            viewModel.finishFirstRunSetup()
-            viewModel.completeFirstRunHandoff()
-            viewModel.endInstantNavigation()
-            assertEquals(listOf(AppRoute.Shell, AppRoute.DownloadProfile), viewModel.navigationBackStack.toList())
+        withAsyncInitialSettings(settings) { viewModel ->
+            withContext(Dispatchers.Main) {
+                assertTrue(viewModel.handleActivationCode("LPA:1\$example.org\$test-code"))
+                viewModel.resolveStartRoute(settings)
+                assertEquals(listOf(AppRoute.FirstRunSetup), viewModel.navigationBackStack.toList())
+                viewModel.finishFirstRunSetup()
+            }
+            withTimeout(10_000) { snapshotFlow { viewModel.firstRunHandoffPending }.first { it } }
+            withContext(Dispatchers.Main) {
+                viewModel.completeFirstRunHandoff()
+                viewModel.endInstantNavigation()
+                assertEquals(listOf(AppRoute.Shell, AppRoute.DownloadProfile), viewModel.navigationBackStack.toList())
+                viewModel.navigateBack()
+            }
+        }
+    }
+
+    @Test
+    fun firstRunReaderSetupChildSurvivesRestoration() {
+        withInitialSettings(AppSettings()) { viewModel ->
+            viewModel.resolveStartRoute(AppSettings())
+            viewModel.navigate(AppRoute.RemoteDevices)
+            val snapshot = viewModel.navigationSnapshot()
+            viewModel.restoreNavigation(snapshot)
+            assertEquals(listOf(AppRoute.FirstRunSetup, AppRoute.RemoteDevices), viewModel.navigationBackStack.toList())
             viewModel.navigateBack()
+            assertEquals(listOf(AppRoute.FirstRunSetup), viewModel.navigationBackStack.toList())
+        }
+    }
+
+    @Test
+    fun onboardingChoicesArePersistedBeforeTheShellOpens() {
+        val application = ApplicationProvider.getApplicationContext<HyperLpaApplication>()
+        val original = runBlocking { application.settingsStore.settings.first() }
+        try {
+            withAsyncInitialSettings(AppSettings()) { viewModel ->
+                withContext(Dispatchers.Main) {
+                    viewModel.resolveStartRoute(AppSettings())
+                    viewModel.setOnboardingPreference(OnboardingPreference.OPERATOR_ICONS, !original.loadOperatorIcons)
+                    viewModel.setOnboardingPreference(OnboardingPreference.SIZE_ESTIMATES, !original.estimateProfileSize)
+                    viewModel.setOnboardingPreference(OnboardingPreference.PROFILE_ICONS, !original.showProfileIconOnHome)
+                    viewModel.setProfileLayout(ProfileLayout.WATERFALL)
+                    viewModel.finishFirstRunSetup()
+                    viewModel.finishFirstRunSetup()
+                }
+                withTimeout(10_000) { snapshotFlow { viewModel.firstRunHandoffPending }.first { it } }
+                val saved = application.settingsStore.settings.first()
+                assertEquals(!original.loadOperatorIcons, saved.loadOperatorIcons)
+                assertEquals(!original.estimateProfileSize, saved.estimateProfileSize)
+                assertEquals(!original.showProfileIconOnHome, saved.showProfileIconOnHome)
+                assertEquals(ProfileLayout.WATERFALL, saved.profileLayout)
+                assertTrue(saved.compatibilityWizardCompleted)
+                withContext(Dispatchers.Main) {
+                    assertEquals(listOf(AppRoute.FirstRunSetup, AppRoute.Shell), viewModel.navigationBackStack.toList())
+                }
+            }
+        } finally {
+            runBlocking {
+                application.settingsStore.setLoadOperatorIcons(original.loadOperatorIcons)
+                application.settingsStore.setEstimateProfileSize(original.estimateProfileSize)
+                application.settingsStore.setShowProfileIconOnHome(original.showProfileIconOnHome)
+                application.settingsStore.setProfileLayout(original.profileLayout)
+            }
         }
     }
 
@@ -156,6 +220,25 @@ class StartupTest {
             } finally {
                 store.clear()
             }
+        }
+    }
+
+    private fun withAsyncInitialSettings(settings: AppSettings, check: suspend (HyperLpaViewModel) -> Unit) = runBlocking {
+        val application = ApplicationProvider.getApplicationContext<HyperLpaApplication>()
+        val originalCompleted = application.settingsStore.settings.first().compatibilityWizardCompleted
+        val store = ViewModelStore()
+        val viewModel = withContext(Dispatchers.Main) {
+            ViewModelProvider(store, HyperLpaViewModel.Factory(
+                application = application, settingsStore = application.settingsStore,
+                metadataStore = application.metadataStore, repository = application.lpaRepository,
+                cloudService = application.cloudService, notificationHistoryStore = application.notificationHistoryStore,
+                supportReportBuilder = application.supportReportBuilder, provisioningCoordinator = application.provisioningCoordinator,
+                initialSettings = settings,
+            ))[HyperLpaViewModel::class.java]
+        }
+        try { check(viewModel) } finally {
+            withContext(Dispatchers.Main) { store.clear() }
+            application.settingsStore.setCompatibilityWizardCompleted(originalCompleted)
         }
     }
 

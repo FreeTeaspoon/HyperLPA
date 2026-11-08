@@ -59,6 +59,7 @@ fun DetailLazyScaffold(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     showBackButton: Boolean = true,
+    showTopBar: Boolean = true,
     fullWidth: Boolean = false,
     refreshEnabled: Boolean = true,
     actions: @Composable RowScope.() -> Unit = {},
@@ -69,10 +70,16 @@ fun DetailLazyScaffold(
     isRefreshing: Boolean = false,
     onRefresh: (() -> Unit)? = null,
     listState: LazyListState = rememberLazyListState(),
+    scrollOnlyWhenOverflowing: Boolean = false,
     pageState: PageStateKind = PageStateKind.CONTENT,
     pageStateContent: @Composable (PageStateKind) -> Unit = {},
     content: LazyListScope.(sidePadding: Dp) -> Unit,
 ) {
+    val scrollingEnabled by remember(listState, scrollOnlyWhenOverflowing) {
+        derivedStateOf {
+            !scrollOnlyWhenOverflowing || listState.canScrollForward || listState.canScrollBackward
+        }
+    }
     var retainedContent by remember { mutableStateOf(content) }
     if (pageState == PageStateKind.CONTENT) retainedContent = content
     val scrollBehavior = MiuixScrollBehavior()
@@ -159,70 +166,72 @@ fun DetailLazyScaffold(
             containerColor = if (hasBackground) Color.Transparent else MiuixTheme.colorScheme.surface,
             bottomBar = bottomBar,
             topBar = {
-                val navigationIcon: @Composable () -> Unit = {
-                    if (showBackButton) {
-                        IconButton(onClick = onBack) {
-                            Icon(
-                                MiuixIcons.Back,
-                                contentDescription = stringResource(app.hyperlpa.R.string.common_back),
-                            )
+                if (showTopBar) {
+                    val navigationIcon: @Composable () -> Unit = {
+                        if (showBackButton) {
+                            IconButton(onClick = onBack) {
+                                Icon(
+                                    MiuixIcons.Back,
+                                    contentDescription = stringResource(app.hyperlpa.R.string.common_back),
+                                )
+                            }
                         }
                     }
-                }
-                if (hasBackground) {
-                    Box {
-                        if (backdrop != null) {
-                            BlurredBar(
-                                backdrop = backdrop,
-                                modifier = Modifier
-                                    .matchParentSize()
-                                    .graphicsLayer { alpha = collapsedBarProgress },
-                                alpha = 0.8f,
-                                progressive = true,
-                                scrollBehavior = scrollBehavior,
-                            ) {}
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .matchParentSize()
-                                    .graphicsLayer { alpha = collapsedBarProgress }
-                                    .background(MiuixTheme.colorScheme.surface),
-                            )
-                        }
-                        SmallTopAppBar(
-                            title = collapsedTitle.orEmpty(),
-                            color = Color.Transparent,
-                            titleColor = MiuixTheme.colorScheme.onSurface.copy(
-                                alpha = collapsedBarProgress,
-                            ),
-                            scrollBehavior = scrollBehavior,
-                            navigationIcon = navigationIcon,
-                            actions = actions,
-                        )
-                    }
-                } else {
-                    val topBarColor = if (backdrop == null) MiuixTheme.colorScheme.surface else Color.Transparent
-                    BlurredBar(
-                        backdrop = backdrop,
-                        progressive = true,
-                        scrollBehavior = scrollBehavior,
-                    ) {
-                        if (title.isBlank()) {
+                    if (hasBackground) {
+                        Box {
+                            if (backdrop != null) {
+                                BlurredBar(
+                                    backdrop = backdrop,
+                                    modifier = Modifier
+                                        .matchParentSize()
+                                        .graphicsLayer { alpha = collapsedBarProgress },
+                                    alpha = 0.8f,
+                                    progressive = true,
+                                    scrollBehavior = scrollBehavior,
+                                ) {}
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .matchParentSize()
+                                        .graphicsLayer { alpha = collapsedBarProgress }
+                                        .background(MiuixTheme.colorScheme.surface),
+                                )
+                            }
                             SmallTopAppBar(
-                                title = title,
-                                color = topBarColor,
+                                title = collapsedTitle.orEmpty(),
+                                color = Color.Transparent,
+                                titleColor = MiuixTheme.colorScheme.onSurface.copy(
+                                    alpha = collapsedBarProgress,
+                                ),
                                 scrollBehavior = scrollBehavior,
                                 navigationIcon = navigationIcon,
                                 actions = actions,
                             )
-                        } else {
-                            AdaptiveTopAppBar(
-                                title = title,
-                                color = topBarColor,
-                                scrollBehavior = scrollBehavior,
-                                navigationIcon = navigationIcon,
-                                actions = actions,
-                            )
+                        }
+                    } else {
+                        val topBarColor = if (backdrop == null) MiuixTheme.colorScheme.surface else Color.Transparent
+                        BlurredBar(
+                            backdrop = backdrop,
+                            progressive = true,
+                            scrollBehavior = scrollBehavior,
+                        ) {
+                            if (title.isBlank()) {
+                                SmallTopAppBar(
+                                    title = title,
+                                    color = topBarColor,
+                                    scrollBehavior = scrollBehavior,
+                                    navigationIcon = navigationIcon,
+                                    actions = actions,
+                                )
+                            } else {
+                                AdaptiveTopAppBar(
+                                    title = title,
+                                    color = topBarColor,
+                                    scrollBehavior = scrollBehavior,
+                                    navigationIcon = navigationIcon,
+                                    actions = actions,
+                                )
+                            }
                         }
                     }
                 }
@@ -253,10 +262,11 @@ fun DetailLazyScaffold(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .scrollEndHaptic()
-                                .overScrollVertical()
-                                .nestedScroll(scrollBehavior.nestedScrollConnection)
+                                .overScrollVertical(isEnabled = { scrollingEnabled })
+                                .then(if (showTopBar) Modifier.nestedScroll(scrollBehavior.nestedScrollConnection) else Modifier)
                                 .nestedScroll(backgroundScrollConnection),
                             state = listState,
+                            userScrollEnabled = scrollingEnabled,
                             overscrollEffect = null,
                             contentPadding = PaddingValues(
                                 start = sidePadding,
@@ -291,7 +301,7 @@ fun DetailLazyScaffold(
                         pullToRefreshState = refreshState,
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(top = padding.calculateTopPadding() + RefreshHeaderTopGap),
-                        topAppBarScrollBehavior = scrollBehavior, content = result)
+                        topAppBarScrollBehavior = scrollBehavior.takeIf { showTopBar }, content = result)
                 } else result()
             }
         }

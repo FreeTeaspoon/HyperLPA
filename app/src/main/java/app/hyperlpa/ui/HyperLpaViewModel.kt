@@ -65,6 +65,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.CancellationException
@@ -289,6 +290,9 @@ class HyperLpaViewModel(
     private var pendingBackupPassword: CharArray? = null
     private var notificationPermissionContinuation: ((Boolean) -> Unit)? = null
     private var runtimePermissionRequestInProgress = false
+    private var onboardingReaderSetupStarted = false
+    var finishingFirstRun by mutableStateOf(false)
+        private set
 
     @Suppress("UNCHECKED_CAST")
     val state = combine(
@@ -376,7 +380,7 @@ class HyperLpaViewModel(
         viewModelScope.launch {
             settingsStore.settings.collect { settings ->
                 repository.updateSettings(settings)
-                if (!repository.state.value.initialized) {
+                if (!repository.state.value.initialized && settings.compatibilityWizardCompleted) {
                     repository.discoverReaders(autoConnect = settings.autoLoadProfiles)
                 }
             }
@@ -664,7 +668,7 @@ class HyperLpaViewModel(
         backStack.clear()
         if (routes.isNotEmpty()) {
             if (routes.first() == AppRoute.FirstRunSetup && AppRoute.Shell !in routes) {
-                backStack.add(AppRoute.FirstRunSetup)
+                backStack.addAll(routes)
             } else {
                 backStack.add(AppRoute.Shell)
                 backStack.addAll(routes.filter { it != AppRoute.Shell && it != AppRoute.FirstRunSetup })
@@ -723,10 +727,55 @@ class HyperLpaViewModel(
 
     fun refreshReaders(): Job = viewModelScope.launch {
         dataMutationMutex.withLock {
+            if (!onboardingReaderSetupStarted && !settingsStore.settings.first().compatibilityWizardCompleted) return@withLock
             repository.discoverReaders(autoConnect = true, includeRemoteReaders = true)
         }
     }
+
+    suspend fun enableOnboardingReader(reader: OnboardingReader): Boolean = try {
+        onboardingReaderSetupStarted = true
+        dataMutationMutex.withLock {
+            when (reader) {
+                OnboardingReader.PHONE -> {
+                    settingsStore.setEnableNBridge(true)
+                    settingsStore.setEnableOmapi(true)
+                }
+                OnboardingReader.USB -> settingsStore.setEnableUsbCcid(true)
+                OnboardingReader.BLUETOOTH -> settingsStore.setEnableBle(true)
+                OnboardingReader.PAIRED_DEVICE -> Unit
+            }
+            repository.updateSettings(settingsStore.settings.first())
+        }
+        true
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: Exception) {
+        repository.reportFailure(error)
+        false
+    }
+
+    fun checkOnboardingReader(reader: OnboardingReader): Job = viewModelScope.launch {
+        try {
+            dataMutationMutex.withLock {
+                repository.updateSettings(settingsStore.settings.first())
+                repository.discoverReaders(autoConnect = false, includeRemoteReaders = reader == OnboardingReader.PAIRED_DEVICE)
+                val candidates = repository.state.value.readers.filter { it.available && reader.accepts(it) }
+                    .sortedBy { it.eid == null }
+                for (candidate in candidates) {
+                    if (repository.connect(candidate.id) is OperationOutcome.Success) {
+                        settingsStore.setLastReaderId(candidate.id)
+                        break
+                    }
+                }
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            repository.reportFailure(error)
+        }
+    }
     fun onSimStateChanged() {
+        if (!onboardingReaderSetupStarted && !state.value.settings.compatibilityWizardCompleted) return
         simStateRefreshJob?.cancel()
         simStateRefreshJob = viewModelScope.launch {
             delay(1_200)
@@ -1454,10 +1503,37 @@ class HyperLpaViewModel(
         }
     }
     fun finishFirstRunSetup() {
-        if (backStack.lastOrNull() != AppRoute.FirstRunSetup) return
-        viewModelScope.launch { settingsStore.setCompatibilityWizardCompleted(true) }
-        backStack.add(AppRoute.Shell)
-        firstRunHandoffPending = true
+        if (backStack.lastOrNull() != AppRoute.FirstRunSetup || finishingFirstRun) return
+        finishingFirstRun = true
+        launch {
+            try {
+                // Serialize completion after the user's preference writes, before navigating.
+                settingsStore.setCompatibilityWizardCompleted(true)
+                backStack.add(AppRoute.Shell)
+                firstRunHandoffPending = true
+            } finally {
+                finishingFirstRun = false
+            }
+        }
+    }
+
+    fun setOnboardingPreference(preference: OnboardingPreference, value: Boolean) {
+        when (preference) {
+            OnboardingPreference.OPERATOR_ICONS -> setLoadOperatorIcons(value)
+            OnboardingPreference.SIZE_ESTIMATES -> setEstimateProfileSize(value)
+            OnboardingPreference.PROFILE_ICONS -> setShowProfileIconOnHome(value)
+            OnboardingPreference.PROFILE_SIZES -> setShowProfileSizeOnHome(value)
+            OnboardingPreference.ICCID -> setShowProfileIccidOnHome(value)
+            OnboardingPreference.NAMES -> setShowProfileNameOnHome(value)
+            OnboardingPreference.PROVIDERS -> setShowProfileProviderOnHome(value)
+            OnboardingPreference.COUNTRY_FLAGS -> setShowProfileCountryFlagOnHome(value)
+            OnboardingPreference.TAGS -> setShowProfileTagsOnHome(value)
+            OnboardingPreference.REMINDERS -> setShowProfileRemindersOnHome(value)
+            OnboardingPreference.SWITCHES -> setShowProfileSwitchOnHome(value)
+            OnboardingPreference.SEARCH -> setShowProfileSearch(value)
+            OnboardingPreference.READER_SELECTOR -> setShowReaderSelectorOnHome(value)
+            OnboardingPreference.EID -> setShowEidOnHome(value)
+        }
     }
 
     /** Drops the first-run page from under the shell once the shell's open animation has settled. */

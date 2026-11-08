@@ -80,6 +80,7 @@ import app.hyperlpa.ui.screens.AppearanceSettingsScreen
 import app.hyperlpa.ui.screens.BatchDownloadScreen
 import app.hyperlpa.ui.screens.BackupRestoreSettingsScreen
 import app.hyperlpa.ui.screens.CompatibilityWizardScreen
+import app.hyperlpa.ui.screens.OnboardingScreen
 import app.hyperlpa.ui.screens.DownloadProfileScreen
 import app.hyperlpa.ui.screens.ProfileDownloadConfirmationScreen
 import app.hyperlpa.ui.screens.ProfileDownloadResultScreen
@@ -542,12 +543,24 @@ fun HyperLpaApp(
                 transition = InstantNavTransition,
                 swipeDismiss = NavSwipeDirection.None,
             ) {
-                CompatibilityWizardScreen(
+                OnboardingScreen(
                     state = currentState.value,
-                    firstRun = true,
-                    onBack = {},
-                    onRefreshReaders = { viewModel.refreshReaders().join() },
-                    onContinue = viewModel::finishFirstRunSetup,
+                    bluetoothReaderState = currentBluetoothReaderState.value,
+                    onPreferenceChange = viewModel::setOnboardingPreference,
+                    onLayoutChange = viewModel::setProfileLayout,
+                    onCheckReader = { reader ->
+                        if (viewModel.enableOnboardingReader(reader)) when {
+                            reader == OnboardingReader.BLUETOOTH && !currentBluetoothReaderState.value.permissionGranted ->
+                                currentOnRequestBluetoothPermission.value()
+                            reader == OnboardingReader.BLUETOOTH && !currentBluetoothReaderState.value.adapterEnabled ->
+                                currentOnOpenBluetoothSettings.value()
+                            else -> viewModel.checkOnboardingReader(reader).join()
+                        }
+                    },
+                    onOpenPairedDevices = { viewModel.navigate(AppRoute.RemoteDevices) },
+                    onFinish = viewModel::finishFirstRunSetup,
+                    finishing = viewModel.finishingFirstRun,
+                    active = backStack.lastOrNull() == AppRoute.FirstRunSetup,
                 )
             }
             entry<AppRoute.NotificationSettings>(swipeDismiss = swipeBackDirection) {

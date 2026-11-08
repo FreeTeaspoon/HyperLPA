@@ -711,7 +711,7 @@ private const val ProfileEnrichmentLoadingDelayMillis = 500L
 private val ProfilesFirstCardGap = 12.dp
 
 @Composable
-private fun ProfileCard(
+internal fun ProfileCard(
     profile: ProfileInfo,
     artwork: ProfileArtworkState,
     state: HyperLpaUiState,
@@ -719,6 +719,7 @@ private fun ProfileCard(
     onOpen: () -> Unit,
     onEnableChange: (Boolean) -> Unit,
     onLongPress: () -> Unit,
+    preview: Boolean = false,
 ) {
     val isEnabled = profile.state == ProfileState.ENABLED
     val fallbackName = stringResource(R.string.profile_default_name)
@@ -839,9 +840,9 @@ private fun ProfileCard(
             },
         cornerRadius = 16.dp,
         insideMargin = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
-        pressFeedbackType = PressFeedbackType.Sink,
-        onClick = onOpen,
-        onLongPress = onLongPress.takeIf { switchEnabled },
+        pressFeedbackType = if (preview) PressFeedbackType.None else PressFeedbackType.Sink,
+        onClick = onOpen.takeUnless { preview },
+        onLongPress = onLongPress.takeIf { switchEnabled && !preview },
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -931,7 +932,7 @@ private fun ProfileCard(
             if (state.settings.showProfileSwitchOnHome) {
                 Switch(
                     checked = isEnabled,
-                    onCheckedChange = onEnableChange,
+                    onCheckedChange = onEnableChange.takeUnless { preview },
                     enabled = switchEnabled,
                     colors = SwitchDefaults.switchColors(
                         disabledCheckedThumbColor = MiuixTheme.colorScheme.onPrimary,

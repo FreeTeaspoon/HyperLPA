@@ -76,7 +76,7 @@ class StartupContentTest {
             }
         }
         val label = compose.onAllNodesWithText(
-            if (firstRun) "Checking eUICC access" else "Settings",
+            if (firstRun) "Welcome to HyperLPA" else "Settings",
         ).onFirst()
         label.assertIsDisplayed()
         // Semantics can still exist inside an alpha=0 layer. Inspect the pixels

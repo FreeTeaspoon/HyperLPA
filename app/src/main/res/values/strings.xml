@@ -93,6 +93,51 @@
     <string name="common_not_granted">Not granted</string>
     <string name="common_unavailable">Unavailable</string>
 
+    <!-- First-run onboarding -->
+    <string name="onboarding_welcome">Welcome to HyperLPA</string>
+    <string name="onboarding_welcome_summary">Manage eSIM profiles with a compatible card and reader.</string>
+    <string name="onboarding_step">%1$d of %2$d</string>
+    <string name="onboarding_get_started">Get started</string>
+    <string name="onboarding_reader_title">Connect your reader</string>
+    <string name="onboarding_reader_phone">This phone</string>
+    <string name="onboarding_reader_usb">USB reader</string>
+    <string name="onboarding_reader_bluetooth">Bluetooth reader</string>
+    <string name="onboarding_reader_paired">Paired Android device</string>
+    <string name="onboarding_phone_hint">Requires a compatible eSIM card and SIM slot.</string>
+    <string name="onboarding_usb_hint">Plug in your reader with an eSIM card inserted.</string>
+    <string name="onboarding_bluetooth_hint">Pair your reader in Android settings first.</string>
+    <string name="onboarding_paired_hint">Use a reader connected to another Android device.</string>
+    <string name="onboarding_check_phone">Check this phone</string>
+    <string name="onboarding_connect_reader">Connect reader</string>
+    <string name="onboarding_pair_device">Pair a device</string>
+    <string name="onboarding_setup_later">Set up later</string>
+    <string name="onboarding_reader_found">eSIM card found</string>
+    <string name="onboarding_reader_found_summary">Ready to manage profiles.</string>
+    <string name="onboarding_reader_missing">Try another reader or set up later.</string>
+    <string name="onboarding_online_title">Icons &amp; size estimates</string>
+    <string name="onboarding_online_intro">Optional online extras. Change them anytime in Settings.</string>
+    <string name="onboarding_download_icons">Download operator icons</string>
+    <string name="onboarding_estimate_sizes">Estimate profile sizes</string>
+    <string name="onboarding_sizes_summary">When measured sizes are unavailable.</string>
+    <string name="onboarding_local_data">Measured sizes and custom icons remain available with these options off.</string>
+    <string name="onboarding_online_privacy">What connects to the internet?</string>
+    <string name="onboarding_appearance_title">Make Profiles yours</string>
+    <string name="onboarding_more_options">More options</string>
+    <string name="onboarding_waterfall_hint">Waterfall uses multiple columns when there is room.</string>
+    <string name="onboarding_live_preview">Profile preview</string>
+    <string name="onboarding_sample_data">Sample data</string>
+    <string name="onboarding_sample_preview">Read-only preview with fictional eSIM profiles</string>
+    <string name="onboarding_sample_everyday">Everyday plan</string>
+    <string name="onboarding_sample_travel">Japan trip</string>
+    <string name="onboarding_sample_provider">Example Mobile</string>
+    <string name="onboarding_sample_travel_provider">Travel eSIM</string>
+    <string name="onboarding_sample_personal_tag">Personal</string>
+    <string name="onboarding_sample_travel_tag">Travel</string>
+    <string name="onboarding_ready_title">You are ready</string>
+    <string name="onboarding_ready_connected">Your reader is connected.</string>
+    <string name="onboarding_ready_later">Connect a reader anytime.</string>
+    <string name="onboarding_open_app">Open HyperLPA</string>
+
     <!-- About -->
     <string name="about_version_summary">v%1$s (%2$d)</string>
 
