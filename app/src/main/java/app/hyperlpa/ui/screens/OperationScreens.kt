@@ -51,6 +51,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.pluralStringResource
@@ -150,7 +151,6 @@ import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
-import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.basic.SnackbarDuration
@@ -1521,19 +1521,18 @@ internal fun ProfileDownloadProgressBar(
     }
     OverlayDialog(
         show = operation != null,
-        modifier = modifier.semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
+        modifier = modifier.semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }
+            .then(if (targetProgress == null) Modifier.clip(RoundedCornerShape(36.dp)) else Modifier),
         cornerRadius = 36.dp,
+        backgroundColor = if (targetProgress == null && !app.hyperlpa.ui.theme.LocalDarkTheme.current)
+            androidx.compose.ui.graphics.Color.White else MiuixTheme.colorScheme.background,
         onDismissRequest = null,
         onDismissFinished = { if (operation == null) retained = null },
     ) {
         NavigationBackHandler(state = rememberNavigationEventState(currentInfo = NavigationEventInfo.None),
             isBackEnabled = true, onBackCompleted = {})
         if (targetProgress == null) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-                verticalAlignment = Alignment.CenterVertically) {
-                InfiniteProgressIndicator(size = 24.dp, color = MiuixTheme.colorScheme.onSurface)
-                Text(stageText, style = MiuixTheme.textStyles.body1)
-            }
+            app.hyperlpa.ui.components.OperationLoadingRow(stageText)
         } else Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically) {

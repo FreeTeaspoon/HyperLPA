@@ -28,7 +28,7 @@ fun miuixGit(vararg args: String): Pair<Int, String> {
     val output = process.inputStream.bufferedReader().use { it.readText() }
     return process.waitFor() to output.trim()
 }
-check(miuixGit("rev-parse", "HEAD").second == "2afdbb39f1aac5747165cc354cafd4b918fa55a5") {
+check(miuixGit("rev-parse", "HEAD").second == "05f4ebf4df1fe5ae34bb74305b9a27a0023e78b9") {
     "Initialize the pinned Miuix submodule before building: git submodule update --init --recursive"
 }
 if (miuixGit("apply", "--reverse", "--check", miuixPatch.absolutePath).first != 0) {
