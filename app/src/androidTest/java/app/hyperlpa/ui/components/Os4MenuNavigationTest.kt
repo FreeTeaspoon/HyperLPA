@@ -9,12 +9,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertCountEquals
-import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import app.hyperlpa.data.settings.AppSettings
 import app.hyperlpa.ui.theme.HyperLpaTheme
 import org.junit.Rule
@@ -47,19 +48,19 @@ class Os4MenuNavigationTest {
 
         fun openMenu() {
             compose.mainClock.autoAdvance = true
-            compose.onNodeWithTag("overflow-icon").performClick()
+            compose.onNodeWithTag("overflow-icon", useUnmergedTree = true).performTouchInput { click() }
             compose.onNodeWithText("Open next page", useUnmergedTree = true).assertExists()
             compose.mainClock.autoAdvance = false
         }
 
         openMenu()
         compose.onNodeWithText("Stay here", useUnmergedTree = true).performClick()
-        compose.mainClock.advanceTimeBy(128)
+        compose.mainClock.advanceTimeBy(112)
         compose.onAllNodesWithTag("overflow-icon", useUnmergedTree = true).assertCountEquals(2)
 
         openMenu()
         compose.onNodeWithText("Open next page", useUnmergedTree = true).performClick()
-        compose.mainClock.advanceTimeBy(128)
+        compose.mainClock.advanceTimeBy(112)
         compose.onNodeWithText("Next page").assertExists()
         compose.onAllNodesWithTag("overflow-icon", useUnmergedTree = true).assertCountEquals(1)
 
