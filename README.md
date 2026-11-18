@@ -134,6 +134,10 @@ Report bugs or suggest changes in the [issue tracker](https://github.com/FreeTea
 Include your reader backend, Android version, device model, and a redacted support
 report when useful. Never post activation codes, eUICC identifiers, or credentials.
 
+When preparing a release, add a Markdown file named after the tag in
+[`.github/release-notes/`](.github/release-notes/). List what users will notice,
+including new features and fixes. GitHub publishes that file as the release notes.
+
 HyperLPA uses Kotlin, Jetpack Compose, Miuix, and `lpac-jni`.
 Licensed under [GPL-3.0](LICENSE). See [NOTICE](NOTICE) for third-party attribution
 and the [reference audit](docs/reference-audit.md) for source and licensing decisions.
