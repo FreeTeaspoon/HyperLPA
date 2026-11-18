@@ -230,7 +230,7 @@ fun HyperLpaApp(
 
     val finishedPage = rememberAppBackdrop()
     CompositionLocalProvider(LocalMiuixSnackbar provides showSnackbar, LocalDialogBackdrop provides finishedPage) {
-        Os4MenuHost {
+        Os4MenuHost(navigationOwner = navigationOwner) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             containerColor = navSurface,

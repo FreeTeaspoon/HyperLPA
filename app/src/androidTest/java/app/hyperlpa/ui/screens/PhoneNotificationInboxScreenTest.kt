@@ -290,5 +290,5 @@ class PhoneNotificationInboxScreenTest {
 /** Match the application's window-level menu host for isolated message rows. */
 @Composable
 private fun InboxTestTheme(settings: AppSettings, content: @Composable () -> Unit) {
-    HyperLpaTheme(settings) { Os4MenuHost(content) }
+    HyperLpaTheme(settings) { Os4MenuHost(content = content) }
 }

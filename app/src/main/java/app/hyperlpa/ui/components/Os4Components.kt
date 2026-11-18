@@ -271,14 +271,16 @@ fun Os4DropdownPreference(
 }
 
 /** Menus live in a full-window sibling of the captured page, not in their 44dp anchor. */
-private class MenuRegistry {
+private class MenuRegistry(val destination: () -> Any) {
     val menus = mutableStateMapOf<Any, @Composable BoxScope.() -> Unit>()
 }
 private val LocalMenuRegistry = staticCompositionLocalOf<MenuRegistry> { error("Missing OS4 menu host") }
 
 @Composable
-fun Os4MenuHost(content: @Composable () -> Unit) {
-    val registry = remember { MenuRegistry() }
+fun Os4MenuHost(navigationOwner: Any? = null, content: @Composable () -> Unit) {
+    // A destination visit owns its popups, even while its page remains composed during navigation.
+    val destination = rememberUpdatedState(remember(navigationOwner) { Any() })
+    val registry = remember { MenuRegistry { destination.value } }
     CompositionLocalProvider(LocalMenuRegistry provides registry) {
         Box(Modifier.fillMaxSize()) {
             content()
@@ -295,6 +297,7 @@ fun Os4IconDropdownMenu(entry: DropdownEntry, flatAnchor: Boolean = false,
     val registry = LocalMenuRegistry.current
     val token = remember { Any() }
     val anchor = rememberGlassPopupAnchor()
+    var openedOn by remember { mutableStateOf<Any?>(null) }
     var show by remember { mutableStateOf(false) }
     val haptic = LocalHapticFeedback.current
     val scene = LocalDialogBackdrop.current
@@ -303,9 +306,12 @@ fun Os4IconDropdownMenu(entry: DropdownEntry, flatAnchor: Boolean = false,
         haptic.performHapticFeedback(HapticFeedbackType.Confirm)
     } }))
     val menu: @Composable BoxScope.() -> Unit = {
-        GlassIconDropdownMenu(show = show, onDismissRequest = { show = false }, anchor = anchor,
-            anchorContent = content, entries = entries, backdrop = scene,
-            visuals = GlassPopupDefaults.visuals(style = GlassDefaults.style(dark), stroke = GlassEdgeStrokes.forTheme(dark)))
+        if (openedOn === registry.destination()) {
+            GlassIconDropdownMenu(show = show, onDismissRequest = { show = false }, anchor = anchor,
+                anchorContent = content, entries = entries, backdrop = scene,
+                visuals = GlassPopupDefaults.visuals(
+                    style = GlassDefaults.style(dark), stroke = GlassEdgeStrokes.forTheme(dark)))
+        }
     }
     val currentMenu = rememberUpdatedState(menu)
     DisposableEffect(registry, token) {
@@ -313,7 +319,12 @@ fun Os4IconDropdownMenu(entry: DropdownEntry, flatAnchor: Boolean = false,
         onDispose { registry.menus.remove(token) }
     }
     val onClick: () -> Unit = {
-        if (!show) { haptic.performHapticFeedback(HapticFeedbackType.ContextClick); show = true }
+        val destination = registry.destination()
+        if (!show || openedOn !== destination) {
+            haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
+            openedOn = destination
+            show = true
+        }
     }
     val size = GlassTopAppBarDefaults.ButtonSize
     val anchorModifier = Modifier.glassPopupAnchor(anchor, cornerRadius = size / 2, floating = !flatAnchor)
