@@ -21,7 +21,12 @@ import org.junit.runner.RunWith
 import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
-/** Opt-in live HTTPS/WebSocket test. Only the card engine is simulated; no real SIM is changed. */
+/** Requires an explicitly configured test relay. The card engine is simulated. */
+@Retention(AnnotationRetention.RUNTIME)
+@Target(AnnotationTarget.FUNCTION)
+annotation class LiveRelayTest
+
+/** Tests the device journal locally and exercises the relay when configured. */
 @RunWith(AndroidJUnit4::class)
 class RemoteDevicesIntegrationTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
@@ -75,6 +80,7 @@ class RemoteDevicesIntegrationTest {
     }
 
     @Test
+    @LiveRelayTest
     fun foregroundRelayConnectionSurvivesActivityStop() = runBlocking {
         val configFile = File(context.filesDir, "remote-test-config.json")
         assumeTrue("Supply the ignored live relay test configuration", configFile.exists())
@@ -121,6 +127,7 @@ class RemoteDevicesIntegrationTest {
     }
 
     @Test
+    @LiveRelayTest
     fun livePairingReaderSelectionMutationsDownloadConfirmationReconnectAndRevocation() = runBlocking {
         val configFile = File(context.filesDir, "remote-test-config.json")
         assumeTrue("Supply the ignored live relay test configuration", configFile.exists())
