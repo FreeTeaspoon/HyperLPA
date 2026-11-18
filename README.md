@@ -19,21 +19,48 @@ Connect through a compatible phone, USB or Bluetooth reader, or a paired Android
 
 ## Screenshots
 
-<table>
-  <tr>
-    <td align="center"><img src="screenshots/profiles.png" alt="Profiles with sample Telstra, Vodafone and travel plans" width="250"><br>Profiles</td>
-    <td align="center"><img src="screenshots/profile-details.png" alt="Sample Orange Holiday Europe profile with tags and a reminder" width="250"><br>Profile details</td>
-    <td align="center"><img src="screenshots/download.png" alt="Orange Holiday Europe download confirmation with estimated storage" width="250"><br>Download a profile</td>
-  </tr>
-  <tr>
-    <td align="center"><img src="screenshots/notifications.png" alt="Sample notifications from paired travel and home phones" width="250"><br>Notifications</td>
-    <td align="center"><img src="screenshots/tools.png" alt="Profile management, organisation and diagnostic tools" width="250"><br>Tools</td>
-    <td align="center"><img src="screenshots/profiles-dark.png" alt="Sample profiles in dark mode" width="250"><br>Dark mode</td>
-  </tr>
+<table width="100%">
+<tr>
+<td width="50%" align="center">
+
+[![Profiles](screenshots/profiles.png)](screenshots/profiles.png)
+
+</td>
+<td width="50%" align="center">
+
+[![Profile details](screenshots/profile-details.png)](screenshots/profile-details.png)
+
+</td>
+</tr>
+<tr>
+<td align="center">
+
+[![Download confirmation](screenshots/download.png)](screenshots/download.png)
+
+</td>
+<td align="center">
+
+[![Notifications](screenshots/notifications.png)](screenshots/notifications.png)
+
+</td>
+</tr>
+<tr>
+<td align="center">
+
+[![Tools](screenshots/tools.png)](screenshots/tools.png)
+
+</td>
+<td align="center">
+
+[![Profiles in dark mode](screenshots/profiles-dark.png)](screenshots/profiles-dark.png)
+
+</td>
+</tr>
 </table>
 
-Screenshots use fictional profiles, identifiers, and messages. Carrier names are
-illustrative and do not imply affiliation.
+Screenshots show the Miuix OS4 Glass interface with the Miuix floating bottom bar.
+Profiles, identifiers, and messages are fictional. Carrier names are illustrative
+and do not imply affiliation.
 
 ## Get started
 

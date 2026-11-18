@@ -685,13 +685,24 @@ class HyperLpaViewModel(
         }
     }
 
-    fun navigate(route: AppRoute) {
-        if (backStack.lastOrNull() != route) backStack.add(route)
+    private val routeGuard = app.hyperlpa.ui.navigation.RouteTransitionGuard(backStack)
+
+    fun navigate(route: AppRoute, expected: NavKey? = backStack.lastOrNull()) {
+        if (firstRunHandoffPending || instantNavigation) return
+        if (routeGuard.open(expected, route)) backStack.add(route)
     }
 
-    fun navigateBack() {
+    fun navigateBack() = navigateBack(backStack.lastOrNull())
+
+    fun navigateBack(expected: NavKey?) {
+        if (!routeGuard.back(expected) || firstRunHandoffPending || instantNavigation) return
         if (operationPopupLocked) { backAfterOperation = true; return }
         if (profileDownloadFinishInProgress) return
+        fun pop() {
+            if (backStack.size > 1) {
+                backStack.removeAt(backStack.lastIndex)
+            }
+        }
         when (backStack.lastOrNull()) {
             AppRoute.ConfirmProfileDownload -> {
                 val operation = repository.state.value.operation as? LpaOperation.Downloading
@@ -701,11 +712,11 @@ class HyperLpaViewModel(
             }
             AppRoute.DownloadProfile -> {
                 activationCodeDraft.value = ""
-                if (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
+                pop()
             }
             AppRoute.CompatibilityWizard -> dismissCompatibilityWizard()
             is AppRoute.ProfileDownloadResult -> finishProfileDownload()
-            else -> if (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
+            else -> pop()
         }
     }
 
@@ -717,7 +728,9 @@ class HyperLpaViewModel(
         val activationCode = extractActivationCode(value) ?: return false
         activationCodeDraft.value = activationCode
         if (backStack.lastOrNull() != AppRoute.FirstRunSetup &&
-            state.value.settings.compatibilityWizardCompleted) navigate(AppRoute.DownloadProfile)
+            state.value.settings.compatibilityWizardCompleted) {
+            navigate(AppRoute.DownloadProfile)
+        }
         return true
     }
 
@@ -960,8 +973,9 @@ class HyperLpaViewModel(
         repository.discoverProfiles(smdsAddress)
     }
     fun useDiscoveredSmdpAddress(address: String) {
+        if (!routeGuard.open(AppRoute.EuiccDetails, AppRoute.DownloadProfile)) return
         activationCodeDraft.value = address
-        navigate(AppRoute.DownloadProfile)
+        navigate(AppRoute.DownloadProfile, AppRoute.EuiccDetails)
     }
     fun clearFailure() = repository.clearFailure()
 
@@ -1496,10 +1510,20 @@ class HyperLpaViewModel(
             }
         }
     }
-    fun dismissCompatibilityWizard() = launch {
-        settingsStore.setCompatibilityWizardCompleted(true)
-        if (navigationBackStack.lastOrNull() == AppRoute.CompatibilityWizard) {
-            navigationBackStack.removeAt(navigationBackStack.lastIndex)
+    private var dismissingCompatibilityWizard = false
+
+    fun dismissCompatibilityWizard() {
+        if (backStack.lastOrNull() != AppRoute.CompatibilityWizard || dismissingCompatibilityWizard) return
+        dismissingCompatibilityWizard = true
+        launch {
+            try {
+                settingsStore.setCompatibilityWizardCompleted(true)
+                if (navigationBackStack.lastOrNull() == AppRoute.CompatibilityWizard) {
+                    navigationBackStack.removeAt(navigationBackStack.lastIndex)
+                }
+            } finally {
+                dismissingCompatibilityWizard = false
+            }
         }
     }
     fun finishFirstRunSetup() {

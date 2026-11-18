@@ -86,13 +86,14 @@ import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.blur.LayerBackdrop
 import top.yukonga.miuix.kmp.blur.blur
 import top.yukonga.miuix.kmp.blur.drawBackdrop
-import top.yukonga.miuix.kmp.blur.highlight.BloomStroke
-import top.yukonga.miuix.kmp.blur.highlight.Highlight
-import top.yukonga.miuix.kmp.blur.highlight.LightPosition
-import top.yukonga.miuix.kmp.blur.highlight.LightSource
+import top.yukonga.miuix.kmp.material.EdgeStroke
+import top.yukonga.miuix.kmp.material.EdgeLightSource
+import top.yukonga.miuix.kmp.material.EdgePeak
+import top.yukonga.miuix.kmp.material.drawEdgeStroke
+import androidx.compose.ui.draw.drawWithContent
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
-import top.yukonga.miuix.kmp.blur.sensor.rememberDeviceTilt
+import top.yukonga.miuix.kmp.material.sensor.rememberDeviceTilt
 import top.yukonga.miuix.kmp.theme.LocalContentColor
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.Platform
@@ -107,24 +108,14 @@ import kotlin.math.sin
 
 private val LocalIosTabScale = staticCompositionLocalOf { { 1f } }
 
-private val iosIndicatorSpecular: Highlight = Highlight(
+// Retain the separate iOS-like lens and moving dual-peak rim with the current material API.
+private val iosIndicatorSpecular = EdgeStroke(
     width = 1.dp,
-    alpha = 1f,
-    style = BloomStroke(
-        color = Color.White.copy(alpha = 0.12f),
-        innerBlurRadius = 2.0.dp,
-        primaryLight = LightSource(
-            position = LightPosition(0.5f, -0.3f, -0.05f),
-            color = Color.White,
-            intensity = 1f,
-        ),
-        secondaryLight = LightSource(
-            position = LightPosition(0.5f, 0.8f, -0.5f),
-            color = Color.White,
-            intensity = 0.4f,
-        ),
-        dualPeak = true,
-    ),
+    bevel = 2.dp,
+    color = Color.White.copy(alpha = 0.12f),
+    primary = EdgeLightSource(0.5f, -0.3f, -0.05f),
+    secondary = EdgeLightSource(0.5f, 0.8f, -0.5f, intensity = 0.4f),
+    peak = EdgePeak.Dual,
 )
 
 // 与 HighlightStyle.kt 的 LIGHT_REF 保持同步。
@@ -168,22 +159,15 @@ private fun rememberQuantizedGravityAngle(enabled: Boolean): State<Float> {
 
 /** 由量化后的重力方向角计算 `dualPeak` 高光的主光源位置，并在其上叠加 [extraDegrees] 的额外旋转。 */
 private fun gravityRotatedHighlight(
-    base: Highlight,
+    base: EdgeStroke,
     gravityAngleRad: Float,
     extraDegrees: Float,
-): Highlight {
-    val baseStyle = base.style as BloomStroke
-    val basePrimary = baseStyle.primaryLight
+): EdgeStroke {
     val rad = gravityAngleRad + (extraDegrees * PI / 180.0).toFloat()
     return base.copy(
-        style = baseStyle.copy(
-            primaryLight = basePrimary.copy(
-                position = LightPosition(
-                    x = LIGHT_REF_X + cos(rad),
-                    y = LIGHT_REF_Y + sin(rad),
-                    z = basePrimary.position.z,
-                ),
-            ),
+        primary = base.primary.copy(
+            x = LIGHT_REF_X + cos(rad),
+            y = LIGHT_REF_Y + sin(rad),
         ),
     )
 }
@@ -472,10 +456,6 @@ private fun LiquidGlassNavigationBarContent(
                                                 refractionAmount = 24.dp.toPx(),
                                             )
                                         },
-                                        highlight = {
-                                            gravityRotatedHighlight(iosIndicatorSpecular, gravityAngle.value, extraDegrees = -45f)
-                                                .copy(alpha = 0.75f)
-                                        },
                                         layerBlock = {
                                             val width = size.width.coerceAtLeast(1f)
                                             val s = lerp(1f, 1f + 16.dp.toPx() / width, dampedDrag.pressProgress)
@@ -483,7 +463,10 @@ private fun LiquidGlassNavigationBarContent(
                                             scaleY = s
                                         },
                                         onDrawSurface = { drawRect(containerColor) },
-                                    )
+                                    ).drawWithContent {
+                                        drawContent()
+                                        drawEdgeStroke(pillShape, gravityRotatedHighlight(iosIndicatorSpecular, gravityAngle.value, -45f), 0.75f)
+                                    }
                                 } else {
                                     Modifier.background(containerColor, pillShape)
                                 },
@@ -559,10 +542,6 @@ private fun LiquidGlassNavigationBarContent(
                                             chromaticAberration = 0.5f,
                                         )
                                     },
-                                    highlight = {
-                                        gravityRotatedHighlight(iosIndicatorSpecular, gravityAngle.value, extraDegrees = 90f)
-                                            .copy(alpha = dampedDrag.pressProgress)
-                                    },
                                     layerBlock = {
                                         scaleX = dampedDrag.scaleX
                                         scaleY = dampedDrag.scaleY
@@ -579,6 +558,10 @@ private fun LiquidGlassNavigationBarContent(
                                         drawRect(Color.Black.copy(alpha = 0.03f * progress))
                                     },
                                 )
+                                .drawWithContent {
+                                    drawContent()
+                                    drawEdgeStroke(pillShape, gravityRotatedHighlight(iosIndicatorSpecular, gravityAngle.value, 90f), dampedDrag.pressProgress)
+                                }
                                 .innerShadow(shape = pillShape) {
                                     InnerShadow(
                                         radius = 8.dp * dampedDrag.pressProgress,

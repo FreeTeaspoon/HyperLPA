@@ -27,9 +27,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import top.yukonga.miuix.kmp.blur.RuntimeShader
-import top.yukonga.miuix.kmp.blur.asBrush
-import top.yukonga.miuix.kmp.blur.isRuntimeShaderSupported
+import top.yukonga.miuix.kmp.material.RuntimeShader
+import top.yukonga.miuix.kmp.material.RuntimeShaderCache
+import top.yukonga.miuix.kmp.material.LocalRuntimeShaderCache
+import top.yukonga.miuix.kmp.material.asBrush
+import top.yukonga.miuix.kmp.material.isRuntimeShaderSupported
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import kotlin.math.cos
 import kotlin.math.floor
@@ -43,7 +45,7 @@ fun AboutBackgroundEffect(
     alpha: () -> Float = { 1f },
     content: @Composable BoxScope.() -> Unit,
 ) {
-    if (!isRuntimeShaderSupported() || !top.yukonga.miuix.kmp.shader.isRenderEffectSupported()) {
+    if (!isRuntimeShaderSupported() || !top.yukonga.miuix.kmp.material.isRenderEffectSupported()) {
         Box(modifier = modifier, content = content)
         return
     }
@@ -54,7 +56,8 @@ fun AboutBackgroundEffect(
         val playing = dynamicBackground && animationsEnabled && visible
         val surface = MiuixTheme.colorScheme.surface
         val isDark = LocalDarkTheme.current
-        val painter = remember { AboutBackgroundPainter() }
+        val shaderCache = LocalRuntimeShaderCache.current
+        val painter = remember(shaderCache) { AboutBackgroundPainter(shaderCache) }
         val preset = remember(isDark) { AboutBackgroundConfig.get(isDark) }
         val colorStage = remember { Animatable(0f) }
 
@@ -126,16 +129,16 @@ private object AboutBackgroundConfig {
     fun get(isDark: Boolean): Config = if (isDark) Dark else Light
 }
 
-private class AboutBackgroundPainter {
+private class AboutBackgroundPainter(private val shaderCache: RuntimeShaderCache) {
     val runtimeShader by lazy {
-        RuntimeShader(AboutBackgroundShader).also {
+        shaderCache.obtainRuntimeShader("HyperLpaAboutBackground", AboutBackgroundShader).also {
             it.setFloatUniform("uTranslateY", 0f)
             it.setFloatUniform("uNoiseScale", 1.5f)
             it.setFloatUniform("uPointRadiusMulti", 1f)
             it.setFloatUniform("uAlphaMulti", 1f)
         }
     }
-    val brush: Brush get() = runtimeShader.asBrush()
+    val brush: Brush by lazy { runtimeShader.asBrush() }
 
     private val resolution = FloatArray(2)
     private val bound = FloatArray(4)

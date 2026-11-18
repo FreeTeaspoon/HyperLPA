@@ -34,6 +34,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.onSizeChanged
@@ -50,34 +52,36 @@ import androidx.compose.ui.unit.sp
 import app.hyperlpa.BuildConfig
 import app.hyperlpa.R
 import app.hyperlpa.ui.adaptive.horizontalCutoutPadding
-import app.hyperlpa.ui.components.BlurredBar
+import app.hyperlpa.ui.components.Os4TopAppBar
+import app.hyperlpa.ui.components.rememberHeaderViewport
 import app.hyperlpa.ui.components.effect.AboutBackgroundEffect
 import app.hyperlpa.ui.components.rememberAppBackdrop
 import app.hyperlpa.ui.theme.LocalDarkTheme
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.basic.IconButton
+import app.hyperlpa.ui.components.Os4IconButton as IconButton
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
-import top.yukonga.miuix.kmp.basic.SmallTopAppBar
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.blur.BlendColorEntry
 import top.yukonga.miuix.kmp.blur.BlurBlendMode
 import top.yukonga.miuix.kmp.blur.BlurColors
 import top.yukonga.miuix.kmp.blur.LayerBackdrop
 import top.yukonga.miuix.kmp.blur.layerBackdrop
+import top.yukonga.miuix.kmp.glass.glassPanel
+import top.yukonga.miuix.kmp.material.*
 import top.yukonga.miuix.kmp.blur.textureBlur
 import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.extended.Back
+import top.yukonga.miuix.kmp.icon.glass.ChevronBackward
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.overScrollVertical
 import top.yukonga.miuix.kmp.utils.scrollEndHaptic
 
 @Composable
-fun AboutScreen(onBack: () -> Unit) {
+fun AboutScreen(onBack: () -> Unit, animateBackground: Boolean = true, artwork: ImageBitmap? = null) {
     val scrollBehavior = MiuixScrollBehavior()
     val lazyListState = rememberLazyListState()
     val scrollProgress by remember {
@@ -97,45 +101,27 @@ fun AboutScreen(onBack: () -> Unit) {
     }
 
     val backdrop = rememberAppBackdrop()
-    val blurActive = backdrop != null
-    val barColor = when {
-        blurActive -> Color.Transparent
-        scrollProgress == 1f -> MiuixTheme.colorScheme.surface
-        else -> Color.Transparent
-    }
 
     Scaffold(
         topBar = {
-            BlurredBar(
-                backdrop = backdrop,
-                alpha = 0.8f,
-                progressive = true,
-                scrollBehavior = scrollBehavior,
-            ) {
-                SmallTopAppBar(
+                Os4TopAppBar(
                     modifier = Modifier.horizontalCutoutPadding(),
                     title = stringResource(R.string.about_title),
                     scrollBehavior = scrollBehavior,
-                    color = barColor,
-                    titleColor = MiuixTheme.colorScheme.onSurface.copy(
-                        alpha = ((scrollProgress - 0.35f) / 0.65f).coerceIn(0f, 1f),
-                    ),
+                    backdrop = backdrop, viewport = rememberHeaderViewport(lazyListState), fixed = true,
+                    overPageArtwork = true,
+                    titleAlpha = { ((scrollProgress - 0.35f) / 0.65f).coerceIn(0f, 1f) },
                     defaultWindowInsetsPadding = false,
                     navigationIcon = {
-                        val layoutDirection = LocalLayoutDirection.current
                         IconButton(onClick = onBack) {
                             Icon(
-                                imageVector = MiuixIcons.Back,
+                                imageVector = MiuixIcons.Glass.ChevronBackward,
                                 contentDescription = stringResource(R.string.common_back),
                                 tint = MiuixTheme.colorScheme.onSurface,
-                                modifier = Modifier.graphicsLayer {
-                                    scaleX = if (layoutDirection == LayoutDirection.Rtl) -1f else 1f
-                                },
                             )
                         }
                     },
                 )
-            }
         },
         contentWindowInsets = WindowInsets.systemBars
             .union(WindowInsets.displayCutout)
@@ -147,6 +133,8 @@ fun AboutScreen(onBack: () -> Unit) {
                 scrollBehavior = scrollBehavior,
                 lazyListState = lazyListState,
                 scrollProgress = { scrollProgress },
+                animateBackground = animateBackground,
+                artwork = artwork,
             )
         }
     }
@@ -158,6 +146,8 @@ private fun AboutContent(
     scrollBehavior: ScrollBehavior,
     lazyListState: LazyListState,
     scrollProgress: () -> Float,
+    animateBackground: Boolean,
+    artwork: ImageBitmap?,
 ) {
     val layoutDirection = LocalLayoutDirection.current
     val density = LocalDensity.current
@@ -165,19 +155,6 @@ private fun AboutContent(
     val contentBackdrop = app.hyperlpa.ui.components.rememberContentBackdrop()
     val isDark = LocalDarkTheme.current
     val blurEnabled = contentBackdrop != null
-    val cardBlendColors = remember(isDark) {
-        if (isDark) {
-            listOf(
-                BlendColorEntry(Color(0x4DA9A9A9), BlurBlendMode.Luminosity),
-                BlendColorEntry(Color(0x1A9C9C9C), BlurBlendMode.PlusDarker),
-            )
-        } else {
-            listOf(
-                BlendColorEntry(Color(0x340034F9), BlurBlendMode.Overlay),
-                BlendColorEntry(Color(0xB3FFFFFF.toInt()), BlurBlendMode.HardLight),
-            )
-        }
-    }
     val logoBlendColors = remember(isDark) {
         if (isDark) {
             listOf(
@@ -207,7 +184,7 @@ private fun AboutContent(
     )
 
     AboutBackgroundEffect(
-        dynamicBackground = blurEnabled,
+        dynamicBackground = blurEnabled && animateBackground,
         modifier = Modifier.fillMaxSize(),
         backdropModifier = if (contentBackdrop != null) Modifier.layerBackdrop(contentBackdrop) else Modifier,
         alpha = { 1f - scrollProgress() },
@@ -238,15 +215,10 @@ private fun AboutContent(
                     },
             ) {
                 Image(
-                    modifier = Modifier.size(100.dp).then(
-                        if (contentBackdrop != null) Modifier.textureBlur(
-                            backdrop = checkNotNull(contentBackdrop), shape = RoundedCornerShape(0.dp), blurRadius = 150f,
-                            colors = BlurColors(blendColors = logoBlendColors), contentBlendMode = BlendMode.DstIn,
-                        ) else Modifier,
-                    ),
-                    painter = painterResource(R.drawable.about_logo_monochrome),
+                    modifier = Modifier.size(100.dp),
+                    painter = if (artwork != null) remember(artwork) { BitmapPainter(artwork) }
+                        else painterResource(R.drawable.about_logo_display),
                     contentDescription = stringResource(R.string.app_name),
-                    colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(MiuixTheme.colorScheme.onBackground),
                 )
             }
             Text(
@@ -332,7 +304,6 @@ private fun AboutContent(
                         AboutCard(
                             blurEnabled = blurEnabled,
                             backdrop = contentBackdrop,
-                            blendColors = cardBlendColors,
                         ) {
                             ProjectPreference(
                                 title = "HyperLPA",
@@ -390,7 +361,6 @@ private fun AboutContent(
 private fun AboutCard(
     blurEnabled: Boolean,
     backdrop: LayerBackdrop?,
-    blendColors: List<BlendColorEntry>,
     content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
 ) {
     Card(
@@ -400,12 +370,13 @@ private fun AboutCard(
             .padding(bottom = 12.dp)
             .then(
                 if (blurEnabled) {
-                    Modifier.textureBlur(
-                        backdrop = checkNotNull(backdrop),
-                        shape = RoundedCornerShape(16.dp),
-                        blurRadius = 60f,
-                        colors = BlurColors(blendColors = blendColors),
-                        enabled = true,
+                    Modifier.glassPanel(
+                        backdrop = backdrop,
+                        shape = GlassShape(16.dp),
+                        style = GlassDefaults.style(LocalDarkTheme.current),
+                        material = GlassMaterials.puredThinGlass(LocalDarkTheme.current),
+                        stroke = GlassEdgeStrokes.forTheme(LocalDarkTheme.current),
+                        shadow = null,
                     )
                 } else {
                     Modifier

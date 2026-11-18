@@ -39,7 +39,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import app.hyperlpa.domain.model.ReaderKind
-import top.yukonga.miuix.kmp.icon.extended.Delete
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
@@ -116,7 +115,7 @@ import top.yukonga.miuix.kmp.basic.DropdownEntry
 import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.basic.IconButton
+import app.hyperlpa.ui.components.Os4IconButton as IconButton
 import top.yukonga.miuix.kmp.basic.PullToRefresh
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Switch
@@ -124,8 +123,9 @@ import top.yukonga.miuix.kmp.basic.SwitchDefaults
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.glass.Close
+import top.yukonga.miuix.kmp.icon.glass.Delete
 import top.yukonga.miuix.kmp.icon.extended.Alarm
-import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.icon.extended.Community
 import top.yukonga.miuix.kmp.icon.extended.Download
 import top.yukonga.miuix.kmp.icon.extended.File
@@ -135,16 +135,16 @@ import top.yukonga.miuix.kmp.icon.extended.Layers
 import top.yukonga.miuix.kmp.icon.extended.Notes
 import top.yukonga.miuix.kmp.icon.extended.Search
 import top.yukonga.miuix.kmp.icon.extended.Tune
-import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import app.hyperlpa.ui.components.Os4BottomSheet as OverlayBottomSheet
+import app.hyperlpa.ui.components.Os4Dialog as OverlayDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
-import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
+import app.hyperlpa.ui.components.Os4DropdownPreference as OverlayDropdownPreference
 import top.yukonga.miuix.kmp.theme.LocalDismissState
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.PressFeedbackType
 import top.yukonga.miuix.kmp.utils.overScrollVertical
 import top.yukonga.miuix.kmp.utils.scrollEndHaptic
-import top.yukonga.miuix.kmp.window.WindowBottomSheet
+import app.hyperlpa.ui.components.Os4BottomSheet as WindowBottomSheet
 
 @Composable
 fun ProfilesScreen(
@@ -163,10 +163,11 @@ fun ProfilesScreen(
     onRename: (String, String) -> Unit,
     refreshPending: Boolean = false,
     onRefresh: () -> Unit,
+    listState: androidx.compose.foundation.lazy.LazyListState = rememberLazyListState(),
+    gridState: androidx.compose.foundation.lazy.grid.LazyGridState = rememberLazyGridState(),
+    onViewportChanged: (app.hyperlpa.ui.components.HeaderViewport) -> Unit = {},
 ) {
     // Keep both layout positions alive while switching between list and waterfall.
-    val listState = rememberLazyListState()
-    val gridState = rememberLazyGridState()
     // Keep the selected profile in a holder so only the overlay reads its value. A long press
     // must not invalidate the home list while the bottom-sheet entrance animation is running.
     val profileActionsState = remember { mutableStateOf<ProfileInfo?>(null) }
@@ -231,6 +232,11 @@ fun ProfilesScreen(
         awaitInitialArtwork = state.settings.showProfileIconOnHome &&
             lastPageState.kind == PageStateKind.LOADING && !artworkWarmupReady,
     )
+    val useGrid = state.settings.profileLayout == ProfileLayout.WATERFALL &&
+        pageState == PageStateKind.CONTENT && profiles.isNotEmpty()
+    val activeViewport = if (useGrid) app.hyperlpa.ui.components.rememberHeaderViewport(gridState)
+        else app.hyperlpa.ui.components.rememberHeaderViewport(listState)
+    SideEffect { onViewportChanged(activeViewport) }
     SideEffect { lastPageState.kind = pageState }
     val isRefreshing = refreshPending
     val stateModel = when (pageState) {
@@ -300,9 +306,7 @@ fun ProfilesScreen(
                             .padding(top = listTopPadding, bottom = listBottomPadding),
                     )
                 } else if (
-                    state.settings.profileLayout == ProfileLayout.WATERFALL &&
-                    pageState == PageStateKind.CONTENT &&
-                    profiles.isNotEmpty()
+                    useGrid
                 ) {
                     LazyVerticalGrid(
                         columns = GridCells.Adaptive(280.dp),
@@ -638,16 +642,11 @@ private fun ProfilesHeader(
                         summary = shownReader?.detail
                             ?: stringResource(R.string.profiles_select_reader),
                         enabled = enabled,
-                        entry = DropdownEntry(state.lpa.readers.mapIndexed { index, reader ->
-                            DropdownItem(
-                                text = reader.name,
-                                enabled = enabled,
-                                selected = index == selectedIndex,
-                                onClick = {
-                                    if (enabled) onSelectReader(reader.id)
-                                },
-                            )
-                        }),
+                        items = state.lpa.readers.map { it.name },
+                        selectedIndex = selectedIndex,
+                        onSelectedIndexChange = { index ->
+                            if (enabled) onSelectReader(state.lpa.readers[index].id)
+                        },
                     )
                 }
                 val info = state.lpa.euiccInfo
@@ -677,19 +676,10 @@ private fun ProfilesHeader(
             visible = state.settings.showProfileSearch && (state.lpa.selectedReader != null || connecting),
         ) {
             Column {
-                TextField(
+                app.hyperlpa.ui.components.Os4SearchField(
                     value = state.searchQuery,
                     onValueChange = { onSearchChange(it.take(MaxSearchQueryCharacters)) },
                     label = stringResource(R.string.profiles_search),
-                    useLabelAsPlaceholder = true,
-                    singleLine = true,
-                    leadingIcon = {
-                        Icon(
-                            imageVector = MiuixIcons.Search,
-                            contentDescription = null,
-                            modifier = Modifier.padding(start = 16.dp, end = 8.dp),
-                        )
-                    },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(bottom = if (showEnrichmentLoading) 0.dp else 6.dp),
                 )
             }
@@ -1173,6 +1163,7 @@ fun NotificationsScreen(
     onDelete: (Long) -> Unit,
     refreshPending: Boolean = false,
     onRefresh: () -> Unit,
+    listState: androidx.compose.foundation.lazy.LazyListState = rememberLazyListState(),
 ) {
     val profileFallbackName = stringResource(R.string.profile_default_name)
     val profilesByIccid = remember(state.profiles) {
@@ -1197,7 +1188,6 @@ fun NotificationsScreen(
         state.lpa.notifications.isEmpty() -> PageStateKind.EMPTY
         else -> PageStateKind.CONTENT
     }
-    val listState = rememberLazyListState()
     val refreshState = top.yukonga.miuix.kmp.basic.rememberPullToRefreshState()
     PullToRefresh(
         isRefreshing = isRefreshing, onRefresh = onRefresh,
@@ -1231,7 +1221,7 @@ fun NotificationsScreen(
                     }
                 }
             } else {
-                ScrollablePageState(scrollBehavior = scrollBehavior, contentPadding = PaddingValues(
+                ScrollablePageState(listState = listState, scrollBehavior = scrollBehavior, contentPadding = PaddingValues(
                     top = contentPadding.calculateTopPadding() + 12.dp * refreshState.visualProgress.coerceIn(0f, 1f),
                     bottom = contentPadding.calculateBottomPadding())) {
                 val insets = Modifier.fillMaxSize()
@@ -1392,7 +1382,7 @@ fun NotificationHistoryScreen(
         actions = {
             if (state.notificationHistory.isNotEmpty() && state.lpa.selectedReader?.kind != ReaderKind.REMOTE) {
                 IconButton(onClick = { clearHistoryRequested = true }) {
-                    Icon(MiuixIcons.Delete, contentDescription = stringResource(R.string.history_clear_local))
+                    Icon(MiuixIcons.Glass.Delete, contentDescription = stringResource(R.string.history_clear_local))
                 }
             }
         },
@@ -1608,12 +1598,11 @@ private fun NotificationDetailsSheet(
             val dismissState = LocalDismissState.current
             IconButton(onClick = { dismissState?.invoke() ?: onDismissRequest() }) {
                 Icon(
-                    imageVector = MiuixIcons.Close,
+                    imageVector = MiuixIcons.Glass.Close,
                     contentDescription = stringResource(R.string.common_close),
                 )
             }
         },
-        backgroundColor = MiuixTheme.colorScheme.surfaceContainerHigh,
         insideMargin = DpSize(24.dp, 0.dp),
         onDismissRequest = onDismissRequest,
         onDismissFinished = onDismissFinished,
@@ -1702,12 +1691,11 @@ private fun NotificationHistoryDetailsSheet(
             val dismissState = LocalDismissState.current
             IconButton(onClick = { dismissState?.invoke() ?: onDismissRequest() }) {
                 Icon(
-                    imageVector = MiuixIcons.Close,
+                    imageVector = MiuixIcons.Glass.Close,
                     contentDescription = stringResource(R.string.common_close),
                 )
             }
         },
-        backgroundColor = MiuixTheme.colorScheme.surfaceContainerHigh,
         insideMargin = DpSize(24.dp, 0.dp),
         onDismissRequest = onDismissRequest,
         onDismissFinished = onDismissFinished,
@@ -1927,8 +1915,10 @@ fun ToolsScreen(
     contentPadding: PaddingValues,
     scrollBehavior: ScrollBehavior,
     onNavigate: (AppRoute) -> Unit,
+    listState: androidx.compose.foundation.lazy.LazyListState = rememberLazyListState(),
 ) {
     PreferencePage(
+        listState = listState,
         modifier = modifier,
         contentPadding = contentPadding,
         scrollBehavior = scrollBehavior,
@@ -2013,8 +2003,10 @@ fun SettingsScreen(
     contentPadding: PaddingValues,
     scrollBehavior: ScrollBehavior,
     onNavigate: (AppRoute) -> Unit,
+    listState: androidx.compose.foundation.lazy.LazyListState = rememberLazyListState(),
 ) {
     PreferencePage(
+        listState = listState,
         modifier = modifier,
         contentPadding = contentPadding,
         scrollBehavior = scrollBehavior,
@@ -2097,11 +2089,13 @@ private fun PreferencePage(
     modifier: Modifier,
     contentPadding: PaddingValues,
     scrollBehavior: ScrollBehavior,
+    listState: androidx.compose.foundation.lazy.LazyListState = rememberLazyListState(),
     content: LazyListScope.() -> Unit,
 ) {
     val pageContent = MishkaPageContent(content)
     CenteredContent(modifier = modifier) { sidePadding ->
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
                 .scrollEndHaptic()

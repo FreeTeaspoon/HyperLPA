@@ -21,6 +21,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import app.hyperlpa.data.settings.AppSettings
 import app.hyperlpa.remote.*
 import app.hyperlpa.ui.theme.HyperLpaTheme
+import app.hyperlpa.ui.components.Os4MenuHost
+import androidx.compose.runtime.Composable
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -42,7 +44,7 @@ class PhoneNotificationInboxScreenTest {
             "two" to PhoneInboxDevice().snapshot(listOf(entry("same", "Home message", now + 1)), true, now)))
         var pendingOpened = false
         compose.setContent {
-            HyperLpaTheme(settings = AppSettings()) {
+            InboxTestTheme(settings = AppSettings()) {
                 Scaffold { padding ->
                     PhoneNotificationInboxScreen(inbox, devices, emptyMap(), padding, MiuixScrollBehavior(),
                         pendingEuiccCount = 1,
@@ -80,7 +82,7 @@ class PhoneNotificationInboxScreenTest {
         val inbox = mapOf("one" to PhoneInboxDevice().snapshot(entries, true, now),
             "two" to PhoneInboxDevice().snapshot(listOf(entry("home", "Only home", now + 1)), true, now))
         compose.setContent {
-            HyperLpaTheme(settings = AppSettings()) {
+            InboxTestTheme(settings = AppSettings()) {
                 Scaffold { padding ->
                     PhoneNotificationInboxScreen(inbox, devices, emptyMap(), padding, MiuixScrollBehavior(),
                         onRefresh = {}, onOpenDevices = {}, onOpenPendingEuicc = {})
@@ -105,7 +107,7 @@ class PhoneNotificationInboxScreenTest {
         val views = mapOf("one" to PhoneNotificationView("one", loaded = true, error = "Background timeout"),
             "two" to PhoneNotificationView("two", loaded = true, error = "Disconnected"))
         compose.setContent {
-            HyperLpaTheme(AppSettings()) {
+            InboxTestTheme(AppSettings()) {
                 Scaffold { padding ->
                     PhoneNotificationInboxScreen(inbox, devices, views, padding, MiuixScrollBehavior(),
                         onRefresh = { refreshes++ },
@@ -127,7 +129,7 @@ class PhoneNotificationInboxScreenTest {
         var requested: String? = "not-called"
         val inbox = mapOf("one" to PhoneInboxDevice().snapshot(listOf(entry("one", "Travel message", now)), true, now))
         compose.setContent {
-            HyperLpaTheme(AppSettings()) {
+            InboxTestTheme(AppSettings()) {
                 Scaffold { padding ->
                     PhoneNotificationInboxScreen(inbox, devices,
                         mapOf("one" to PhoneNotificationView("one", loaded = true,
@@ -154,7 +156,7 @@ class PhoneNotificationInboxScreenTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val message = entry("copy", "Your verification code", now).copy(text = "Your code is 123456. Do not share it.")
         compose.setContent {
-            HyperLpaTheme(AppSettings()) {
+            InboxTestTheme(AppSettings()) {
                 Scaffold { padding ->
                     PhoneNotificationInboxScreen(mapOf("one" to PhoneInboxDevice().snapshot(listOf(message), true, now)),
                         devices, emptyMap(), padding, MiuixScrollBehavior(),
@@ -178,7 +180,7 @@ class PhoneNotificationInboxScreenTest {
         var inbox by mutableStateOf(mapOf("one" to PhoneInboxDevice().snapshot(listOf(message), true, now)))
         var deletions = 0
         compose.setContent {
-            HyperLpaTheme(AppSettings()) {
+            InboxTestTheme(AppSettings()) {
                 Scaffold { padding ->
                     PhoneNotificationInboxScreen(inbox, devices, emptyMap(), padding, MiuixScrollBehavior(),
                         onDelete = { id, deleted ->
@@ -207,7 +209,7 @@ class PhoneNotificationInboxScreenTest {
         val message = entry("target", "Messages", now)
         var consumed = false
         compose.setContent {
-            HyperLpaTheme(AppSettings()) {
+            InboxTestTheme(AppSettings()) {
                 Scaffold { padding ->
                     PhoneNotificationInboxScreen(mapOf("one" to PhoneInboxDevice().snapshot(listOf(message), true, now).archive(message)),
                         devices, emptyMap(), padding, MiuixScrollBehavior(), target = PhoneInboxTarget("one", "target"),
@@ -240,7 +242,7 @@ class PhoneNotificationInboxScreenTest {
                 LocalDensity provides Density(density.density, fontScale = 2f),
                 LocalLayoutDirection provides direction,
             ) {
-                HyperLpaTheme(AppSettings()) {
+                InboxTestTheme(AppSettings()) {
                     Scaffold {
                         Box(Modifier.width(320.dp)) {
                             PhoneNotificationRow(message, Modifier.testTag("compact-card"),
@@ -283,4 +285,10 @@ class PhoneNotificationInboxScreenTest {
         compose.onNodeWithText("Inbox", useUnmergedTree = true).performClick()
     }
 
+}
+
+/** Match the application's window-level menu host for isolated message rows. */
+@Composable
+private fun InboxTestTheme(settings: AppSettings, content: @Composable () -> Unit) {
+    HyperLpaTheme(settings) { Os4MenuHost(content) }
 }

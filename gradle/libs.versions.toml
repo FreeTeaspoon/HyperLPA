@@ -1,16 +1,16 @@
 [versions]
 okhttp = "5.5.0"
-agp = "9.4.1"
-kotlin = "2.4.20"
+agp = "9.5.1"
+kotlin = "2.4.21"
 compose = "1.12.1"
 activity = "1.13.0"
 lifecycle = "2.11.0"
 core = "1.19.0"
 datastore = "1.2.1"
 work = "2.11.2"
-navigationevent = "1.1.2"
+navigationevent = "1.2.0"
 coroutines = "1.11.0"
-serialization = "1.11.0"
+serialization = "1.13.0"
 miuix = "0.9.4"
 hiddenapibypass = "6.1"
 quickie = "1.12.0"
@@ -45,6 +45,9 @@ miuix-ui = { module = "top.yukonga.miuix.kmp:miuix-ui", version.ref = "miuix" }
 miuix-blur = { module = "top.yukonga.miuix.kmp:miuix-blur-android", version.ref = "miuix" }
 miuix-preference = { module = "top.yukonga.miuix.kmp:miuix-preference", version.ref = "miuix" }
 miuix-icons = { module = "top.yukonga.miuix.kmp:miuix-icons", version.ref = "miuix" }
+miuix-glass = { module = "top.yukonga.miuix.kmp:miuix-glass", version.ref = "miuix" }
+miuix-material = { module = "top.yukonga.miuix.kmp:miuix-material", version.ref = "miuix" }
+miuix-glass-icons = { module = "top.yukonga.miuix.kmp:miuix-glass-icons", version.ref = "miuix" }
 miuix-nav = { module = "top.yukonga.miuix.kmp:miuix-nav", version.ref = "miuix" }
 hiddenapibypass = { module = "org.lsposed.hiddenapibypass:hiddenapibypass", version.ref = "hiddenapibypass" }
 quickie-bundled = { module = "io.github.g00fy2.quickie:quickie-bundled", version.ref = "quickie" }

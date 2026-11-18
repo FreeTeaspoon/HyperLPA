@@ -30,7 +30,7 @@ import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import app.hyperlpa.ui.components.Os4Dialog as OverlayDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 @Composable
@@ -43,24 +43,13 @@ fun DialogActionRow(
     onConfirm: () -> Unit,
 ) {
     val resolvedCancelText = cancelText ?: stringResource(R.string.common_cancel)
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        TextButton(text = resolvedCancelText, onClick = onCancel, modifier = Modifier.weight(1f))
-        TextButton(
-            text = confirmText,
-            onClick = onConfirm,
-            enabled = confirmEnabled,
-            colors = if (destructive) {
-                ButtonDefaults.textButtonColors(
-                    textColor = MiuixTheme.colorScheme.error,
-                )
-            } else {
-                ButtonDefaults.textButtonColorsPrimary()
-            },
-            modifier = Modifier.weight(1f),
-        )
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        DialogActionButton(text = resolvedCancelText, onClick = onCancel, modifier = Modifier.weight(1f),
+            role = top.yukonga.miuix.kmp.glass.GlassDialogButtonRole.Normal)
+        DialogActionButton(text = confirmText, onClick = onConfirm, enabled = confirmEnabled,
+            role = if (destructive) top.yukonga.miuix.kmp.glass.GlassDialogButtonRole.Destructive
+                else top.yukonga.miuix.kmp.glass.GlassDialogButtonRole.Primary,
+            modifier = Modifier.weight(1f))
     }
 }
 
@@ -107,6 +96,7 @@ fun TextInputDialog(
         }
         val validationError = value.text.takeIf { it.isNotBlank() }?.let(validate)
         val shownError = validationError ?: error.takeUnless { editedSinceError }
+        val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
         val canConfirm = confirmEnabled && validationError == null && (allowBlank || value.text.isNotBlank())
         TextField(
             value = value,
@@ -121,7 +111,7 @@ fun TextInputDialog(
             useLabelAsPlaceholder = true,
             singleLine = true,
             keyboardOptions = keyboardOptions.copy(imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(onDone = { if (canConfirm) onConfirm(value.text) }),
+            keyboardActions = KeyboardActions(onDone = { if (canConfirm) { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.Confirm); onConfirm(value.text) } }),
             visualTransformation = visualTransformation,
             modifier = Modifier
                 .fillMaxWidth()

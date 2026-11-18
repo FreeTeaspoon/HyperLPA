@@ -150,25 +150,25 @@ import androidx.navigationevent.compose.rememberNavigationEventState
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
 import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.basic.IconButton
+import app.hyperlpa.ui.components.Os4IconButton as IconButton
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.basic.SnackbarDuration
 import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.glass.UploadCloud
+import top.yukonga.miuix.kmp.icon.glass.Scan
 import top.yukonga.miuix.kmp.icon.extended.Alarm
 import top.yukonga.miuix.kmp.icon.extended.ExpandLess
 import top.yukonga.miuix.kmp.icon.extended.ExpandMore
 import top.yukonga.miuix.kmp.icon.extended.Notes
-import top.yukonga.miuix.kmp.icon.extended.Scan
 import top.yukonga.miuix.kmp.icon.extended.Search
 import top.yukonga.miuix.kmp.icon.extended.Years
-import top.yukonga.miuix.kmp.icon.extended.UploadCloud
-import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import app.hyperlpa.ui.components.Os4BottomSheet as OverlayBottomSheet
+import app.hyperlpa.ui.components.Os4Dialog as OverlayDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.CheckboxLocation
 import top.yukonga.miuix.kmp.preference.CheckboxPreference
-import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
+import app.hyperlpa.ui.components.Os4DropdownPreference as OverlayDropdownPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
@@ -327,6 +327,7 @@ fun ProfileDetailsScreen(
         onBack = onBack,
         collapsedTitle = collapsedTitle,
         collapsedBarRevealStart = 132.dp,
+        fadeArtworkOnCollapse = true,
         background = if (profile == null) null else {
             { ProfileGradientBackdrop(bitmap = artwork.bitmap) }
         },
@@ -947,7 +948,7 @@ fun DownloadProfileScreen(
                 onClick = onScanQr,
             ) {
                 Icon(
-                    MiuixIcons.Scan,
+                    MiuixIcons.Glass.Scan,
                     contentDescription = stringResource(R.string.activation_scan_qr),
                 )
             }
@@ -1351,6 +1352,7 @@ fun ProfileDownloadConfirmationScreen(
         showBackButton = !progressVisible,
         collapsedTitle = displayName,
         collapsedBarRevealStart = 132.dp,
+        fadeArtworkOnCollapse = true,
         background = {
             if (artworkBitmap != null) {
                 ProfileGradientBackdrop(bitmap = artworkBitmap)
@@ -1519,7 +1521,7 @@ internal fun ProfileDownloadProgressBar(
         DownloadStage.FINALIZING -> stringResource(R.string.download_progress_finalizing)
         DownloadStage.INSTALLING -> stringResource(R.string.download_progress_installing)
     }
-    OverlayDialog(
+    top.yukonga.miuix.kmp.overlay.OverlayDialog(
         show = operation != null,
         modifier = modifier.semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }
             .then(if (targetProgress == null) Modifier.clip(RoundedCornerShape(36.dp)) else Modifier),
@@ -1570,6 +1572,7 @@ fun ProfileDownloadResultScreen(
         showBackButton = false,
         collapsedTitle = displayName,
         collapsedBarRevealStart = 132.dp,
+        fadeArtworkOnCollapse = true,
         background = {
             if (artworkBitmap != null) {
                 ProfileGradientBackdrop(bitmap = artworkBitmap)
@@ -2646,7 +2649,7 @@ fun LogsScreen(
                 },
             ) {
                 Icon(
-                    MiuixIcons.UploadCloud,
+                    MiuixIcons.Glass.UploadCloud,
                     contentDescription = stringResource(R.string.logs_export_report),
                 )
             }

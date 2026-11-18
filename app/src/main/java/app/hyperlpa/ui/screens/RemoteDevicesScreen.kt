@@ -87,18 +87,18 @@ import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
 import top.yukonga.miuix.kmp.basic.DropdownEntry
 import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.basic.IconButton
+import app.hyperlpa.ui.components.Os4IconButton as IconButton
 import top.yukonga.miuix.kmp.basic.SnackbarDuration
 import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.glass.More
+import top.yukonga.miuix.kmp.icon.glass.Delete
 import top.yukonga.miuix.kmp.icon.extended.Copy
-import top.yukonga.miuix.kmp.icon.extended.Delete
-import top.yukonga.miuix.kmp.icon.extended.More
 import top.yukonga.miuix.kmp.icon.extended.Community
-import top.yukonga.miuix.kmp.menu.OverlayIconDropdownMenu
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import app.hyperlpa.ui.components.Os4IconDropdownMenu as OverlayIconDropdownMenu
+import app.hyperlpa.ui.components.Os4Dialog as OverlayDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -646,7 +646,7 @@ internal fun PhoneNotificationHistoryScreen(devices: RemoteDevices, deviceId: St
         actions = {
             if (entries.isNotEmpty()) {
                 IconButton(onClick = { clearRequested = true }) {
-                    Icon(MiuixIcons.Delete, contentDescription = stringResource(R.string.phone_notifications_clear))
+                    Icon(MiuixIcons.Glass.Delete, contentDescription = stringResource(R.string.phone_notifications_clear))
                 }
             }
             if (peer != null) {
@@ -656,7 +656,7 @@ internal fun PhoneNotificationHistoryScreen(devices: RemoteDevices, deviceId: St
                         onClick = { removeRequested = true },
                     ))),
                 ) {
-                    Icon(MiuixIcons.More, contentDescription = stringResource(R.string.remote_more_options))
+                    Icon(MiuixIcons.Glass.More, contentDescription = stringResource(R.string.remote_more_options))
                 }
             }
         },
@@ -817,9 +817,9 @@ internal fun PhoneNotificationRow(
                         }
                     }
                     if (actions.isNotEmpty()) {
-                        OverlayIconDropdownMenu(entry = DropdownEntry(actions)) {
-                            Icon(MiuixIcons.More, contentDescription = stringResource(R.string.phone_inbox_message_actions),
-                                modifier = Modifier.size(20.dp))
+                        OverlayIconDropdownMenu(entry = DropdownEntry(actions), flatAnchor = true) {
+                            Icon(MiuixIcons.Glass.More, contentDescription = stringResource(R.string.phone_inbox_message_actions),
+                                modifier = Modifier.size(28.dp))
                         }
                     }
                 }

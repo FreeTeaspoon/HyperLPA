@@ -63,9 +63,16 @@ import app.hyperlpa.data.settings.NavigationStyle
 import app.hyperlpa.data.metadata.providerIconKey
 import app.hyperlpa.domain.model.LpaOperation
 import app.hyperlpa.domain.model.ProfileState
-import app.hyperlpa.ui.adaptive.AdaptiveTopAppBar
 import app.hyperlpa.ui.adaptive.rememberIsWideWindow
-import app.hyperlpa.ui.components.BlurredBar
+import app.hyperlpa.ui.components.*
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import app.hyperlpa.data.settings.ProfileLayout
+import top.yukonga.miuix.kmp.glass.*
+import top.yukonga.miuix.kmp.material.GlassDefaults
+import top.yukonga.miuix.kmp.material.GlassEdgeStrokes
+import top.yukonga.miuix.kmp.material.GlassShadows
+import app.hyperlpa.ui.theme.LocalDarkTheme
 import app.hyperlpa.ui.components.DialogActionRow
 import app.hyperlpa.ui.components.appBackdropBlur
 import app.hyperlpa.ui.components.liquid.NzbLiquidGlassNavigationBar
@@ -111,13 +118,11 @@ import top.yukonga.miuix.kmp.basic.Badge
 import top.yukonga.miuix.kmp.basic.BadgedBox
 import top.yukonga.miuix.kmp.basic.DropdownEntry
 import top.yukonga.miuix.kmp.basic.DropdownItem
-import top.yukonga.miuix.kmp.menu.OverlayIconDropdownMenu
-import top.yukonga.miuix.kmp.icon.extended.More
-import top.yukonga.miuix.kmp.icon.extended.Back
+import app.hyperlpa.ui.components.Os4IconDropdownMenu as OverlayIconDropdownMenu
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.FloatingNavigationBar
 import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.basic.IconButton
+import app.hyperlpa.ui.components.Os4IconButton as IconButton
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.NavigationBar
 import top.yukonga.miuix.kmp.basic.NavigationBarDisplayMode
@@ -131,15 +136,16 @@ import top.yukonga.miuix.kmp.basic.SnackbarHostState
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.blur.highlight.Highlight
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.extended.BankCards
-import top.yukonga.miuix.kmp.icon.extended.Download
-import top.yukonga.miuix.kmp.icon.extended.Messages
-import top.yukonga.miuix.kmp.icon.extended.Settings
-import top.yukonga.miuix.kmp.icon.extended.Timer
-import top.yukonga.miuix.kmp.icon.extended.Tune
+import top.yukonga.miuix.kmp.icon.glass.Settings
+import top.yukonga.miuix.kmp.icon.glass.Tune
+import top.yukonga.miuix.kmp.icon.glass.Messages
+import top.yukonga.miuix.kmp.icon.glass.BankCards
+import top.yukonga.miuix.kmp.icon.glass.More
+import top.yukonga.miuix.kmp.icon.glass.Timer
+import top.yukonga.miuix.kmp.icon.glass.Download
+import top.yukonga.miuix.kmp.icon.glass.ChevronBackward
 import top.yukonga.miuix.kmp.nav.core.NavBackStack
 import top.yukonga.miuix.kmp.nav.core.NavCornerClipMode
 import top.yukonga.miuix.kmp.nav.core.NavDisplay
@@ -150,7 +156,7 @@ import top.yukonga.miuix.kmp.nav.transition.NavSettleSpec
 import top.yukonga.miuix.kmp.nav.transition.NavSwipeDirection
 import top.yukonga.miuix.kmp.nav.transition.NavTransitions
 import top.yukonga.miuix.kmp.nav.transition.navGraphicsTransition
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import app.hyperlpa.ui.components.Os4Dialog as OverlayDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.PagerGestureNestedScrollConnection
 import top.yukonga.miuix.kmp.utils.PagerNavigationSpringSpec
@@ -187,12 +193,15 @@ fun HyperLpaApp(
     val currentOnRequestBluetoothPermission = rememberUpdatedState(onRequestBluetoothPermission)
     val currentOnOpenBluetoothSettings = rememberUpdatedState(onOpenBluetoothSettings)
     val rootTabBack = remember { RootTabBackState() }
+    val aboutArtwork = rememberAboutArtwork()
     val navCornerRadius = if (rememberIsWideWindow()) 0.dp else rememberNavSystemCornerRadius()
     val navSurface = MiuixTheme.colorScheme.surface
     val swipeBackDirection = when (LocalLayoutDirection.current) {
         LayoutDirection.Rtl -> NavSwipeDirection.RightToLeft
         else -> NavSwipeDirection.LeftToRight
     }
+
+    val navigationOwner = backStack.lastOrNull() as? AppRoute
 
     val snackbarScope = rememberCoroutineScope()
     val showSnackbar: (String, top.yukonga.miuix.kmp.basic.SnackbarDuration) -> Unit = remember(
@@ -219,7 +228,9 @@ fun HyperLpaApp(
         }
     }
 
-    CompositionLocalProvider(LocalMiuixSnackbar provides showSnackbar) {
+    val finishedPage = rememberAppBackdrop()
+    CompositionLocalProvider(LocalMiuixSnackbar provides showSnackbar, LocalDialogBackdrop provides finishedPage) {
+        Os4MenuHost {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             containerColor = navSurface,
@@ -229,7 +240,7 @@ fun HyperLpaApp(
                 }
             },
         ) { _ ->
-            Box(Modifier.fillMaxSize()) {
+            Box(Modifier.fillMaxSize().then(if (finishedPage != null) Modifier.layerBackdrop(finishedPage) else Modifier)) {
                 RootTabBackHandler(
                     rootTabBack = rootTabBack,
                     isRootRoute = backStack.size == 1 && backStack.lastOrNull() == AppRoute.Shell,
@@ -238,7 +249,7 @@ fun HyperLpaApp(
                 // data flow must not hold the whole page at zero opacity during startup.
                 NavDisplay(
                 backStack = backStack,
-                onBack = viewModel::navigateBack,
+                onBack = { viewModel.navigateBack(navigationOwner) },
                 transition = if (viewModel.instantNavigation) InstantNavTransition else NavTransitions.MiuixDefault,
                 effects = NavDisplayEffects(
                     enableCornerClip = true,
@@ -276,7 +287,7 @@ fun HyperLpaApp(
                         providerName = profile?.providerName,
                         providerIcons = currentState.value.providerIcons,
                     ),
-                    onBack = viewModel::navigateBack,
+                    onBack = { viewModel.navigateBack(route) },
                     onEnableChange = { enabled -> viewModel.setProfileEnabled(route.iccid, enabled) },
                     profileSwitchEnabled = currentState.value.lpa.operation is LpaOperation.Idle &&
                         !currentState.value.lpa.readerSnapshotPendingRefresh,
@@ -324,7 +335,7 @@ fun HyperLpaApp(
                     readers = currentState.value.lpa.readers,
                     selectedReaderId = currentState.value.lpa.selectedReaderId,
                     readerSelectable = currentState.value.lpa.operation is LpaOperation.Idle,
-                    onBack = viewModel::navigateBack,
+                    onBack = { viewModel.navigateBack(AppRoute.DownloadProfile) },
                     onValueChange = viewModel::setActivationCodeDraft,
                     onScanQr = onScanQr,
                     onSelectReader = viewModel::connectReader,
@@ -382,7 +393,7 @@ fun HyperLpaApp(
                         },
                         downloadOperation = currentState.value.lpa.operation as? LpaOperation.Downloading,
                         showCancelConfirmation = currentState.value.showCancelDownloadConfirmation,
-                        onBack = viewModel::navigateBack,
+                        onBack = { viewModel.navigateBack(AppRoute.ConfirmProfileDownload) },
                         onDownload = viewModel::confirmProfileDownload,
                         onDismissCancelConfirmation = viewModel::dismissCancelProfileDownload,
                         onConfirmCancel = viewModel::confirmCancelProfileDownload,
@@ -403,7 +414,7 @@ fun HyperLpaApp(
                     cloudIcon = currentState.value.downloadPreviewIcon
                         ?: currentState.value.operatorIcons[result.profile.iccid],
                     busy = currentState.value.lpa.operation !is LpaOperation.Idle,
-                    onBack = viewModel::navigateBack,
+                    onBack = { viewModel.navigateBack(route) },
                     onEnable = { viewModel.enableProfileFromDownloadResult(profile.iccid) },
                     onRename = { nickname -> viewModel.renameProfile(profile.iccid, nickname) },
                     onDone = viewModel::finishProfileDownload,
@@ -427,7 +438,7 @@ fun HyperLpaApp(
                 BatchDownloadScreen(
                     imei = currentState.value.settings.imei,
                     state = batchState,
-                    onBack = viewModel::navigateBack,
+                    onBack = { viewModel.navigateBack(AppRoute.BatchDownload) },
                     onDownload = viewModel::startBatchDownload,
                     onResume = viewModel::resumeBatchDownload,
                     onRetry = viewModel::retryFailedBatchDownload,
@@ -446,7 +457,7 @@ fun HyperLpaApp(
                     },
                     discoveredSmdpAddresses = currentState.value.lpa.discoveredSmdpAddresses,
                     settings = currentState.value.settings,
-                    onBack = viewModel::navigateBack,
+                    onBack = { viewModel.navigateBack(AppRoute.EuiccDetails) },
                     onSetCardName = { name ->
                         currentState.value.lpa.euiccInfo?.eid?.let { eid ->
                             viewModel.setEuiccName(eid, name)
@@ -460,37 +471,35 @@ fun HyperLpaApp(
             }
             entry<AppRoute.RemoteDevices>(swipeDismiss = swipeBackDirection) {
                 app.hyperlpa.ui.screens.RemoteDevicesScreen(
-                    viewModel.remoteDevices, viewModel::navigateBack,
-                    onOpenDevice = { viewModel.navigate(AppRoute.PhoneNotificationHistory(it)) },
-                    onOpenPhoneNotifications = { viewModel.navigate(AppRoute.PhoneNotificationSettings) },
+                    viewModel.remoteDevices, { viewModel.navigateBack(AppRoute.RemoteDevices) },
+                    onOpenDevice = { viewModel.navigate(AppRoute.PhoneNotificationHistory(it), AppRoute.RemoteDevices) },
+                    onOpenPhoneNotifications = { viewModel.navigate(AppRoute.PhoneNotificationSettings, AppRoute.RemoteDevices) },
                 )
             }
             entry<AppRoute.PhoneInboxSettings>(swipeDismiss = swipeBackDirection) {
                 app.hyperlpa.ui.screens.PhoneInboxSettingsScreen(
                     devices = viewModel.remoteDevices,
-                    onBack = viewModel::navigateBack,
+                    onBack = { viewModel.navigateBack(AppRoute.PhoneInboxSettings) },
                     onRequestPermission = onRequestRemoteNotificationPermission,
                     onOpenSystemSettings = onOpenNotificationSettings,
-                    onOpenSharing = { viewModel.navigate(AppRoute.PhoneNotificationSettings) },
+                    onOpenSharing = { viewModel.navigate(AppRoute.PhoneNotificationSettings, AppRoute.PhoneInboxSettings) },
                 )
             }
             entry<AppRoute.PendingEuiccNotifications>(swipeDismiss = swipeBackDirection) {
                 val scroll = MiuixScrollBehavior()
                 val backdrop = rememberAppBackdrop()
+                val listState = rememberLazyListState()
                 Scaffold(containerColor = MiuixTheme.colorScheme.surface,
                     topBar = {
-                        BlurredBar(backdrop = backdrop, progressive = true, scrollBehavior = scroll) {
-                            AdaptiveTopAppBar(title = stringResource(app.hyperlpa.R.string.phone_inbox_pending_euicc),
-                                color = if (backdrop != null) Color.Transparent else MiuixTheme.colorScheme.surface,
-                                scrollBehavior = scroll,
-                                navigationIcon = {
-                                    IconButton(onClick = viewModel::navigateBack) {
-                                        Icon(MiuixIcons.Back, stringResource(app.hyperlpa.R.string.common_back))
-                                    }
-                                })
-                        }
+                        Os4TopAppBar(title = stringResource(app.hyperlpa.R.string.phone_inbox_pending_euicc),
+                            backdrop = backdrop, scrollBehavior = scroll, viewport = rememberHeaderViewport(listState),
+                            navigationIcon = {
+                                IconButton(onClick = { viewModel.navigateBack(AppRoute.PendingEuiccNotifications) }) {
+                                    Icon(MiuixIcons.Glass.ChevronBackward, stringResource(app.hyperlpa.R.string.common_back))
+                                }
+                            })
                     }) { padding ->
-                    NotificationsScreen(state = currentState.value,
+                    NotificationsScreen(state = currentState.value, listState = listState,
                         modifier = Modifier.fillMaxSize().horizontalCutoutPadding().then(if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier),
                         contentPadding = padding, scrollBehavior = scroll,
                         onProcess = viewModel::processNotification, onDelete = viewModel::deleteNotification,
@@ -499,20 +508,20 @@ fun HyperLpaApp(
             }
             entry<AppRoute.PhoneNotificationSettings>(swipeDismiss = swipeBackDirection) {
                 app.hyperlpa.ui.screens.PhoneNotificationSettingsScreen(
-                    viewModel.remoteDevices, viewModel::navigateBack,
-                    onOpenHistory = { viewModel.navigate(AppRoute.PhoneNotificationHistory("local")) },
+                    viewModel.remoteDevices, { viewModel.navigateBack(AppRoute.PhoneNotificationSettings) },
+                    onOpenHistory = { viewModel.navigate(AppRoute.PhoneNotificationHistory("local"), AppRoute.PhoneNotificationSettings) },
                     apps = viewModel.phoneNotificationApps.collectAsStateWithLifecycle().value,
                 )
             }
             entry<AppRoute.PhoneNotificationHistory>(swipeDismiss = swipeBackDirection) { route ->
                 app.hyperlpa.ui.screens.PhoneNotificationHistoryScreen(
-                    viewModel.remoteDevices, route.deviceId, viewModel::navigateBack,
+                    viewModel.remoteDevices, route.deviceId, { viewModel.navigateBack(route) },
                 )
             }
             entry<AppRoute.ReaderSettings>(swipeDismiss = swipeBackDirection) {
                 ReaderSettingsScreen(
                     state = currentState.value,
-                    onBack = viewModel::navigateBack,
+                    onBack = { viewModel.navigateBack(AppRoute.ReaderSettings) },
                     viewModel = viewModel,
                     bluetoothReaderState = currentBluetoothReaderState.value,
                     onRefreshReaders = { viewModel.refreshReaders().join() },
@@ -520,13 +529,13 @@ fun HyperLpaApp(
                         currentOnRequestBluetoothPermission.value()
                     },
                     onOpenBluetoothSettings = { currentOnOpenBluetoothSettings.value() },
-                    onOpenRemoteReaders = { viewModel.navigate(AppRoute.RemoteReaders) },
+                    onOpenRemoteReaders = { viewModel.navigate(AppRoute.RemoteReaders, AppRoute.ReaderSettings) },
                 )
             }
             entry<AppRoute.RemoteReaders>(swipeDismiss = swipeBackDirection) {
                 RemoteReadersScreen(
                     settings = currentState.value.settings,
-                    onBack = viewModel::navigateBack,
+                    onBack = { viewModel.navigateBack(AppRoute.RemoteReaders) },
                     viewModel = viewModel,
                 )
             }
@@ -534,7 +543,7 @@ fun HyperLpaApp(
                 CompatibilityWizardScreen(
                     state = currentState.value,
                     firstRun = false,
-                    onBack = viewModel::dismissCompatibilityWizard,
+                    onBack = { viewModel.navigateBack(AppRoute.CompatibilityWizard) },
                     onRefreshReaders = { viewModel.refreshReaders().join() },
                     onContinue = viewModel::dismissCompatibilityWizard,
                 )
@@ -557,7 +566,7 @@ fun HyperLpaApp(
                             else -> viewModel.checkOnboardingReader(reader).join()
                         }
                     },
-                    onOpenPairedDevices = { viewModel.navigate(AppRoute.RemoteDevices) },
+                    onOpenPairedDevices = { viewModel.navigate(AppRoute.RemoteDevices, AppRoute.FirstRunSetup) },
                     onFinish = viewModel::finishFirstRunSetup,
                     finishing = viewModel.finishingFirstRun,
                     active = backStack.lastOrNull() == AppRoute.FirstRunSetup,
@@ -566,14 +575,14 @@ fun HyperLpaApp(
             entry<AppRoute.NotificationSettings>(swipeDismiss = swipeBackDirection) {
                 NotificationSettingsScreen(
                     settings = currentState.value.settings,
-                    onBack = viewModel::navigateBack,
+                    onBack = { viewModel.navigateBack(AppRoute.NotificationSettings) },
                     viewModel = viewModel,
                 )
             }
             entry<AppRoute.NotificationHistory>(swipeDismiss = swipeBackDirection) {
                 NotificationHistoryScreen(
                     state = currentState.value,
-                    onBack = viewModel::navigateBack,
+                    onBack = { viewModel.navigateBack(AppRoute.NotificationHistory) },
                     onDeleteHistoryEntry = viewModel::deleteNotificationHistoryEntry,
                     onResendNotification = viewModel::resendNotification,
                     onRefreshHistory = viewModel::refreshNotificationHistory,
@@ -583,55 +592,55 @@ fun HyperLpaApp(
             entry<AppRoute.AppearanceSettings>(swipeDismiss = swipeBackDirection) {
                 AppearanceSettingsScreen(
                     settings = currentState.value.settings,
-                    onBack = viewModel::navigateBack,
+                    onBack = { viewModel.navigateBack(AppRoute.AppearanceSettings) },
                     viewModel = viewModel,
                 )
             }
             entry<AppRoute.ProfileDisplaySettings>(swipeDismiss = swipeBackDirection) {
                 ProfileDisplaySettingsScreen(
                     settings = currentState.value.settings,
-                    onBack = viewModel::navigateBack,
+                    onBack = { viewModel.navigateBack(AppRoute.ProfileDisplaySettings) },
                     viewModel = viewModel,
                 )
             }
             entry<AppRoute.PrivacySettings>(swipeDismiss = swipeBackDirection) {
                 PrivacySettingsScreen(
                     settings = currentState.value.settings,
-                    onBack = viewModel::navigateBack,
+                    onBack = { viewModel.navigateBack(AppRoute.PrivacySettings) },
                     viewModel = viewModel,
                 )
             }
             entry<AppRoute.AdvancedSettings>(swipeDismiss = swipeBackDirection) {
                 AdvancedSettingsScreen(
                     settings = currentState.value.settings,
-                    onBack = viewModel::navigateBack,
+                    onBack = { viewModel.navigateBack(AppRoute.AdvancedSettings) },
                     viewModel = viewModel,
                 )
             }
             entry<AppRoute.BackupRestoreSettings>(swipeDismiss = swipeBackDirection) {
                 BackupRestoreSettingsScreen(
-                    onBack = viewModel::navigateBack,
+                    onBack = { viewModel.navigateBack(AppRoute.BackupRestoreSettings) },
                     viewModel = viewModel,
                 )
             }
             entry<AppRoute.AidManager>(swipeDismiss = swipeBackDirection) {
                 AidManagerScreen(
                     aids = currentState.value.settings.isdrAids,
-                    onBack = viewModel::navigateBack,
+                    onBack = { viewModel.navigateBack(AppRoute.AidManager) },
                     onSave = viewModel::setIsdrAids,
                 )
             }
             entry<AppRoute.TagsAndReminders>(swipeDismiss = swipeBackDirection) {
-                TagsAndRemindersScreen(settings = currentState.value.settings, onBack = viewModel::navigateBack,
-                    onOpenTagManager = { viewModel.navigate(AppRoute.TagManager) },
-                    onOpenReminderSettings = { viewModel.navigate(AppRoute.ReminderSettings) })
+                TagsAndRemindersScreen(settings = currentState.value.settings, onBack = { viewModel.navigateBack(AppRoute.TagsAndReminders) },
+                    onOpenTagManager = { viewModel.navigate(AppRoute.TagManager, AppRoute.TagsAndReminders) },
+                    onOpenReminderSettings = { viewModel.navigate(AppRoute.ReminderSettings, AppRoute.TagsAndReminders) })
             }
             entry<AppRoute.ReminderSettings>(swipeDismiss = swipeBackDirection) {
                 app.hyperlpa.ui.screens.ReminderSettingsScreen(
                     settings = currentState.value.settings,
                     notificationPermissionGranted = currentNotificationPermissionGranted.value,
-                    onBack = viewModel::navigateBack,
-                    onOpenScheduledReminders = { viewModel.navigate(AppRoute.ScheduledReminders) },
+                    onBack = { viewModel.navigateBack(AppRoute.ReminderSettings) },
+                    onOpenScheduledReminders = { viewModel.navigate(AppRoute.ScheduledReminders, AppRoute.ReminderSettings) },
                     onSetRemindersEnabled = viewModel::setScheduledReminders,
                     onRequestNotificationPermission = onRequestNotificationPermission,
                     onOpenNotificationSettings = onOpenNotificationSettings,
@@ -641,33 +650,38 @@ fun HyperLpaApp(
             entry<AppRoute.TagManager>(swipeDismiss = swipeBackDirection) {
                 TagManagerScreen(
                     profiles = currentState.value.profiles,
-                    onBack = viewModel::navigateBack,
+                    onBack = { viewModel.navigateBack(AppRoute.TagManager) },
                     onSetTags = viewModel::setProfileTags,
                 )
             }
             entry<AppRoute.ScheduledReminders>(swipeDismiss = swipeBackDirection) {
                 ScheduledRemindersScreen(
                     profiles = currentState.value.profiles,
-                    onBack = viewModel::navigateBack,
-                    onOpen = { profile -> viewModel.navigate(AppRoute.ProfileDetails(profile.iccid)) },
+                    onBack = { viewModel.navigateBack(AppRoute.ScheduledReminders) },
+                    onOpen = { profile -> viewModel.navigate(AppRoute.ProfileDetails(profile.iccid), AppRoute.ScheduledReminders) },
                 )
             }
             entry<AppRoute.Statistics>(swipeDismiss = swipeBackDirection) {
                 StatisticsScreen(
                     profiles = currentState.value.profiles,
                     notifications = currentState.value.lpa.notifications,
-                    onBack = viewModel::navigateBack,
+                    onBack = { viewModel.navigateBack(AppRoute.Statistics) },
                 )
             }
             entry<AppRoute.Logs>(swipeDismiss = swipeBackDirection) {
                 LogsScreen(
                     logs = currentState.value.lpa.logs,
-                    onBack = viewModel::navigateBack,
+                    onBack = { viewModel.navigateBack(AppRoute.Logs) },
                     onExportSupportReport = viewModel::exportSupportReport,
                 )
             }
             entry<AppRoute.About>(swipeDismiss = swipeBackDirection) {
-                AboutScreen(onBack = viewModel::navigateBack)
+                val motion = top.yukonga.miuix.kmp.nav.core.LocalNavTransitionScope.current
+                AboutScreen(
+                    onBack = { viewModel.navigateBack(AppRoute.About) },
+                    animateBackground = !motion.isRunning,
+                    artwork = aboutArtwork.value,
+                )
             }
         }
 
@@ -684,6 +698,8 @@ fun HyperLpaApp(
             }
         }
     }
+}
+
 }
 
 @Composable
@@ -753,10 +769,10 @@ private fun MainShell(
     }
 
     val navigationItems = listOf(
-        NavigationItem(stringResource(app.hyperlpa.R.string.nav_profiles), MiuixIcons.BankCards),
-        NavigationItem(stringResource(app.hyperlpa.R.string.nav_notifications), MiuixIcons.Messages),
-        NavigationItem(stringResource(app.hyperlpa.R.string.nav_tools), MiuixIcons.Tune),
-        NavigationItem(stringResource(app.hyperlpa.R.string.nav_settings), MiuixIcons.Settings),
+        NavigationItem(stringResource(app.hyperlpa.R.string.nav_profiles), MiuixIcons.Glass.BankCards),
+        NavigationItem(stringResource(app.hyperlpa.R.string.nav_notifications), MiuixIcons.Glass.Messages),
+        NavigationItem(stringResource(app.hyperlpa.R.string.nav_tools), MiuixIcons.Glass.Tune),
+        NavigationItem(stringResource(app.hyperlpa.R.string.nav_settings), MiuixIcons.Glass.Settings),
     )
     val isWide = rememberIsWideWindow()
     val navigateTo: (Int) -> Unit = { index ->
@@ -810,17 +826,10 @@ private fun MainShell(
         val blurActive = backdrop != null
         val showLabels = state.settings.navigationLabels == NavigationLabels.ICON_AND_TEXT
         val regularBarColor = if (blurActive) Color.Transparent else MiuixTheme.colorScheme.surface
-        val floatingShape = RoundedCornerShape(50.dp)
         val solidFloatingColor = if (profilesLoading) {
             MiuixTheme.colorScheme.surface
         } else {
             MiuixTheme.colorScheme.surfaceContainer
-        }
-        val floatingColor = if (blurActive) Color.Transparent else solidFloatingColor
-        val floatingHighlight = if (MiuixTheme.colorScheme.surface.luminance() < 0.5f) {
-            Highlight.GlassStrokeMiddleDark
-        } else {
-            Highlight.GlassStrokeMiddleLight
         }
 
         Scaffold(
@@ -841,29 +850,21 @@ private fun MainShell(
                             solidContainerColor = solidFloatingColor,
                         )
                     } else {
-                        FloatingNavigationBar(
-                            modifier = Modifier.appBackdropBlur(
-                                backdrop = backdrop,
-                                shape = floatingShape,
-                                color = MiuixTheme.colorScheme.surfaceContainer.copy(alpha = 0.6f),
-                                highlight = floatingHighlight,
-                            ),
-                            color = floatingColor,
-                            cornerRadius = 50.dp,
-                        ) {
-                            navigationItems.forEachIndexed { index, item ->
-                                FloatingTabItem(
-                                    item = item,
-                                    selected = mainPagerState.selectedPage == index,
-                                    onClick = { navigateTo(index) },
-                                    showLabel = showLabels,
-                                    badge = inboxBadge.takeIf { index == AppTab.NOTIFICATIONS.ordinal },
-                                )
-                            }
-                        }
+                        GlassNavigationBar(
+                            modifier = Modifier.horizontalCutoutPadding().padding(horizontal = 24.dp),
+                            items = navigationItems.map { GlassNavigationItem(it.icon, if (showLabels) it.label else null, it.label) },
+                            selectedIndex = mainPagerState.selectedPage, onSelect = navigateTo, backdrop = backdrop,
+                            style = GlassDefaults.style(LocalDarkTheme.current),
+                            stroke = GlassEdgeStrokes.forTheme(LocalDarkTheme.current),
+                            badge = { index -> inboxBadge.takeIf { index == AppTab.NOTIFICATIONS.ordinal }?.invoke() },
+                        )
                     }
                 } else {
-                    BlurredBar(backdrop = backdrop) {
+                    Box(Modifier.glassPanel(backdrop = backdrop,
+                        shape = top.yukonga.miuix.kmp.material.GlassShape(0.dp),
+                        style = GlassDefaults.style(LocalDarkTheme.current),
+                        material = GlassNavigationBarDefaults.material(),
+                        stroke = GlassEdgeStrokes.forTheme(LocalDarkTheme.current), shadow = null, shading = false)) {
                         NavigationBar(
                             color = regularBarColor,
                             mode = if (showLabels) {
@@ -926,46 +927,46 @@ private fun MainTabPage(
     val profilesLoading = state.isProfilesLoading
     val useStaticBackdrop = profilesLoading && tab == AppTab.PROFILES
     val backdrop = rememberAppBackdrop()
-    val topBarColor = if (backdrop == null) MiuixTheme.colorScheme.surface else Color.Transparent
+    val listState = rememberLazyListState()
+    val gridState = rememberLazyGridState()
+    val listViewport = rememberHeaderViewport(listState)
+    var profilesViewport by remember { mutableStateOf(listViewport) }
+    val viewport = if (tab == AppTab.PROFILES) profilesViewport else listViewport
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = MiuixTheme.colorScheme.surface,
         topBar = {
-            BlurredBar(
-                backdrop = backdrop,
-                progressive = true,
-                scrollBehavior = scrollBehavior,
-            ) {
-                AdaptiveTopAppBar(
+                Os4TopAppBar(
                     title = stringResource(tab.titleRes),
-                    color = topBarColor,
+                    backdrop = backdrop, viewport = viewport,
                     scrollBehavior = scrollBehavior,
                     actions = {
                         when (tab) {
                             AppTab.PROFILES -> {
-                                IconButton(onClick = { viewModel.navigate(AppRoute.DownloadProfile) }) {
+                                IconButton(onClick = { viewModel.navigate(AppRoute.DownloadProfile, AppRoute.Shell) }) {
                                     Icon(
-                                        MiuixIcons.Download,
+                                        MiuixIcons.Glass.Download,
                                         contentDescription = stringResource(app.hyperlpa.R.string.action_download_profile),
                                     )
                                 }
                             }
-                            AppTab.NOTIFICATIONS -> {
-                                IconButton(onClick = { viewModel.navigate(AppRoute.NotificationHistory) }) {
+                            AppTab.NOTIFICATIONS -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                IconButton(onClick = { viewModel.navigate(AppRoute.NotificationHistory, AppRoute.Shell) },
+                                    shadow = GlassShadows.Float) {
                                     Icon(
-                                        MiuixIcons.Timer,
+                                        MiuixIcons.Glass.Timer,
                                         contentDescription = stringResource(
                                             app.hyperlpa.R.string.notification_history_title,
                                         ),
                                     )
                                 }
-                                OverlayIconDropdownMenu(entry = DropdownEntry(buildList {
+                                OverlayIconDropdownMenu(shadow = GlassShadows.Float, entry = DropdownEntry(buildList {
                                     add(DropdownItem(text = stringResource(app.hyperlpa.R.string.phone_inbox_alerts_title),
-                                        onClick = { viewModel.navigate(AppRoute.PhoneInboxSettings) }))
+                                        onClick = { viewModel.navigate(AppRoute.PhoneInboxSettings, AppRoute.Shell) }))
                                     add(DropdownItem(text = stringResource(app.hyperlpa.R.string.remote_title),
-                                        onClick = { viewModel.navigate(AppRoute.RemoteDevices) }))
+                                        onClick = { viewModel.navigate(AppRoute.RemoteDevices, AppRoute.Shell) }))
                                 })) {
-                                    Icon(MiuixIcons.More, stringResource(app.hyperlpa.R.string.remote_more_options))
+                                    Icon(MiuixIcons.Glass.More, stringResource(app.hyperlpa.R.string.remote_more_options))
                                 }
                             }
                             AppTab.TOOLS,
@@ -974,7 +975,6 @@ private fun MainTabPage(
                         }
                     },
                 )
-            }
         },
     ) { innerPadding ->
         val contentPadding = PaddingValues(
@@ -996,6 +996,7 @@ private fun MainTabPage(
             }
             when (tab) {
                 AppTab.PROFILES -> ProfilesScreen(
+                    listState = listState, gridState = gridState, onViewportChanged = { profilesViewport = it },
                     state = state,
                     modifier = modifier,
                     contentPadding = contentPadding,
@@ -1004,8 +1005,8 @@ private fun MainTabPage(
                     onSearchChange = viewModel::updateSearchQuery,
                     onSelectReader = viewModel::connectReader,
                     onResolveReaderAccess = onResolveReaderAccess,
-                    onOpenEuiccDetails = { viewModel.navigate(AppRoute.EuiccDetails) },
-                    onOpenProfile = { profile -> viewModel.navigate(AppRoute.ProfileDetails(profile.iccid)) },
+                    onOpenEuiccDetails = { viewModel.navigate(AppRoute.EuiccDetails, AppRoute.Shell) },
+                    onOpenProfile = { profile -> viewModel.navigate(AppRoute.ProfileDetails(profile.iccid), AppRoute.Shell) },
                     onEnableChange = viewModel::setProfileEnabled,
                     onSetPinned = viewModel::setProfilePinned,
                     onRename = viewModel::renameProfile,
@@ -1013,6 +1014,7 @@ private fun MainTabPage(
                     onRefresh = viewModel::refreshProfiles,
                 )
                 AppTab.NOTIFICATIONS -> app.hyperlpa.ui.screens.PhoneNotificationInboxScreen(
+                    listState = listState,
                     inbox = inbox, devices = remoteState, views = notificationViews, refreshing = inboxRefreshing,
                     refreshFailure = inboxRefreshFailure,
                     modifier = modifier, contentPadding = contentPadding, scrollBehavior = scrollBehavior,
@@ -1022,22 +1024,24 @@ private fun MainTabPage(
                     onArchive = { id, entry, archived -> viewModel.remoteDevices.archivePhoneInboxEntry(id, entry, archived) },
                     onDelete = { id, entry -> viewModel.remoteDevices.deletePhoneInboxEntry(id, entry) },
                     onRefresh = { deviceId -> viewModel.remoteDevices.refreshPhoneInbox(deviceId) },
-                    onOpenDevices = { viewModel.navigate(AppRoute.RemoteDevices) },
-                    onOpenPendingEuicc = { viewModel.navigate(AppRoute.PendingEuiccNotifications) },
+                    onOpenDevices = { viewModel.navigate(AppRoute.RemoteDevices, AppRoute.Shell) },
+                    onOpenPendingEuicc = { viewModel.navigate(AppRoute.PendingEuiccNotifications, AppRoute.Shell) },
                 )
                 AppTab.TOOLS -> ToolsScreen(
+                    listState = listState,
                     state = state,
                     modifier = modifier,
                     contentPadding = contentPadding,
                     scrollBehavior = scrollBehavior,
-                    onNavigate = viewModel::navigate,
+                    onNavigate = { viewModel.navigate(it, AppRoute.Shell) },
                 )
                 AppTab.SETTINGS -> SettingsScreen(
+                    listState = listState,
                     state = state,
                     modifier = modifier,
                     contentPadding = contentPadding,
                     scrollBehavior = scrollBehavior,
-                    onNavigate = viewModel::navigate,
+                    onNavigate = { viewModel.navigate(it, AppRoute.Shell) },
                 )
             }
         }
@@ -1056,57 +1060,6 @@ private val InstantNavTransition = navGraphicsTransition(
 private val HyperLpaUiState.isProfilesLoading: Boolean
     get() = !lpa.initialized ||
         (lpa.operation is LpaOperation.DiscoveringReaders && lpa.profiles.isEmpty())
-
-@Composable
-private fun FloatingTabItem(
-    item: NavigationItem,
-    selected: Boolean,
-    onClick: () -> Unit,
-    showLabel: Boolean,
-    modifier: Modifier = Modifier,
-    badge: (@Composable () -> Unit)? = null,
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val baseColor = MiuixTheme.colorScheme.onSurfaceContainer
-    val tint = when {
-        isPressed -> baseColor.copy(alpha = if (selected) 0.7f else 0.5f)
-        selected -> baseColor
-        else -> baseColor.copy(alpha = 0.6f)
-    }
-    Column(
-        modifier = modifier
-            .defaultMinSize(minWidth = if (showLabel) 56.dp else 48.dp, minHeight = 48.dp)
-            .selectable(
-                selected = selected,
-                onClick = onClick,
-                role = Role.Tab,
-                interactionSource = interactionSource,
-                indication = null,
-            )
-            .padding(horizontal = if (showLabel) 8.dp else 6.dp, vertical = 5.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        BadgedBox(badge = { badge?.invoke() }) {
-            Icon(
-                imageVector = item.icon,
-                contentDescription = if (showLabel) null else item.label,
-                tint = tint,
-                modifier = Modifier.size(22.dp),
-            )
-        }
-        if (showLabel) {
-            Text(
-                text = item.label,
-                color = tint,
-                fontSize = 11.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
 
 @Composable
 private fun LastEnabledProfileDisableDialog(
@@ -1134,7 +1087,6 @@ private fun OperationFailureDialog(
     failure: app.hyperlpa.domain.model.OperationFailure?,
     onDismiss: () -> Unit,
 ) {
-    val haptic = LocalHapticFeedback.current
     var retained by remember { mutableStateOf(failure) }
     if (failure != null) retained = failure
     OverlayDialog(
@@ -1154,14 +1106,9 @@ private fun OperationFailureDialog(
             )
             Spacer(Modifier.size(12.dp))
         }
-        TextButton(
+        app.hyperlpa.ui.components.DialogActionButton(
             text = stringResource(app.hyperlpa.R.string.common_close),
-            onClick = {
-                haptic.performHapticFeedback(HapticFeedbackType.Confirm)
-                onDismiss()
-            },
-            colors = ButtonDefaults.textButtonColorsPrimary(),
-            modifier = Modifier.fillMaxWidth(),
+            onClick = onDismiss, modifier = Modifier.fillMaxWidth(),
         )
     }
 }

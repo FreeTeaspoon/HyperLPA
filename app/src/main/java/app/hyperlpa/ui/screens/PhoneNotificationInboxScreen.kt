@@ -23,7 +23,7 @@ import top.yukonga.miuix.kmp.basic.*
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Community
 import top.yukonga.miuix.kmp.preference.ArrowPreference
-import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
+import app.hyperlpa.ui.components.Os4DropdownPreference as OverlayDropdownPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.utils.overScrollVertical
 import top.yukonga.miuix.kmp.utils.scrollEndHaptic
@@ -48,6 +48,7 @@ internal fun PhoneNotificationInboxScreen(
     onRefresh: (String?) -> Unit,
     onOpenDevices: () -> Unit,
     onOpenPendingEuicc: () -> Unit,
+    listState: androidx.compose.foundation.lazy.LazyListState = rememberLazyListState(),
 ) {
     var selectedDevice by rememberSaveable { mutableStateOf<String?>(null) }
     var showArchived by rememberSaveable { mutableStateOf(false) }
@@ -59,7 +60,6 @@ internal fun PhoneNotificationInboxScreen(
             history.entries.filter { history.isArchived(it) == showArchived }.map { id to it }
         }.sortedByDescending { it.second.timestamp }
     }
-    val listState = rememberLazyListState()
     LaunchedEffect(target, inbox, sourceIds, selected, showArchived) {
         val current = target ?: return@LaunchedEffect
         val archivedTarget = inbox[current.deviceId]?.entries?.firstOrNull { it.id == current.entryId }
@@ -174,7 +174,7 @@ internal fun PhoneNotificationInboxScreen(
             }
         }
     }
-    top.yukonga.miuix.kmp.overlay.OverlayDialog(
+    app.hyperlpa.ui.components.Os4Dialog(
         show = deleteRequested,
         title = stringResource(R.string.phone_inbox_delete_title),
         summary = stringResource(R.string.phone_inbox_delete_summary),

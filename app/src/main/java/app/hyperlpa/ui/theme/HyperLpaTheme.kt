@@ -29,6 +29,8 @@ import top.yukonga.miuix.kmp.theme.ThemeColorSpec
 import top.yukonga.miuix.kmp.theme.ThemeController
 import top.yukonga.miuix.kmp.theme.ThemePaletteStyle
 import top.yukonga.miuix.kmp.theme.platformDynamicColors
+import top.yukonga.miuix.kmp.material.DefaultRuntimeShaderCache
+import top.yukonga.miuix.kmp.material.LocalRuntimeShaderCache
 
 val LocalBlurEnabled = staticCompositionLocalOf { true }
 val LocalPlatformDensity = staticCompositionLocalOf<Density?> { null }
@@ -39,6 +41,9 @@ fun HyperLpaTheme(
     settings: AppSettings,
     content: @Composable () -> Unit,
 ) {
+    // The library's local default creates a separate cache for every consumer.
+    // Keep compiled blur programs across route disposal and reopening instead.
+    val shaderCache = remember { DefaultRuntimeShaderCache() }
     val systemDark = isSystemInDarkTheme()
     val isDark = when (settings.themeMode) {
         ThemeMode.SYSTEM -> systemDark
@@ -90,6 +95,7 @@ fun HyperLpaTheme(
         }
         SystemBarsEffect(isDark = isDark)
         CompositionLocalProvider(
+            LocalRuntimeShaderCache provides shaderCache,
             LocalDensity provides scaledDensity,
             LocalPlatformDensity provides platformDensity,
             LocalBlurEnabled provides settings.blurEnabled,

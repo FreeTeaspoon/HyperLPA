@@ -15,6 +15,7 @@ nineesim-keystore.properties
 .kotlin/
 .DS_Store
 /files/
+/docs/
 
 # Local design/ImageGen scratch files
 /tmp/

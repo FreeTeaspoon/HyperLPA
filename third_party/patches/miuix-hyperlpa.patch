@@ -1,7 +1,26 @@
-diff --git a/docs/components/pulltorefresh.md b/docs/components/pulltorefresh.md
-index 61ebe3a9..52db4174 100644
---- a/docs/components/pulltorefresh.md
-+++ b/docs/components/pulltorefresh.md
+diff --git a/build-logic/src/main/kotlin/BuildConfig.kt b/build-logic/src/main/kotlin/BuildConfig.kt
+index f6ad5113..baa8be35 100644
+--- a/build-logic/src/main/kotlin/BuildConfig.kt
++++ b/build-logic/src/main/kotlin/BuildConfig.kt
+@@ -17,12 +17,14 @@ object BuildConfig {
+ }
+
+ fun org.gradle.api.Project.getGitVersionCode(): Int {
++    if (!rootDir.resolve(".git").exists()) return 1
+     return providers.exec {
+         commandLine("git", "rev-list", "--count", "HEAD")
+     }.standardOutput.asText.get().trim().toInt()
+ }
+
+ fun org.gradle.api.Project.getGitHashShort(): String {
++    if (!rootDir.resolve(".git").exists()) return "9d4b9c85"
+     return providers.exec {
+         commandLine("git", "rev-parse", "--short", "HEAD")
+     }.standardOutput.asText.get().trim()
+diff --git a/docs/components/basic/pulltorefresh.md b/docs/components/basic/pulltorefresh.md
+index 61b798e2..70d4e7d9 100644
+--- a/docs/components/basic/pulltorefresh.md
++++ b/docs/components/basic/pulltorefresh.md
 @@ -35,6 +35,7 @@ LaunchedEffect(isRefreshing) {
  Surface {
      PullToRefresh(
@@ -10,59 +29,114 @@ index 61ebe3a9..52db4174 100644
          onRefresh = { isRefreshing = true },
          pullToRefreshState = pullToRefreshState,
      ) {
-@@ -75,6 +76,7 @@ PullToRefresh has the following states:
- | ----------------------- | ---------------------- | ------------------------------ | -------------------------------------- | -------- |
+@@ -76,6 +77,7 @@ PullToRefresh has the following states:
  | isRefreshing            | Boolean                | Refresh state                  | None                                   | Yes      |
  | onRefresh               | () -> Unit             | Refresh callback function      | None                                   | Yes      |
-+| enabled | Boolean | Allow user pull gestures; preserves content and scroll state | true | No |
  | modifier                | Modifier               | Container modifier             | Modifier                               | No       |
++| enabled | Boolean | Allows new pulls; disabling cancels a pending gesture without replacing content or stopping an active refresh | true | No |
  | pullToRefreshState      | PullToRefreshState     | PullToRefresh state            | rememberPullToRefreshState()           | No       |
  | contentPadding          | PaddingValues          | Content padding                | PaddingValues(0.dp)                    | No       |
+ | topAppBarScrollBehavior | ScrollBehavior         | Top app bar scroll behavior    | null                                   | No       |
+diff --git a/docs/components/glass/glassiconbutton.md b/docs/components/glass/glassiconbutton.md
+index 6f903f1a..b0833738 100644
+--- a/docs/components/glass/glassiconbutton.md
++++ b/docs/components/glass/glassiconbutton.md
+@@ -52,6 +52,8 @@ The defaults below apply outside `GlassTopAppBar`.
+ | fill | Color | Fill used without a backdrop | GlassTopAppBarDefaults.buttonFill() | No |
+ | stroke | EdgeStroke? | Surface stroke; null removes it | GlassTopAppBarDefaults.buttonStroke() | No |
+ | shadow | GlassShadow? | Button shadow; null removes it | GlassShadows.Regular | No |
++| floating | Boolean? | Explicit material state for fixed headers; null inherits the bar or standalone default | null | No |
++| shadowAlpha | (() -> Float)? | Shadow opacity callback, read during drawing | null | No |
+ | content | @Composable () -> Unit | Centered button content | - | Yes |
+
+ The button requests a square of `size` and adds no separate minimum touch target. Choose a size suitable for accessibility and avoid clipping its shadow.
+@@ -95,6 +97,26 @@ GlassTopAppBar(
+
+ Inside `GlassTopAppBar`, buttons inherit its appearance and backdrop. Outside it, including in a navigation bar's trailing action, pass the backdrop explicitly.
+
++### Fixed headers
++
++A fixed header can supply its overlap state and animated shadow opacity. Keep the parent unclipped so the native shadow can extend below the bar.
++
++```kotlin
++val shadowAlpha by animateFloatAsState(
++    targetValue = if (overlapping) 1f else 0f,
++    animationSpec = GlassMotion.topBarButtonFloat(),
++)
++GlassIconButton(
++    onClick = onAction,
++    backdrop = backdrop,
++    inheritTopBarMaterial = false,
++    floating = overlapping,
++    shadowAlpha = { shadowAlpha },
++) {
++    Icon(actionIcon, contentDescription = "Search")
++}
++```
++
+ ### Custom Press Scaling {#press-feedback-and-glasspress}
+
+ For a custom clickable surface, share one interaction source between `glassPress` and `clickable`:
+diff --git a/docs/components/glass/glassnavigationbar.md b/docs/components/glass/glassnavigationbar.md
+index e6cbc024..7b829b13 100644
+--- a/docs/components/glass/glassnavigationbar.md
++++ b/docs/components/glass/glassnavigationbar.md
+@@ -37,6 +37,7 @@ GlassNavigationBar(
+     onSelect = { selectedIndex = it },
+     backdrop = backdrop,
+     modifier = Modifier.padding(horizontal = 24.dp),
++    badge = { index -> /* Optional per-destination badge. */ },
+ )
+ ```
+
+@@ -83,6 +84,7 @@ Use `visible` to show or hide the group. `alpha` controls material opacity.
+ | selectedColor | Color | Selected icon and label tint | MiuixTheme.colorScheme.onBackground | No |
+ | unselectedColor | Color | Unselected icon and label tint | MiuixTheme.colorScheme.onBackground | No |
+ | trailingAction | (@Composable () -> Unit)? | Independent action outside the capsule; adding or removing it animates scale, opacity, capsule width and spacing | null | No |
++| badge | @Composable (Int) -> Unit | Optional badge over each icon; receives the item index | {} | No |
+
+ ### GlassNavigationItem Properties {#glassnavigationitem}
+
+diff --git a/docs/demo/src/commonMain/kotlin/GlassIconButtonDemo.kt b/docs/demo/src/commonMain/kotlin/GlassIconButtonDemo.kt
+index 7fd4f7c0..d7f67a12 100644
+--- a/docs/demo/src/commonMain/kotlin/GlassIconButtonDemo.kt
++++ b/docs/demo/src/commonMain/kotlin/GlassIconButtonDemo.kt
+@@ -81,6 +81,7 @@ fun GlassIconButtonDemo() {
+                             GlassIconButton(
+                                 onClick = { confirmedCount++ },
+                                 backdrop = backdrop,
++                                floating = true,
+                             ) {
+                                 Icon(
+                                     imageVector = MiuixIcons.Glass.Ok,
+diff --git a/docs/demo/src/commonMain/kotlin/GlassNavigationBarDemo.kt b/docs/demo/src/commonMain/kotlin/GlassNavigationBarDemo.kt
+index 3f3dc924..b1e73e9e 100644
+--- a/docs/demo/src/commonMain/kotlin/GlassNavigationBarDemo.kt
++++ b/docs/demo/src/commonMain/kotlin/GlassNavigationBarDemo.kt
+@@ -73,6 +73,7 @@ fun GlassNavigationBarDemo() {
+                     bottomBar = {
+                         GlassNavigationBar(
+                             items = items,
++                            badge = { index -> if (index == 1) Text("•") },
+                             selectedIndex = selectedIndex,
+                             onSelect = { selectedIndex = it },
+                             backdrop = backdrop,
 diff --git a/docs/demo/src/commonMain/kotlin/PullToRefreshDemo.kt b/docs/demo/src/commonMain/kotlin/PullToRefreshDemo.kt
-index 26c54453..e6f775c6 100644
+index 26c54453..24e8b6c3 100644
 --- a/docs/demo/src/commonMain/kotlin/PullToRefreshDemo.kt
 +++ b/docs/demo/src/commonMain/kotlin/PullToRefreshDemo.kt
 @@ -58,6 +58,7 @@ fun PullToRefreshDemo() {
 
              PullToRefresh(
                  isRefreshing = isRefreshing,
-+                enabled = true,
++                enabled = !isRefreshing,
                  onRefresh = { isRefreshing = true },
                  pullToRefreshState = pullToRefreshState,
              ) {
-diff --git a/docs/guide/blur.md b/docs/guide/blur.md
-index d4bc2d92..bb1054d7 100644
---- a/docs/guide/blur.md
-+++ b/docs/guide/blur.md
-@@ -68,6 +68,11 @@ val backdropScaffoldSupported = isRenderEffectSupported()
- val blurAndBlendSupported = isRuntimeShaderSupported()
- ```
-
-+Blend shaders compile only the blend modes used by each surface. This keeps the same
-+color and alpha calculations while avoiding driver compiler memory limits for
-+small chains that include Lab or linear-light modes. Changing the mode set
-+selects a matching shader; changing colors keeps the existing shader.
-+
- ## Basic Usage
-
- Applying a backdrop blur involves three steps:
-diff --git a/docs/guide/miuix-nav.md b/docs/guide/miuix-nav.md
-index 7a657660..c7aaeeeb 100644
---- a/docs/guide/miuix-nav.md
-+++ b/docs/guide/miuix-nav.md
-@@ -66,6 +66,8 @@ while (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
-
- The reconciler classifies each change as `Push` / `Pop` / `MultiPush(n)` / `MultiPop(n)` / `Replace` / `ReplaceAll`, surfaced to transitions via `NavTransitionScope.change` so you can animate a multi-pop differently from a single pop.
-
-+When a push interrupts a pop, the removed entry is unloaded as soon as a current entry occupies its stack position. The selected page appears immediately and keeps its content throughout a subsequent close. Only the uppermost visible entry owns the dim scrim, including the composition before replacement cleanup runs.
-+
- ## Transitions
-
- A built-in preset library is available as `NavTransitions`:
-diff --git a/docs/zh_CN/components/pulltorefresh.md b/docs/zh_CN/components/pulltorefresh.md
-index e82ec1cf..a5b08b11 100644
---- a/docs/zh_CN/components/pulltorefresh.md
-+++ b/docs/zh_CN/components/pulltorefresh.md
+diff --git a/docs/zh_CN/components/basic/pulltorefresh.md b/docs/zh_CN/components/basic/pulltorefresh.md
+index cf72ab73..90547a9f 100644
+--- a/docs/zh_CN/components/basic/pulltorefresh.md
++++ b/docs/zh_CN/components/basic/pulltorefresh.md
 @@ -35,6 +35,7 @@ LaunchedEffect(isRefreshing) {
  Surface {
      PullToRefresh(
@@ -71,69 +145,123 @@ index e82ec1cf..a5b08b11 100644
          onRefresh = { isRefreshing = true },
          pullToRefreshState = pullToRefreshState,
      ) {
-@@ -75,6 +76,7 @@ PullToRefresh 组件有以下几种状态：
- | ----------------------- | ---------------------- | ------------------------ | -------------------------------------- | -------- |
+@@ -76,6 +77,7 @@ PullToRefresh 组件有以下几种状态：
  | isRefreshing            | Boolean                | 是否正在刷新             | 无                                     | 是       |
  | onRefresh               | () -> Unit             | 刷新触发时的回调函数     | 无                                     | 是       |
-+| enabled | Boolean | Allow user pull gestures; preserves content and scroll state | true | No |
  | modifier                | Modifier               | 应用于容器的修饰符       | Modifier                               | 否       |
++| enabled | Boolean | 允许新的下拉手势；禁用时取消待释放手势，保留内容和正在执行的刷新 | true | 否 |
  | pullToRefreshState      | PullToRefreshState     | 下拉刷新状态控制器       | rememberPullToRefreshState()           | 否       |
  | contentPadding          | PaddingValues          | 内容区的内边距           | PaddingValues(0.dp)                    | 否       |
-diff --git a/docs/zh_CN/guide/blur.md b/docs/zh_CN/guide/blur.md
-index d30eaff7..83fb20d8 100644
---- a/docs/zh_CN/guide/blur.md
-+++ b/docs/zh_CN/guide/blur.md
-@@ -31,6 +31,8 @@ dependencies {
- }
+ | topAppBarScrollBehavior | ScrollBehavior         | 顶部应用栏滚动行为       | null                                   | 否       |
+diff --git a/docs/zh_CN/components/glass/glassiconbutton.md b/docs/zh_CN/components/glass/glassiconbutton.md
+index 03bb38fe..15951e3f 100644
+--- a/docs/zh_CN/components/glass/glassiconbutton.md
++++ b/docs/zh_CN/components/glass/glassiconbutton.md
+@@ -52,6 +52,8 @@ Glass 图标使用 28 dp 画布。省略图标的尺寸修饰符即可采用固
+ | fill | Color | 没有背景采样源时使用的填充色 | GlassTopAppBarDefaults.buttonFill() | 否 |
+ | stroke | EdgeStroke? | 表面描边，null 表示不绘制 | GlassTopAppBarDefaults.buttonStroke() | 否 |
+ | shadow | GlassShadow? | 按钮阴影，null 表示不绘制 | GlassShadows.Regular | 否 |
++| floating | Boolean? | 固定顶栏的材质显示状态；null 继承顶栏或使用独立按钮默认值 | null | 否 |
++| shadowAlpha | (() -> Float)? | 阴影透明度回调，保留绘制阶段读取 | null | 否 |
+ | content | @Composable () -> Unit | 居中显示的按钮内容 | - | 是 |
+
+ 按钮请求边长为 `size` 的正方形，不额外添加最小触摸目标。请根据无障碍需求选择尺寸，并避免裁剪阴影。
+@@ -95,6 +97,26 @@ GlassTopAppBar(
+
+ 在 `GlassTopAppBar` 内，按钮继承顶栏的外观和背景采样源。在顶栏外使用时（包括导航栏尾部操作），需显式传入背景采样源。
+
++### 固定顶栏
++
++固定顶栏可显式控制材质与阴影。使用原生动画规格平滑改变阴影透明度；父布局不应裁剪阴影。
++
++```kotlin
++val shadowAlpha by animateFloatAsState(
++    targetValue = if (overlapping) 1f else 0f,
++    animationSpec = GlassMotion.topBarButtonFloat(),
++)
++GlassIconButton(
++    onClick = onAction,
++    backdrop = backdrop,
++    inheritTopBarMaterial = false,
++    floating = overlapping,
++    shadowAlpha = { shadowAlpha },
++) {
++    Icon(actionIcon, contentDescription = "Search")
++}
++```
++
+ ### 自定义按下缩放 {#按下反馈与-glasspress}
+
+ 自定义可点击表面时，让 `glassPress` 和 `clickable` 共用一个交互源：
+diff --git a/docs/zh_CN/components/glass/glassnavigationbar.md b/docs/zh_CN/components/glass/glassnavigationbar.md
+index 07f508f0..4da117dc 100644
+--- a/docs/zh_CN/components/glass/glassnavigationbar.md
++++ b/docs/zh_CN/components/glass/glassnavigationbar.md
+@@ -37,6 +37,7 @@ GlassNavigationBar(
+     onSelect = { selectedIndex = it },
+     backdrop = backdrop,
+     modifier = Modifier.padding(horizontal = 24.dp),
++    badge = { index -> /* Optional per-destination badge. */ },
+ )
  ```
 
-+混合着色器只编译当前表面使用的混合模式，保持颜色和透明度计算不变，避免包含 Lab 或线性光模式的小型混合链触发驱动编译器的内存限制。模式集合改变时选择对应着色器，仅改变颜色时复用原着色器。
-+
- ## 平台支持
+@@ -83,6 +84,7 @@ GlassNavigationBar(
+ | selectedColor | Color | 选中图标和标签颜色 | MiuixTheme.colorScheme.onBackground | 否 |
+ | unselectedColor | Color | 未选中图标和标签颜色 | MiuixTheme.colorScheme.onBackground | 否 |
+ | trailingAction | (@Composable () -> Unit)? | 胶囊外的独立操作；添加或移除时平滑调整缩放、透明度、胶囊宽度和间距 | null | 否 |
++| badge | @Composable (Int) -> Unit | 图标角标，参数为导航项索引 | {} | 否 |
 
- | 平台          | 最低要求            |
-diff --git a/docs/zh_CN/guide/miuix-nav.md b/docs/zh_CN/guide/miuix-nav.md
-index 2ae0243e..007993ab 100644
---- a/docs/zh_CN/guide/miuix-nav.md
-+++ b/docs/zh_CN/guide/miuix-nav.md
-@@ -66,6 +66,8 @@ while (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
+ ### GlassNavigationItem 属性 {#glassnavigationitem}
 
- reconciler 把每次变化分类为 `Push` / `Pop` / `MultiPush(n)` / `MultiPop(n)` / `Replace` / `ReplaceAll`，并经 `NavTransitionScope.change` 暴露给转场，使你能对「连续 pop n 层」与「单次 pop」做不同动画。
-
-+当 push 打断 pop 动画时，一旦当前 entry 占据了相同的栈位置，已移除的 entry 就会卸载。所选页面会立即显示，并在随后关闭的整个过程中保持自身内容。只有最上方的可见 entry 拥有暗色遮罩，包括替换清理执行前的那次组合。
-+
- ## 转场
-
- 内置预设库 `NavTransitions`：
+diff --git a/example/shared/src/commonMain/kotlin/AppContent.kt b/example/shared/src/commonMain/kotlin/AppContent.kt
+index a21398cd..e31866ac 100644
+--- a/example/shared/src/commonMain/kotlin/AppContent.kt
++++ b/example/shared/src/commonMain/kotlin/AppContent.kt
+@@ -620,6 +620,7 @@ private fun NavigationBar(
+                         }
+                         GlassNavigationBar(
+                             items = glassItems,
++                            badge = { navigationItemBadge(it, appState.showNavigationBarBadge) },
+                             selectedIndex = page,
+                             onSelect = { mainPagerState.animateToPage(it) },
+                             backdrop = if (blurActive) backdrop else null,
+diff --git a/example/shared/src/commonMain/kotlin/GlassPage.kt b/example/shared/src/commonMain/kotlin/GlassPage.kt
+index 1e14b3ce..b4aeaeae 100644
+--- a/example/shared/src/commonMain/kotlin/GlassPage.kt
++++ b/example/shared/src/commonMain/kotlin/GlassPage.kt
+@@ -254,6 +254,7 @@ fun GlassPage(padding: PaddingValues) {
+                     ) {
+                         GlassNavigationBar(
+                             items = NavItems,
++                            badge = { index -> if (index == 1) Text("•") },
+                             selectedIndex = navIndex,
+                             onSelect = { navIndex = it },
+                             backdrop = backdrop,
+@@ -280,6 +281,7 @@ fun GlassPage(padding: PaddingValues) {
+                                     GlassIconButton(
+                                         onClick = openSearch,
+                                         backdrop = backdrop,
++                                        floating = true,
+                                         size = GlassNavigationBarDefaults.Height,
+                                         style = style,
+                                         material = material,
 diff --git a/example/shared/src/commonMain/kotlin/PullToRefreshPage.kt b/example/shared/src/commonMain/kotlin/PullToRefreshPage.kt
-index 5f2c0dd9..e1f35cd9 100644
+index 8064e53e..159912ac 100644
 --- a/example/shared/src/commonMain/kotlin/PullToRefreshPage.kt
 +++ b/example/shared/src/commonMain/kotlin/PullToRefreshPage.kt
-@@ -135,6 +135,7 @@ fun PullToRefreshPage(
+@@ -146,6 +146,7 @@ fun PullToRefreshPage(
          Box(modifier = if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier) {
              PullToRefresh(
                  isRefreshing = isRefreshing,
-+                enabled = true,
++                enabled = !isRefreshing,
                  onRefresh = { isRefreshing = true },
                  pullToRefreshState = pullToRefreshState,
                  topAppBarScrollBehavior = if (appState.showTopAppBar) topAppBarScrollBehavior else null,
-diff --git a/example/shared/src/commonMain/kotlin/component/BlurSection.kt b/example/shared/src/commonMain/kotlin/component/BlurSection.kt
-index 662c838a..00ec3ecc 100644
---- a/example/shared/src/commonMain/kotlin/component/BlurSection.kt
-+++ b/example/shared/src/commonMain/kotlin/component/BlurSection.kt
-@@ -463,6 +463,7 @@ private fun ForegroundBlurDemo() {
-                                 contrast = contrast,
-                                 saturation = saturation,
-                             ),
-+                            // Exercises the specialized ColorBurn/LinearLight/Lab shader with an alpha mask.
-                             contentBlendMode = ComposeBlendMode.DstIn,
-                         ),
-                 )
 diff --git a/miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffects.kt b/miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffects.kt
-index baf9acff..72ca2898 100644
+index 6f2116e5..2bb245b2 100644
 --- a/miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffects.kt
 +++ b/miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/BackdropEffects.kt
-@@ -7,14 +7,11 @@ import androidx.compose.ui.Modifier
+@@ -7,15 +7,12 @@ import androidx.compose.ui.Modifier
  import androidx.compose.ui.geometry.Size
  import androidx.compose.ui.graphics.RenderEffect
  import androidx.compose.ui.graphics.colorspace.ColorSpaces
@@ -145,11 +273,12 @@ index baf9acff..72ca2898 100644
  import top.yukonga.miuix.kmp.blur.internal.BLUR_RADIUS_TO_SIGMA
  import top.yukonga.miuix.kmp.blur.internal.PROGRESSIVE_LEVEL_FRACTION_1
  import top.yukonga.miuix.kmp.blur.internal.adjustedVarianceForExp
+ import top.yukonga.miuix.kmp.blur.internal.adjustedVarianceForScale
 +import top.yukonga.miuix.kmp.blur.internal.buildSpecializedBlendModeShader
  import top.yukonga.miuix.kmp.blur.internal.chain
- import top.yukonga.miuix.kmp.blur.internal.computeDownScaleBlend
  import top.yukonga.miuix.kmp.blur.internal.createBlurEffect
-@@ -283,9 +280,10 @@ internal fun obtainBlendColorsEffect(scope: BackdropEffectScopeImpl, colors: Blu
+ import top.yukonga.miuix.kmp.blur.internal.createProgressiveBlurEffect
+@@ -257,9 +254,10 @@ internal fun obtainBlendColorsEffect(scope: BackdropEffectScopeImpl, colors: Blu
      if (cached != null && scope.cachedBlendColors == colors) return cached
 
      val needsExtended = colors.needsExtendedBlend()
@@ -162,7 +291,7 @@ index baf9acff..72ca2898 100644
      )
      shader.setBlendLayerUniforms(scope, colors, needsExtended)
      return createRuntimeShaderEffect(shader, "child").also {
-@@ -310,9 +308,10 @@ internal fun buildRampBlendColorsEffect(
+@@ -283,9 +281,10 @@ internal fun buildRampBlendColorsEffect(
      curve: Float,
  ): RenderEffect {
      val needsExtended = colors.needsExtendedBlend()
@@ -176,10 +305,10 @@ index baf9acff..72ca2898 100644
      shader.setBlendLayerUniforms(scope, colors, needsExtended)
      shader.setFloatUniform("in_gradAxis", ax, ay)
 diff --git a/miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/internal/Shaders.kt b/miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/internal/Shaders.kt
-index 171b6b91..ea8b199b 100644
+index 9f400c96..029cf278 100644
 --- a/miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/internal/Shaders.kt
 +++ b/miuix-blur/src/commonMain/kotlin/top/yukonga/miuix/kmp/blur/internal/Shaders.kt
-@@ -537,6 +537,19 @@ internal fun buildBlendModeShader(includeExtended: Boolean, rampMix: Boolean = f
+@@ -403,6 +403,19 @@ internal fun buildBlendModeShader(includeExtended: Boolean, rampMix: Boolean = f
      )
  }
 
@@ -199,35 +328,171 @@ index 171b6b91..ea8b199b 100644
  internal val BLEND_MODE_SHADER_STANDARD: String = buildBlendModeShader(includeExtended = false)
  internal val BLEND_MODE_SHADER_EXTENDED: String = buildBlendModeShader(includeExtended = true)
  internal val BLEND_MODE_SHADER_STANDARD_RAMP: String = buildBlendModeShader(includeExtended = false, rampMix = true)
+diff --git a/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassIconButton.kt b/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassIconButton.kt
+index 3045083b..c8f31f9b 100644
+--- a/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassIconButton.kt
++++ b/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassIconButton.kt
+@@ -58,6 +58,8 @@ import top.yukonga.miuix.kmp.material.withUnderlayBlur
+  * @param shape Button silhouette.
+  * @param shadow Shadow beneath the button; `null` disables it.
+  * @param stroke Optional bloom stroke.
++ * @param floating Optional overlap state for a fixed header without a GlassTopAppBar context.
++ * @param shadowAlpha Optional animated shadow opacity supplied by an adaptive header.
+  * @param content Button content.
+  */
+ @Composable
+@@ -74,6 +76,8 @@ fun GlassIconButton(
+     fill: Color = LocalGlassTopAppBarContext.current?.fill ?: GlassTopAppBarDefaults.buttonFill(),
+     stroke: EdgeStroke? = LocalGlassTopAppBarContext.current.let { if (it != null) it.stroke else GlassTopAppBarDefaults.buttonStroke() },
+     shadow: GlassShadow? = LocalGlassTopAppBarContext.current.let { if (it != null) it.shadow else GlassShadows.Regular },
++    floating: Boolean? = null,
++    shadowAlpha: (() -> Float)? = null,
+     content: @Composable () -> Unit,
+ ) {
+     val interactionSource = remember { MutableInteractionSource() }
+@@ -84,9 +88,9 @@ fun GlassIconButton(
+     val topBarRamp = topBarContext?.ramp
+     GlassButtonSurface(
+         backdrop = materialContext?.buttonBackdrop ?: backdrop ?: topBarContext?.buttonBackdrop,
+-        floating = topBarContext?.floating ?: true,
++        floating = floating ?: topBarContext?.floating ?: true,
+         surfaceAlpha = resolvedSurfaceAlpha,
+-        shadowAlpha = { resolvedSurfaceAlpha * (topBarRamp?.value ?: 1f) },
++        shadowAlpha = shadowAlpha ?: { resolvedSurfaceAlpha * (topBarRamp?.value ?: 1f) },
+         style = style,
+         material = material?.withUnderlayBlur(materialContext?.buttonUnderlayMaterial)
+             ?: materialContext?.material ?: GlassTopAppBarDefaults.buttonMaterial(),
+@@ -96,8 +100,8 @@ fun GlassIconButton(
+         fill = fill,
+         stroke = stroke,
+         shadow = shadow,
+-        sharedProgress = topBarContext?.materialProgress,
+-        sharedKeepMaterial = topBarContext?.keepMaterial,
++        sharedProgress = topBarContext?.materialProgress.takeIf { floating == null },
++        sharedKeepMaterial = topBarContext?.keepMaterial.takeIf { floating == null },
+         pressed = pressed,
+         modifier = modifier
+             .clickable(
+diff --git a/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassNavigationBar.kt b/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassNavigationBar.kt
+index 419c06c3..1e822771 100644
+--- a/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassNavigationBar.kt
++++ b/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassNavigationBar.kt
+@@ -230,6 +230,7 @@ fun GlassNavigationBar(
+     selectedColor: Color = if (MiuixTheme.isDynamicColor) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onBackground,
+     unselectedColor: Color = MiuixTheme.colorScheme.onBackground,
+     trailingAction: (@Composable () -> Unit)? = null,
++    badge: @Composable (Int) -> Unit = {},
+ ) {
+     if (items.isEmpty()) return
+     val index = selectedIndex.coerceIn(0, items.lastIndex)
+@@ -550,12 +551,15 @@ fun GlassNavigationBar(
+                                 horizontalAlignment = Alignment.CenterHorizontally,
+                                 verticalArrangement = Arrangement.spacedBy(GlassNavigationBarDefaults.LabelSpacing),
+                             ) {
+-                                Icon(
+-                                    imageVector = item.icon,
+-                                    contentDescription = null,
+-                                    modifier = Modifier.size(GlassNavigationBarDefaults.IconSize),
+-                                    tint = tint,
+-                                )
++                                Box {
++                                    Icon(
++                                        imageVector = item.icon,
++                                        contentDescription = null,
++                                        modifier = Modifier.size(GlassNavigationBarDefaults.IconSize),
++                                        tint = tint,
++                                    )
++                                    Box(Modifier.align(Alignment.TopEnd)) { badge(position) }
++                                }
+                                 if (item.label != null) {
+                                     Text(
+                                         text = item.label,
 diff --git a/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt b/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt
-index c6f6c28f..11c8b5b4 100644
+index c6f6c28f..2ae0ed06 100644
 --- a/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt
 +++ b/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt
-@@ -687,9 +687,7 @@ private fun NavDisplayLayout(
+@@ -463,6 +463,26 @@ private fun NavDisplayLayout(
+     // an older delayed terminal callback making a newer active session appear idle.
+     val predictiveBackOwnership = remember { PredictiveBackOwnership() }
+     val predictiveBackSessions = remember { mutableMapOf<Long, PredictiveBackSession>() }
++    val commitBack: () -> Unit = {
++        val previousKeys = backStack.toList()
++        currentOnBack.value()
++        if (backStack.toList() == previousKeys) {
++            // A product guard or confirmation may decline the pop. No target changed, so
++            // animateTopTo will not restart after the finger stopped its animation. Restore
++            // the current entry explicitly instead of leaving the driver halfway open.
++            presentation.pendingSettleVelocity = 0f
++            backScope.launch {
++                presentation.trackSettle(phase = NavSettlePhase.Cancel, releaseVelocity = 0f) { onFrame ->
++                    presentation.animatedTop.settleCancel(
++                        target = backStack.lastIndex.toFloat(),
++                        spec = topMotion.cancel,
++                        onFrame = onFrame,
++                    )
++                }
++                presentation.gesture = null
++            }
++        }
++    }
+     val cancelPredictiveBack: (Long) -> Unit = cancel@{ sessionId ->
+         val session = predictiveBackSessions.remove(sessionId) ?: return@cancel
+         // A delayed terminal callback from an older session must not settle or release the
+@@ -526,7 +546,7 @@ private fun NavDisplayLayout(
+             if (sessionId == null) {
+                 // A bare completion (Desktop ESC / programmatic back) is discrete and must commit
+                 // regardless of any pointer-dismiss gesture currently stored in presentation.
+-                currentOnBack.value()
++                commitBack()
+                 return@commit
+             }
+             val session = predictiveBackSessions[sessionId] ?: return@commit
+@@ -546,7 +566,7 @@ private fun NavDisplayLayout(
+                 // gesture left the float mid-flight. The gesture context stays frozen through the
+                 // settle and is cleared when the leaving entry unloads.
+                 try {
+-                    currentOnBack.value()
++                    commitBack()
+                 } finally {
+                     predictiveBackOwnership.release(session.ownershipLease)
+                 }
+@@ -635,7 +655,7 @@ private fun NavDisplayLayout(
+                 motion = topMotion,
+                 settleSink = presentation,
+                 externalGestureOwnership = { predictiveBackOwnership.generation },
+-                onCommit = currentOnBack.value,
++                onCommit = commitBack,
+                 onCancel = {},
+                 onGesture = { presentation.gesture = it },
+             ),
+@@ -686,10 +706,9 @@ private fun NavDisplayLayout(
+             }
          }
 
-         // Highest visible layer; the fullscreen dim scrim renders just beneath it.
+-        // Highest visible layer; the fullscreen dim scrim renders just beneath it.
 -        val topMostVisibleIndex = visibleEntries.fold(-1) { acc, e ->
 -            maxOf(acc, indexByContentKey[e.contentKey] ?: -1)
 -        }
-+        val topMostVisibleKey = visibleEntries.lastOrNull()?.contentKey
++        // A leaving entry and its replacement may share an index. Only the last
++        // visible entry in draw order owns the fullscreen dim, by identity.
++        val scrimOwner = visibleEntries.lastOrNull()
 
          visibleEntries.fastForEach { entry ->
              key(entry.contentKey) {
-@@ -713,7 +711,7 @@ private fun NavDisplayLayout(
+@@ -713,7 +732,7 @@ private fun NavDisplayLayout(
                      val upperEntry = presentation.presented.firstOrNull { indexByContentKey[it.contentKey] == entryIndex + 1 }
                      val upperTransition = upperEntry?.transitionOrNull() ?: transition
 
 -                    if (effects.dimAmount > 0f && entryIndex == topMostVisibleIndex && entryIndex > 0) {
-+                    if (effects.dimAmount > 0f && entry.contentKey == topMostVisibleKey && entryIndex > 0) {
++                    if (effects.dimAmount > 0f && entry === scrimOwner && entryIndex > 0) {
                          // Fullscreen dim scrim UNDER the top-most visible layer (reference shell
                          // behavior): it must cover the entering page AND the backdrop revealed
                          // around it when a card-style transition scales layers down — a scrim
 diff --git a/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeDismiss.kt b/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeDismiss.kt
-index 766097ae..b71a8ef4 100644
+index 0e898b64..2bb8c360 100644
 --- a/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeDismiss.kt
 +++ b/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeDismiss.kt
-@@ -295,21 +295,16 @@ internal fun Modifier.navSwipeDismissImpl(
+@@ -295,24 +295,20 @@ internal fun Modifier.navSwipeDismissImpl(
                  val event = awaitPointerEvent(PointerEventPass.Initial)
                  if (externalGestureOwnsSequence()) return@awaitEachGesture
                  val change = event.changes.firstOrNull { it.id == down.id }
@@ -237,14 +502,17 @@ index 766097ae..b71a8ef4 100644
 -                    event.changes.forEach { it.consume() }
 -                    if (event.changes.none { it.pressed }) break
 -                    continue
--                }
--                velocityTracker.addPosition(change.uptimeMillis, change.position)
--                if (!change.pressed) {
++                    break
+                 }
+                 velocityTracker.addPosition(change.uptimeMillis, change.position)
+                 if (!change.pressed) {
+-                    // Compose represents platform cancellation as an already-consumed release.
+-                    // It must never commit, even before predictive back acquires the driver.
++                    // A consumed platform cancellation must never commit.
+                     forceCancel = change.isConsumed
 -                    event.changes.forEach { it.consume() }
                      break
                  }
-+                velocityTracker.addPosition(change.uptimeMillis, change.position)
-+                if (!change.pressed) break
                  val delta = change.positionChange()
                  val axisDelta = if (isHorizontal) delta.x else delta.y
                  dismissTravelPx += dismissSign * axisDelta
@@ -253,49 +521,8 @@ index 766097ae..b71a8ef4 100644
                  // Unclamped here; anchoredProgress clamps the total to [min(anchor, 0), MAX_FINGER_PROGRESS].
                  val fingerProgress = dismissTravelPx / extent
                  val touchY = change.position.y
-diff --git a/miuix-nav/src/desktopTest/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeScrollConflictTest.kt b/miuix-nav/src/desktopTest/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeScrollConflictTest.kt
-index e52830c2..030e0b7d 100644
---- a/miuix-nav/src/desktopTest/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeScrollConflictTest.kt
-+++ b/miuix-nav/src/desktopTest/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeScrollConflictTest.kt
-@@ -255,7 +255,7 @@ class NavSwipeScrollConflictTest {
-     }
-
-     @Test
--    fun secondPointerAfterClaimCancelsInsteadOfCommitting() = runComposeUiTest {
-+    fun initiatingPointerKeepsOwnershipAfterSecondPointer() = runComposeUiTest {
-         var commits = 0
-         var cancels = 0
-         setContent {
-@@ -281,15 +281,23 @@ class NavSwipeScrollConflictTest {
-         onRoot().performTouchInput {
-             down(pointerId = 0, position = Offset(width * 0.05f, centerY))
-             moveTo(pointerId = 0, position = Offset(width * 0.4f, centerY))
-+        }
-+        waitForIdle()
-+        onRoot().performTouchInput {
-             down(pointerId = 1, position = Offset(width * 0.7f, centerY))
--            moveTo(pointerId = 0, position = Offset(width * 0.95f, centerY))
-+            moveTo(pointerId = 0, position = Offset(width * 0.8f, centerY), delayMillis = 160)
-             up(pointerId = 1)
--            up(pointerId = 0)
-         }
-         waitForIdle()
-
--        assertEquals(0, commits, "a multi-touch interruption must never commit the pop")
--        assertEquals(1, cancels, "a claimed sequence must settle back after multi-touch interruption")
-+        assertEquals(0, commits, "lifting the second pointer must not commit the pop")
-+        assertEquals(0, cancels, "a second pointer must not cancel the initiating pointer's swipe")
-+
-+        onRoot().performTouchInput { up(pointerId = 0) }
-+        waitForIdle()
-+
-+        assertEquals(1, commits, "lifting the initiating pointer commits its swipe")
-+        assertEquals(0, cancels, "the claimed swipe keeps its original owner")
-     }
-
-     @Test
 diff --git a/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/PullToRefresh.kt b/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/PullToRefresh.kt
-index 235dd9a2..cd9b6967 100644
+index 0c576ee4..091a3877 100644
 --- a/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/PullToRefresh.kt
 +++ b/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/PullToRefresh.kt
 @@ -101,6 +101,7 @@ import kotlin.math.sin
@@ -402,3 +629,32 @@ index 235dd9a2..cd9b6967 100644
          if (pullToRefreshState.refreshState != RefreshState.Idle) {
              // Ensure the indicator cancels and rebounds to zero.
              if (
+diff --git a/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TopAppBar.kt b/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TopAppBar.kt
+index 7fc164bf..596757b5 100644
+--- a/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TopAppBar.kt
++++ b/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/TopAppBar.kt
+@@ -1137,6 +1137,7 @@ private fun SmallTopAppBarLayout(
+             Box(
+                 Modifier
+                     .layoutId("title")
++                    .clipToBounds()
+                     .padding(horizontal = titlePadding),
+             ) {
+                 Text(
+@@ -1157,7 +1158,7 @@ private fun SmallTopAppBarLayout(
+                 actions()
+             }
+             if (subtitle.isNotEmpty()) {
+-                Box(Modifier.layoutId("subtitle")) {
++                Box(Modifier.layoutId("subtitle").clipToBounds()) {
+                     Text(
+                         text = subtitle,
+                         color = animatedSubtitleColor,
+@@ -1180,7 +1181,6 @@ private fun SmallTopAppBarLayout(
+                     Modifier
+                 },
+             )
+-            .clipToBounds()
+             .windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Top))
+             .pointerInput(Unit) {
+                 detectTapGestures { /* Consume click */ }

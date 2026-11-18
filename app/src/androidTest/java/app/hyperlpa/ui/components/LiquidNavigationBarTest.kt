@@ -25,11 +25,11 @@ import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import top.yukonga.miuix.kmp.basic.NavigationItem
-import top.yukonga.miuix.kmp.blur.isRuntimeShaderSupported
+import top.yukonga.miuix.kmp.material.isRuntimeShaderSupported
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.BankCards
-import top.yukonga.miuix.kmp.shader.isRenderEffectSupported
+import top.yukonga.miuix.kmp.material.isRenderEffectSupported
 
 class LiquidNavigationBarTest {
     @get:Rule val compose = createComposeRule()

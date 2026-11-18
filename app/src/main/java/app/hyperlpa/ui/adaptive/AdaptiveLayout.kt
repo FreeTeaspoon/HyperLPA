@@ -2,7 +2,6 @@ package app.hyperlpa.ui.adaptive
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.displayCutout
@@ -14,16 +13,11 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.hyperlpa.ui.theme.LocalPlatformDensity
-import top.yukonga.miuix.kmp.basic.ScrollBehavior
-import top.yukonga.miuix.kmp.basic.SmallTopAppBar
-import top.yukonga.miuix.kmp.basic.TopAppBar
-import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 private val WideWindowThreshold = 600.dp
 private val ExpandedWindowThreshold = 1200.dp
@@ -83,39 +77,6 @@ fun CenteredBox(
                 .then(
                     Modifier,
                 ),
-        )
-    }
-}
-
-@Composable
-fun AdaptiveTopAppBar(
-    title: String,
-    modifier: Modifier = Modifier,
-    color: Color = MiuixTheme.colorScheme.surface,
-    scrollBehavior: ScrollBehavior? = null,
-    navigationIcon: @Composable () -> Unit = {},
-    actions: @Composable RowScope.() -> Unit = {},
-    bottomContent: @Composable () -> Unit = {},
-) {
-    if (rememberIsWideWindow()) {
-        SmallTopAppBar(
-            title = title,
-            modifier = modifier,
-            color = color,
-            scrollBehavior = scrollBehavior,
-            navigationIcon = navigationIcon,
-            actions = actions,
-            bottomContent = bottomContent,
-        )
-    } else {
-        TopAppBar(
-            title = title,
-            modifier = modifier,
-            color = color,
-            scrollBehavior = scrollBehavior,
-            navigationIcon = navigationIcon,
-            actions = actions,
-            bottomContent = bottomContent,
         )
     }
 }

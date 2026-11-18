@@ -4,7 +4,6 @@ import android.app.Activity
 import android.app.Application
 import android.os.Bundle
 import android.view.ViewTreeObserver
-import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ActivityScenario
@@ -24,6 +23,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -84,7 +84,7 @@ class StartupTest {
 
                 viewModel.finishFirstRunSetup()
             }
-            withTimeout(10_000) { snapshotFlow { viewModel.firstRunHandoffPending }.first { it } }
+            awaitFirstRunHandoff(viewModel)
             withContext(Dispatchers.Main) {
                 viewModel.completeFirstRunHandoff()
                 // Completion is durable before the shell opens.
@@ -104,7 +104,7 @@ class StartupTest {
                 assertEquals(listOf(AppRoute.FirstRunSetup), viewModel.navigationBackStack.toList())
                 viewModel.finishFirstRunSetup()
             }
-            withTimeout(10_000) { snapshotFlow { viewModel.firstRunHandoffPending }.first { it } }
+            awaitFirstRunHandoff(viewModel)
             withContext(Dispatchers.Main) {
                 viewModel.completeFirstRunHandoff()
                 viewModel.endInstantNavigation()
@@ -142,7 +142,7 @@ class StartupTest {
                     viewModel.finishFirstRunSetup()
                     viewModel.finishFirstRunSetup()
                 }
-                withTimeout(10_000) { snapshotFlow { viewModel.firstRunHandoffPending }.first { it } }
+                awaitFirstRunHandoff(viewModel)
                 val saved = application.settingsStore.settings.first()
                 assertEquals(!original.loadOperatorIcons, saved.loadOperatorIcons)
                 assertEquals(!original.estimateProfileSize, saved.estimateProfileSize)
@@ -176,7 +176,9 @@ class StartupTest {
             for (children in stacks) {
                 viewModel.navigationBackStack.clear()
                 viewModel.navigationBackStack.add(AppRoute.Shell)
-                children.forEach(viewModel::navigate)
+                children.forEach { route ->
+                    viewModel.navigate(route)
+                }
                 val saved = viewModel.navigationSnapshot()
                 viewModel.navigationBackStack.clear()
                 viewModel.restoreNavigation(saved)
@@ -197,6 +199,13 @@ class StartupTest {
     @Test
     fun disabledPredictiveBackDrawsAfterActivityRecreation() {
         checkStartup(predictiveBack = false, recreate = true)
+    }
+
+    private suspend fun awaitFirstRunHandoff(viewModel: HyperLpaViewModel) {
+        // These ViewModel-only tests have no Recomposer to dispatch snapshot changes.
+        withTimeout(10_000) {
+            while (!withContext(Dispatchers.Main) { viewModel.firstRunHandoffPending }) delay(20)
+        }
     }
 
     private fun withInitialSettings(settings: AppSettings, check: (HyperLpaViewModel) -> Unit) {

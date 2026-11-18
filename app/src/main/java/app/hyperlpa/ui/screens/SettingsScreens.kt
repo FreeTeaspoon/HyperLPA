@@ -39,7 +39,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.focusRequester
 import app.hyperlpa.ui.components.FieldError
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
@@ -91,7 +90,6 @@ import app.hyperlpa.ui.components.ExpandingPreferenceGroup
 import app.hyperlpa.ui.components.GroupedCard
 import app.hyperlpa.ui.components.SectionHeading
 import app.hyperlpa.ui.components.DetailLazyScaffold
-import app.hyperlpa.ui.components.rememberAppBackdrop
 import app.hyperlpa.ui.components.redactIdentifier
 import app.hyperlpa.ui.components.DialogActionRow
 import app.hyperlpa.ui.components.PrimaryPageButton
@@ -101,22 +99,20 @@ import app.hyperlpa.ui.navigation.AppRoute
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
 import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.basic.IconButton
-import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
+import app.hyperlpa.ui.components.Os4IconButton as IconButton
 import top.yukonga.miuix.kmp.basic.Slider
 import top.yukonga.miuix.kmp.basic.SliderDefaults
 import top.yukonga.miuix.kmp.basic.SnackbarDuration
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
-import top.yukonga.miuix.kmp.blur.isRuntimeShaderSupported
+import top.yukonga.miuix.kmp.material.isRuntimeShaderSupported
 import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.extended.Back
+import top.yukonga.miuix.kmp.icon.glass.Reset
 import top.yukonga.miuix.kmp.icon.basic.Check
 import top.yukonga.miuix.kmp.icon.extended.Copy
-import top.yukonga.miuix.kmp.icon.extended.Reset
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import app.hyperlpa.ui.components.Os4Dialog as OverlayDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
-import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
+import app.hyperlpa.ui.components.Os4DropdownPreference as OverlayDropdownPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import kotlin.math.roundToInt
@@ -130,7 +126,6 @@ fun AppearanceSettingsScreen(
     viewModel: HyperLpaViewModel,
     onPredictiveBackChange: ((Boolean) -> Unit)? = viewModel::setPredictiveBack,
 ) {
-    val scrollBehavior = MiuixScrollBehavior()
     var densityDraft by remember(settings.densityScale) {
         mutableFloatStateOf(
             (normalizedInterfaceScale(settings.densityScale) * 100f).roundToInt().toFloat(),
@@ -138,10 +133,8 @@ fun AppearanceSettingsScreen(
     }
     var showDensityDialog by rememberSaveable { mutableStateOf(false) }
     val densityTextState = rememberTextFieldState()
-    val blurSupported = isRuntimeShaderSupported() && top.yukonga.miuix.kmp.shader.isRenderEffectSupported()
-    val backdrop = rememberAppBackdrop()
+    val blurSupported = isRuntimeShaderSupported() && top.yukonga.miuix.kmp.material.isRenderEffectSupported()
     val haptic = LocalHapticFeedback.current
-    val focusManager = LocalFocusManager.current
     val themeModeLabels = ThemeMode.entries.map { stringResource(it.labelResource()) }
     val paletteLabels = ThemePalette.entries.map { stringResource(it.labelResource()) }
     val accentLabels = ThemeAccent.entries.map { stringResource(it.labelResource()) }
@@ -333,7 +326,12 @@ fun AppearanceSettingsScreen(
                 keyboardType = KeyboardType.Number,
                 imeAction = ImeAction.Done,
             ),
-            onKeyboardAction = { save() },
+            onKeyboardAction = {
+                if (valid) {
+                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.Confirm)
+                    save()
+                }
+            },
             trailingIcon = {
                 Text(
                     text = "%",
@@ -488,16 +486,6 @@ fun ProfileDisplaySettingsScreen(
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun AppearanceBackButton(onBack: () -> Unit) {
-    IconButton(onClick = onBack) {
-        Icon(
-            imageVector = MiuixIcons.Back,
-            contentDescription = stringResource(app.hyperlpa.R.string.common_back),
-        )
     }
 }
 
@@ -1244,7 +1232,7 @@ fun AdvancedSettingsScreen(
                         settings.isdrAids.size,
                         settings.isdrAids.size,
                     ),
-                    onClick = { viewModel.navigate(AppRoute.AidManager) },
+                    onClick = { viewModel.navigate(AppRoute.AidManager, AppRoute.AdvancedSettings) },
                 )
             }
         }
@@ -1510,7 +1498,7 @@ fun AidManagerScreen(
         actions = {
             IconButton(onClick = { text = DefaultIsdrAids.joinToString("\n") }) {
                 Icon(
-                    imageVector = MiuixIcons.Reset,
+                    imageVector = MiuixIcons.Glass.Reset,
                     contentDescription = stringResource(R.string.common_restore_defaults),
                 )
             }

@@ -50,6 +50,13 @@ class AboutRenderingTest {
             return edges > pixels.width * pixels.height / 100
         }
         assertTrue("The real app mark must be visible with blur=$blur", hasVisibleDetail(mark))
+        // The SIM contacts keep their gold colour over either theme's animated background.
+        var goldPixels = 0
+        for (y in 0 until mark.height) for (x in 0 until mark.width) {
+            val pixel = mark[x, y]
+            if (pixel.red > .65f && pixel.green > .4f && pixel.blue < .65f && pixel.red > pixel.blue * 1.2f) goldPixels++
+        }
+        assertTrue("The coloured app mark must not be tinted or covered by the gradient", goldPixels > mark.width * mark.height / 20)
         assertTrue("The app name must be visible with blur=$blur", hasVisibleDetail(title))
     }
 }

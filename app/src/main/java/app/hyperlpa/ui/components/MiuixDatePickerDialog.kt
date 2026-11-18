@@ -13,7 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.unit.dp
 import top.yukonga.miuix.kmp.basic.NumberPicker
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import app.hyperlpa.ui.components.Os4Dialog as OverlayDialog
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import java.time.LocalDate

@@ -1,5 +1,10 @@
 package app.hyperlpa.ui.screens
 
+import app.hyperlpa.ui.components.Os4TopAppBar
+import app.hyperlpa.ui.components.HeaderViewport
+import app.hyperlpa.ui.components.rememberAppBackdrop
+import top.yukonga.miuix.kmp.blur.layerBackdrop
+import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
@@ -46,6 +51,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -88,17 +94,16 @@ import app.hyperlpa.ui.onboardingConnectedReader
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.basic.IconButton
+import app.hyperlpa.ui.components.Os4IconButton as IconButton
 import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.basic.SmallTopAppBar
 import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.glass.ChevronBackward
 import top.yukonga.miuix.kmp.icon.basic.Check
-import top.yukonga.miuix.kmp.icon.extended.Back
 import top.yukonga.miuix.kmp.preference.ArrowPreference
-import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
+import app.hyperlpa.ui.components.Os4DropdownPreference as OverlayDropdownPreference
 import top.yukonga.miuix.kmp.preference.RadioButtonLocation
 import top.yukonga.miuix.kmp.preference.RadioButtonPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
@@ -164,15 +169,20 @@ fun OnboardingScreen(
     )
     val animationsEnabled = rememberSystemAnimationsEnabled()
     val stepTransition = updateTransition(step, label = "Onboarding step")
+    val headerScroll = MiuixScrollBehavior()
+    val pageBackdrop = rememberAppBackdrop()
+    val stepLists = remember { List(OnboardingStepCount) { androidx.compose.foundation.lazy.LazyListState() } }
+    val fixedViewport = app.hyperlpa.ui.components.rememberHeaderViewport(stepLists[step])
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
-            SmallTopAppBar(
+            Os4TopAppBar(
+                backdrop = pageBackdrop, scrollBehavior = headerScroll, viewport = fixedViewport, fixed = true,
                 title = "",
                 navigationIcon = {
                     if (step > 0) {
                         IconButton(onClick = { if (!finishing) step-- }) {
-                            Icon(MiuixIcons.Back, contentDescription = stringResource(R.string.common_back))
+                            Icon(MiuixIcons.Glass.ChevronBackward, contentDescription = stringResource(R.string.common_back))
                         }
                     }
                 },
@@ -216,7 +226,7 @@ fun OnboardingScreen(
         },
     ) { padding ->
         stepTransition.AnimatedContent(
-            modifier = Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).clipToBounds(),
+            modifier = Modifier.fillMaxSize().nestedScroll(headerScroll.nestedScrollConnection).then(if (pageBackdrop != null) Modifier.layerBackdrop(pageBackdrop) else Modifier).padding(padding).consumeWindowInsets(padding).clipToBounds(),
             transitionSpec = {
                 val duration = if (animationsEnabled) OnboardingStepDurationMillis else 0
                 (fadeIn(tween(duration, easing = OnboardingStepEasing)) togetherWith
@@ -225,6 +235,7 @@ fun OnboardingScreen(
         ) { shownStep ->
             DetailLazyScaffold(
                 title = "",
+                listState = stepLists[shownStep],
                 scrollOnlyWhenOverflowing = true,
                 showTopBar = false,
                 onBack = {},

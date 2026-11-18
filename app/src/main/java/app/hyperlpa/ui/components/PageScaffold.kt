@@ -36,19 +36,17 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.hyperlpa.data.settings.RedactionMode
-import app.hyperlpa.ui.adaptive.AdaptiveTopAppBar
 import app.hyperlpa.ui.adaptive.CenteredContent
 import app.hyperlpa.ui.adaptive.horizontalCutoutPadding
 import kotlinx.coroutines.flow.collect
 import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.basic.IconButton
+import app.hyperlpa.ui.components.Os4IconButton as IconButton
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.PullToRefresh
 import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.basic.SmallTopAppBar
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.extended.Back
+import top.yukonga.miuix.kmp.icon.glass.ChevronBackward
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.overScrollVertical
 import top.yukonga.miuix.kmp.utils.scrollEndHaptic
@@ -67,6 +65,7 @@ fun DetailLazyScaffold(
     background: (@Composable BoxScope.() -> Unit)? = null,
     collapsedTitle: String? = null,
     collapsedBarRevealStart: Dp = 0.dp,
+    fadeArtworkOnCollapse: Boolean = false,
     isRefreshing: Boolean = false,
     onRefresh: (() -> Unit)? = null,
     listState: LazyListState = rememberLazyListState(),
@@ -85,6 +84,7 @@ fun DetailLazyScaffold(
     val scrollBehavior = MiuixScrollBehavior()
     val hasBackground = background != null
     val backdrop = rememberAppBackdrop()
+    val fadeArtwork = fadeArtworkOnCollapse && hasBackground && backdrop == null && showTopBar
     val refreshState = top.yukonga.miuix.kmp.basic.rememberPullToRefreshState()
     val backgroundScrollOffset = remember { mutableFloatStateOf(0f) }
     val barRevealStart = with(LocalDensity.current) { collapsedBarRevealStart.toPx() }
@@ -171,69 +171,22 @@ fun DetailLazyScaffold(
                         if (showBackButton) {
                             IconButton(onClick = onBack) {
                                 Icon(
-                                    MiuixIcons.Back,
+                                    MiuixIcons.Glass.ChevronBackward,
                                     contentDescription = stringResource(app.hyperlpa.R.string.common_back),
                                 )
                             }
                         }
                     }
-                    if (hasBackground) {
-                        Box {
-                            if (backdrop != null) {
-                                BlurredBar(
-                                    backdrop = backdrop,
-                                    modifier = Modifier
-                                        .matchParentSize()
-                                        .graphicsLayer { alpha = collapsedBarProgress },
-                                    alpha = 0.8f,
-                                    progressive = true,
-                                    scrollBehavior = scrollBehavior,
-                                ) {}
-                            } else {
-                                Box(
-                                    modifier = Modifier
-                                        .matchParentSize()
-                                        .graphicsLayer { alpha = collapsedBarProgress }
-                                        .background(MiuixTheme.colorScheme.surface),
-                                )
-                            }
-                            SmallTopAppBar(
-                                title = collapsedTitle.orEmpty(),
-                                color = Color.Transparent,
-                                titleColor = MiuixTheme.colorScheme.onSurface.copy(
-                                    alpha = collapsedBarProgress,
-                                ),
-                                scrollBehavior = scrollBehavior,
-                                navigationIcon = navigationIcon,
-                                actions = actions,
-                            )
-                        }
-                    } else {
-                        val topBarColor = if (backdrop == null) MiuixTheme.colorScheme.surface else Color.Transparent
-                        BlurredBar(
-                            backdrop = backdrop,
-                            progressive = true,
-                            scrollBehavior = scrollBehavior,
-                        ) {
-                            if (title.isBlank()) {
-                                SmallTopAppBar(
-                                    title = title,
-                                    color = topBarColor,
-                                    scrollBehavior = scrollBehavior,
-                                    navigationIcon = navigationIcon,
-                                    actions = actions,
-                                )
-                            } else {
-                                AdaptiveTopAppBar(
-                                    title = title,
-                                    color = topBarColor,
-                                    scrollBehavior = scrollBehavior,
-                                    navigationIcon = navigationIcon,
-                                    actions = actions,
-                                )
-                            }
-                        }
-                    }
+                    Os4TopAppBar(
+                        title = if (hasBackground) collapsedTitle.orEmpty() else title,
+                        backdrop = backdrop, scrollBehavior = scrollBehavior,
+                        viewport = rememberHeaderViewport(listState),
+                        fixed = hasBackground || title.isBlank(),
+                        overPageArtwork = hasBackground,
+                        artworkFallbackAlpha = if (fadeArtwork) ({ collapsedBarProgress }) else null,
+                        titleAlpha = { if (hasBackground) collapsedBarProgress else 1f },
+                        navigationIcon = navigationIcon, actions = actions,
+                    )
                 }
             },
         ) { padding ->
@@ -246,7 +199,10 @@ fun DetailLazyScaffold(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .graphicsLayer { translationY = -backgroundScrollOffset.floatValue },
+                            .graphicsLayer {
+                                translationY = -backgroundScrollOffset.floatValue
+                                if (fadeArtwork) alpha = 1f - collapsedBarProgress
+                            },
                         content = background,
                     )
                 }
@@ -284,6 +240,7 @@ fun DetailLazyScaffold(
                     PageStateHost(state = pageState, modifier = Modifier.fillMaxSize()) { target ->
                         if (target == PageStateKind.CONTENT) list()
                         else ScrollablePageState(
+                            listState = listState,
                             modifier = Modifier.horizontalCutoutPadding(),
                             scrollBehavior = scrollBehavior,
                             contentPadding = PaddingValues(
@@ -383,12 +340,14 @@ fun redactIdentifier(
 /** A viewport-sized state that participates in native pull nested scrolling. */
 @Composable
 fun ScrollablePageState(
+    listState: LazyListState = rememberLazyListState(),
     contentPadding: PaddingValues,
     scrollBehavior: top.yukonga.miuix.kmp.basic.ScrollBehavior,
     modifier: Modifier = Modifier,
     content: @Composable BoxScope.() -> Unit,
 ) {
     LazyColumn(
+        state = listState,
         modifier = modifier.fillMaxSize().scrollEndHaptic().overScrollVertical()
             .nestedScroll(scrollBehavior.nestedScrollConnection),
         overscrollEffect = null,
