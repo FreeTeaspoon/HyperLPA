@@ -373,6 +373,26 @@ index 3045083b..c8f31f9b 100644
          pressed = pressed,
          modifier = modifier
              .clickable(
+diff --git a/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassIconDropdownMenu.kt b/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassIconDropdownMenu.kt
+index 87020d1e..cab7d4c2 100644
+--- a/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassIconDropdownMenu.kt
++++ b/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassIconDropdownMenu.kt
+@@ -58,6 +58,7 @@ fun BoxScope.GlassIconDropdownMenu(
+     sizing: GlassPopupSizing = GlassPopupSizing(),
+     visuals: GlassPopupVisuals = GlassPopupDefaults.visuals(),
+     collapseOnSelection: Boolean = entries.size <= 1,
++    onDismissFinished: (() -> Unit)? = null,
+ ) {
+     val density = LocalDensity.current
+     var submenu by remember { mutableStateOf(false) }
+@@ -120,6 +121,7 @@ fun BoxScope.GlassIconDropdownMenu(
+             sizing = sizing,
+             visuals = visuals,
+             onMeasured = { primaryWidth = with(density) { it.width.toDp() } },
++            onDismissFinished = onDismissFinished,
+         ) {
+             groups.forEachIndexed { groupIndex, entry ->
+                 entry.items.forEachIndexed { itemIndex, item ->
 diff --git a/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassNavigationBar.kt b/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassNavigationBar.kt
 index 419c06c3..1e822771 100644
 --- a/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassNavigationBar.kt
@@ -407,6 +427,147 @@ index 419c06c3..1e822771 100644
                                  if (item.label != null) {
                                      Text(
                                          text = item.label,
+diff --git a/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassPopupSurface.kt b/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassPopupSurface.kt
+index 92e29825..689d5cae 100644
+--- a/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassPopupSurface.kt
++++ b/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassPopupSurface.kt
+@@ -210,6 +210,7 @@ internal fun GlassPopupSurface(
+     onMeasured: ((Size) -> Unit)? = null,
+     interactive: Boolean = true,
+     scrollable: Boolean = false,
++    catchOutsideTaps: Boolean = true,
+     content: @Composable ColumnScope.() -> Unit,
+ ) {
+     val currentOnDismissRequest by rememberUpdatedState(onDismissRequest)
+@@ -218,27 +219,29 @@ internal fun GlassPopupSurface(
+     }
+     // Window-coordinate placement must be shifted into this host's space, like ListPopupLayout.
+     val hostOrigin = remember { mutableStateOf(Offset.Zero) }
+-    Box(
+-        modifier = Modifier
+-            .fillMaxSize()
+-            .pointerInput(Unit) {
+-                awaitEachGesture {
+-                    val down = awaitFirstDown(requireUnconsumed = false)
+-                    down.consume()
+-                    while (true) {
+-                        val event = awaitPointerEvent(PointerEventPass.Initial)
+-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+-                        // System cancellation is a consumed up event, not an outside release.
+-                        val released = change.changedToUp()
+-                        change.consume()
+-                        if (!change.pressed) {
+-                            if (released) currentOnDismissRequest()
+-                            break
++    if (catchOutsideTaps) {
++        Box(
++            modifier = Modifier
++                .fillMaxSize()
++                .pointerInput(Unit) {
++                    awaitEachGesture {
++                        val down = awaitFirstDown(requireUnconsumed = false)
++                        down.consume()
++                        while (true) {
++                            val event = awaitPointerEvent(PointerEventPass.Initial)
++                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
++                            // System cancellation is a consumed up event, not an outside release.
++                            val released = change.changedToUp()
++                            change.consume()
++                            if (!change.pressed) {
++                                if (released) currentOnDismissRequest()
++                                break
++                            }
+                         }
+                     }
+-                }
+-            },
+-    )
++                },
++        )
++    }
+
+     val density = LocalDensity.current
+     val shadowOutsets = remember(visuals.shadow, density) {
+diff --git a/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassTransformPopup.kt b/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassTransformPopup.kt
+index f218f9d2..b1b5498d 100644
+--- a/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassTransformPopup.kt
++++ b/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassTransformPopup.kt
+@@ -3,15 +3,17 @@
+
+ package top.yukonga.miuix.kmp.glass
+
++import androidx.compose.animation.core.MutableTransitionState
+ import androidx.compose.animation.core.animateFloat
+ import androidx.compose.animation.core.animateFloatAsState
+-import androidx.compose.animation.core.updateTransition
++import androidx.compose.animation.core.rememberTransition
+ import androidx.compose.foundation.layout.Box
+ import androidx.compose.foundation.layout.BoxScope
+ import androidx.compose.foundation.layout.ColumnScope
+ import androidx.compose.foundation.layout.PaddingValues
+ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.DisposableEffect
++import androidx.compose.runtime.LaunchedEffect
+ import androidx.compose.runtime.SideEffect
+ import androidx.compose.runtime.Stable
+ import androidx.compose.runtime.State
+@@ -20,6 +22,7 @@ import androidx.compose.runtime.getValue
+ import androidx.compose.runtime.mutableFloatStateOf
+ import androidx.compose.runtime.mutableStateOf
+ import androidx.compose.runtime.remember
++import androidx.compose.runtime.rememberUpdatedState
+ import androidx.compose.runtime.setValue
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.geometry.Offset
+@@ -219,6 +222,7 @@ fun Modifier.glassPopupAnchorValue(anchor: GlassPopupAnchor): Modifier = this
+  * @param gap Gap between the control and the panel.
+  * @param contentPadding Padding around the items.
+  * @param onMeasured Called with the final panel size. Use its width as the submenu's minimum width.
++ * @param onDismissFinished Called after an opened menu has completed its exit.
+  * @param content The items.
+  */
+ @Composable
+@@ -239,9 +243,12 @@ fun BoxScope.GlassTransformPopup(
+     gap: Dp = 0.dp,
+     contentPadding: PaddingValues = PaddingValues(vertical = GlassPopupDefaults.ContentPaddingVertical),
+     onMeasured: ((Size) -> Unit)? = null,
++    onDismissFinished: (() -> Unit)? = null,
+     content: @Composable ColumnScope.() -> Unit,
+ ) {
+-    val transition = updateTransition(show, label = "glassTransformPopup")
++    val visibility = remember { MutableTransitionState(false) }
++    visibility.targetState = show
++    val transition = rememberTransition(visibility, label = "glassTransformPopup")
+     val bounds = transition.animateFloat(
+         transitionSpec = { GlassMotion.transformBounds(targetState) },
+         label = "glassTransformBounds",
+@@ -269,7 +276,17 @@ fun BoxScope.GlassTransformPopup(
+         animationSpec = GlassMotion.secondaryPopupMask(stacked),
+         label = "glassTransformMask",
+     )
+-    val active = show || transition.currentState || transition.isRunning
++    val active = show || visibility.currentState || !visibility.isIdle
++    val onFinished by rememberUpdatedState(onDismissFinished)
++    var hasOpened by remember { mutableStateOf(false) }
++    LaunchedEffect(show, active) {
++        if (show) {
++            hasOpened = true
++        } else if (!active && hasOpened) {
++            hasOpened = false
++            onFinished?.invoke()
++        }
++    }
+     val backProgress = rememberGlassPopupBackProgress(
+         show = show,
+         active = active,
+@@ -411,6 +428,7 @@ fun BoxScope.GlassTransformPopup(
+         onMeasured = onMeasured,
+         interactive = isTransformPopupInteractive(show, stacked),
+         scrollable = true,
++        catchOutsideTaps = show,
+         content = content,
+     )
+
 diff --git a/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt b/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt
 index c6f6c28f..2ae0ed06 100644
 --- a/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt

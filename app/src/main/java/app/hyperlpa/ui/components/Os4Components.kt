@@ -270,22 +270,25 @@ fun Os4DropdownPreference(
             stroke = GlassEdgeStrokes.forTheme(LocalDarkTheme.current)))
 }
 
-/** Menus live in a full-window sibling of the captured page, not in their 44dp anchor. */
-private class MenuRegistry(val destination: () -> Any) {
-    val menus = mutableStateMapOf<Any, @Composable BoxScope.() -> Unit>()
+/** Records the page separately so its menus can sample it and leave with it. */
+private class MenuRegistry(val visit: () -> Any?) {
+    val menus = mutableStateMapOf<Any, @Composable BoxScope.(LayerBackdrop?) -> Unit>()
 }
 private val LocalMenuRegistry = staticCompositionLocalOf<MenuRegistry> { error("Missing OS4 menu host") }
 
 @Composable
-fun Os4MenuHost(navigationOwner: Any? = null, content: @Composable () -> Unit) {
-    // A destination visit owns its popups, even while its page remains composed during navigation.
-    val destination = rememberUpdatedState(remember(navigationOwner) { Any() })
-    val registry = remember { MenuRegistry { destination.value } }
+fun Os4MenuHost(active: Boolean = true, content: @Composable () -> Unit) {
+    // A quick Back may reveal this same composition. Give each visit a fresh identity.
+    val visit = rememberUpdatedState(remember(active) { if (active) Any() else null })
+    val registry = remember { MenuRegistry { visit.value } }
+    val scene = if (registry.menus.isNotEmpty()) rememberAppBackdrop() else null
     CompositionLocalProvider(LocalMenuRegistry provides registry) {
         Box(Modifier.fillMaxSize()) {
-            content()
+            Box(Modifier.matchParentSize().then(if (scene != null) Modifier.layerBackdrop(scene) else Modifier)) {
+                content()
+            }
             registry.menus.toMap().forEach { (token, menu) ->
-                key(token) { menu() }
+                key(token) { menu(scene) }
             }
         }
     }
@@ -300,26 +303,32 @@ fun Os4IconDropdownMenu(entry: DropdownEntry, flatAnchor: Boolean = false,
     var openedOn by remember { mutableStateOf<Any?>(null) }
     var show by remember { mutableStateOf(false) }
     val haptic = LocalHapticFeedback.current
-    val scene = LocalDialogBackdrop.current
     val dark = LocalDarkTheme.current
     val entries = listOf(entry.copy(items = entry.items.map { it.withConfirmFeedback {
         haptic.performHapticFeedback(HapticFeedbackType.Confirm)
     } }))
-    val menu: @Composable BoxScope.() -> Unit = {
-        if (openedOn === registry.destination()) {
-            GlassIconDropdownMenu(show = show, onDismissRequest = { show = false }, anchor = anchor,
-                anchorContent = content, entries = entries, backdrop = scene,
-                visuals = GlassPopupDefaults.visuals(
-                    style = GlassDefaults.style(dark), stroke = GlassEdgeStrokes.forTheme(dark)))
-        }
+    val menu: @Composable BoxScope.(LayerBackdrop?) -> Unit = { scene ->
+        GlassIconDropdownMenu(
+            show = show && openedOn === registry.visit(),
+            onDismissRequest = { show = false },
+            anchor = anchor, anchorContent = content, entries = entries, backdrop = scene,
+            visuals = GlassPopupDefaults.visuals(
+                style = GlassDefaults.style(dark), stroke = GlassEdgeStrokes.forTheme(dark)),
+            onDismissFinished = {
+                show = false
+                openedOn = null
+            },
+        )
     }
     val currentMenu = rememberUpdatedState(menu)
-    DisposableEffect(registry, token) {
-        registry.menus[token] = { currentMenu.value.invoke(this) }
-        onDispose { registry.menus.remove(token) }
+    if (openedOn != null) {
+        DisposableEffect(registry, token) {
+            registry.menus[token] = { scene -> currentMenu.value.invoke(this, scene) }
+            onDispose { registry.menus.remove(token) }
+        }
     }
-    val onClick: () -> Unit = {
-        val destination = registry.destination()
+    val onClick: () -> Unit = onClick@{
+        val destination = registry.visit() ?: return@onClick
         if (!show || openedOn !== destination) {
             haptic.performHapticFeedback(HapticFeedbackType.ContextClick)
             openedOn = destination

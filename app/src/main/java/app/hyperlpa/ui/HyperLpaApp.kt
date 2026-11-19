@@ -230,7 +230,6 @@ fun HyperLpaApp(
 
     val finishedPage = rememberAppBackdrop()
     CompositionLocalProvider(LocalMiuixSnackbar provides showSnackbar, LocalDialogBackdrop provides finishedPage) {
-        Os4MenuHost(navigationOwner = navigationOwner) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             containerColor = navSurface,
@@ -261,14 +260,16 @@ fun HyperLpaApp(
                 ),
                 ) {
                 entry<AppRoute.Shell>(swipeDismiss = swipeBackDirection) {
-                    MainShell(
-                        state = currentState.value,
-                        viewModel = viewModel,
-                        bluetoothReaderState = currentBluetoothReaderState.value,
-                        onResolveReaderAccess = { currentOnResolveReaderAccess.value() },
-                        snackbarHostState = snackbarHostState,
-                        rootTabBack = rootTabBack,
-                    )
+                    Os4MenuHost(active = backStack.lastOrNull() == AppRoute.Shell) {
+                        MainShell(
+                            state = currentState.value,
+                            viewModel = viewModel,
+                            bluetoothReaderState = currentBluetoothReaderState.value,
+                            onResolveReaderAccess = { currentOnResolveReaderAccess.value() },
+                            snackbarHostState = snackbarHostState,
+                            rootTabBack = rootTabBack,
+                        )
+                    }
                 }
             entry<AppRoute.ProfileDetails>(swipeDismiss = swipeBackDirection) { route ->
                 val profile = currentState.value.profiles.firstOrNull { it.iccid == route.iccid }
@@ -514,9 +515,11 @@ fun HyperLpaApp(
                 )
             }
             entry<AppRoute.PhoneNotificationHistory>(swipeDismiss = swipeBackDirection) { route ->
-                app.hyperlpa.ui.screens.PhoneNotificationHistoryScreen(
-                    viewModel.remoteDevices, route.deviceId, { viewModel.navigateBack(route) },
-                )
+                Os4MenuHost(active = backStack.lastOrNull() == route) {
+                    app.hyperlpa.ui.screens.PhoneNotificationHistoryScreen(
+                        viewModel.remoteDevices, route.deviceId, { viewModel.navigateBack(route) },
+                    )
+                }
             }
             entry<AppRoute.ReaderSettings>(swipeDismiss = swipeBackDirection) {
                 ReaderSettingsScreen(
@@ -698,8 +701,6 @@ fun HyperLpaApp(
             }
         }
     }
-}
-
 }
 
 @Composable
