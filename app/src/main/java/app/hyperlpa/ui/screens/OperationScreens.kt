@@ -104,6 +104,7 @@ import androidx.compose.foundation.layout.Box
 import app.hyperlpa.ui.components.lazyGroup
 import app.hyperlpa.ui.components.GroupedCard
 import app.hyperlpa.ui.components.LoadingState
+import app.hyperlpa.ui.components.Os4SearchField
 import app.hyperlpa.ui.components.PageStateKind
 import app.hyperlpa.ui.components.ProfilesStateIcon
 import app.hyperlpa.ui.components.ReaderStateIcon
@@ -2422,12 +2423,10 @@ fun TagManagerScreen(
     ) { _ ->
         if (profiles.isNotEmpty()) {
             item {
-                TextField(
+                Os4SearchField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it.take(MaxSearchQueryCharacters) },
                     label = stringResource(R.string.tags_search),
-                    useLabelAsPlaceholder = true,
-                    singleLine = true,
                     modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 6.dp),
                 )
             }
