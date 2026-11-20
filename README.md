@@ -17,50 +17,27 @@
 Manage eSIM profiles, download new plans, and switch between them in a Miuix interface.
 Connect through a compatible phone, USB or Bluetooth reader, or a paired Android device.
 
+---
+
 ## Screenshots
 
-<table width="100%">
-<tr>
-<td width="50%" align="center">
+<div align="center">
 
-[![Profiles](screenshots/profiles.png)](screenshots/profiles.png)
+| Profiles | Profile details | Download confirmation |
+|:---:|:---:|:---:|
+| [![Profiles](screenshots/profiles.png)](screenshots/profiles.png) | [![Profile details](screenshots/profile-details.png)](screenshots/profile-details.png) | [![Download confirmation](screenshots/download.png)](screenshots/download.png) |
 
-</td>
-<td width="50%" align="center">
+| Notifications | Tools | Profiles in dark mode |
+|:---:|:---:|:---:|
+| [![Notifications](screenshots/notifications.png)](screenshots/notifications.png) | [![Tools](screenshots/tools.png)](screenshots/tools.png) | [![Profiles in dark mode](screenshots/profiles-dark.png)](screenshots/profiles-dark.png) |
 
-[![Profile details](screenshots/profile-details.png)](screenshots/profile-details.png)
-
-</td>
-</tr>
-<tr>
-<td align="center">
-
-[![Download confirmation](screenshots/download.png)](screenshots/download.png)
-
-</td>
-<td align="center">
-
-[![Notifications](screenshots/notifications.png)](screenshots/notifications.png)
-
-</td>
-</tr>
-<tr>
-<td align="center">
-
-[![Tools](screenshots/tools.png)](screenshots/tools.png)
-
-</td>
-<td align="center">
-
-[![Profiles in dark mode](screenshots/profiles-dark.png)](screenshots/profiles-dark.png)
-
-</td>
-</tr>
-</table>
+</div>
 
 Screenshots show the Miuix OS4 Glass interface with the Miuix floating bottom bar.
 Profiles, identifiers, and messages are fictional. Carrier names are illustrative
 and do not imply affiliation.
+
+---
 
 ## Get started
 
