@@ -23,13 +23,39 @@ Connect through a compatible phone, USB or Bluetooth reader, or a paired Android
 
 <div align="center">
 
-| Profiles | Profile details | Download confirmation |
-|:---:|:---:|:---:|
-| [![Profiles](screenshots/profiles.png)](screenshots/profiles.png) | [![Profile details](screenshots/profile-details.png)](screenshots/profile-details.png) | [![Download confirmation](screenshots/download.png)](screenshots/download.png) |
+<table>
+  <thead>
+    <tr>
+      <th width="33%" align="center">Profiles</th>
+      <th width="33%" align="center">Details</th>
+      <th width="33%" align="center">Add eSIM</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td align="center"><a href="screenshots/profiles.png"><img src="screenshots/profiles.png" alt="Profiles"></a></td>
+      <td align="center"><a href="screenshots/profile-details.png"><img src="screenshots/profile-details.png" alt="Profile details"></a></td>
+      <td align="center"><a href="screenshots/download.png"><img src="screenshots/download.png" alt="Download confirmation"></a></td>
+    </tr>
+  </tbody>
+</table>
 
-| Notifications | Tools | Profiles in dark mode |
-|:---:|:---:|:---:|
-| [![Notifications](screenshots/notifications.png)](screenshots/notifications.png) | [![Tools](screenshots/tools.png)](screenshots/tools.png) | [![Profiles in dark mode](screenshots/profiles-dark.png)](screenshots/profiles-dark.png) |
+<table>
+  <thead>
+    <tr>
+      <th width="33%" align="center">Alerts</th>
+      <th width="33%" align="center">Tools</th>
+      <th width="33%" align="center">Dark mode</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td align="center"><a href="screenshots/notifications.png"><img src="screenshots/notifications.png" alt="Notifications"></a></td>
+      <td align="center"><a href="screenshots/tools.png"><img src="screenshots/tools.png" alt="Tools"></a></td>
+      <td align="center"><a href="screenshots/profiles-dark.png"><img src="screenshots/profiles-dark.png" alt="Profiles in dark mode"></a></td>
+    </tr>
+  </tbody>
+</table>
 
 </div>
 
