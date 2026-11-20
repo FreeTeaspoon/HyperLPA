@@ -42,8 +42,10 @@
 .brand { display: inline-flex; align-items: center; gap: 9px; font-weight: 600; font-size: 16px; text-decoration: none; color: var(--foreground); border-radius: 6px; }
 .brand svg { width: 20px; height: 20px; }
 .header-actions, .toolbar { display: flex; align-items: center; gap: 8px; }
-.connection-state { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted-foreground); margin-right: 8px; }
-.connection-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--muted-foreground); opacity: .4; }
+.connection-state { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted-foreground); margin-right: 8px; min-width: 0; overflow-wrap: anywhere; }
+.connection-dot { width: 5px; height: 5px; flex-shrink: 0; border-radius: 50%; background: var(--muted-foreground); opacity: .4; }
+.header-actions { min-width: 0; }
+.header-actions > button { flex-shrink: 0; }
 .connection-dot.connected { background: var(--foreground); opacity: 1; }
 .page-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
 .page-heading > div { min-width: 0; overflow-wrap: anywhere; }
@@ -114,8 +116,8 @@
 .setup-mark { width: 40px; height: 40px; border-radius: 12px; background: var(--secondary); display: grid; place-items: center; margin-bottom: 24px; }
 .setup-mark svg { width: 20px; height: 20px; }
 .intro { font-size: 14px; color: var(--muted-foreground); margin: 8px 0 28px; line-height: 1.6; }
-.setup-tabs { display: flex; width: 100%; margin-bottom: 24px; }
-.setup-tabs [data-slot=tabs-trigger] { flex: 1; }
+.setup-tabs { display: flex; width: 100%; height: auto; margin-bottom: 24px; }
+.setup-tabs [data-slot=tabs-trigger] { flex: 1; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .setup-form { display: flex; flex-direction: column; gap: 20px; }
 .setup-submit { width: 100%; }
 .setup-help { font-size: 12px; color: var(--muted-foreground); margin-top: 20px; line-height: 1.7; }

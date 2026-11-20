@@ -5,6 +5,27 @@ import { dashboard } from "./ui-fixture";
 
 async function nav(page: Page, name: string) { await page.getByRole("tab", { name, exact: true }).click(); }
 
+test("language follows the browser, can be overridden, and persists after reload", async ({ browser, baseURL }) => {
+  const context = await browser.newContext({ locale: "zh-TW", baseURL });
+  try {
+    const page = await context.newPage();
+    await page.goto("/");
+    await expect(page.locator("html")).toHaveAttribute("lang", "zh-Hant");
+    await expect(page.getByRole("tab", { name: "建立群組", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "語言", exact: true }).click();
+    await page.getByRole("menuitemradio", { name: "Español", exact: true }).click();
+    await expect(page.getByRole("tab", { name: "Crear grupo", exact: true })).toBeVisible();
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("lang", "es");
+    await page.getByRole("button", { name: "Idioma", exact: true }).click();
+    await page.getByRole("menuitemradio", { name: "Usar el idioma del navegador", exact: true }).click();
+    await expect(page.locator("html")).toHaveAttribute("lang", "zh-Hant");
+    await expect(page.getByRole("tab", { name: "建立群組", exact: true })).toBeVisible();
+  } finally {
+    await context.close();
+  }
+});
+
 test("keyboard context, field errors and theme choices remain accessible", async ({ page }) => {
   await dashboard(page);
   await page.getByRole("button", { name: /Example phone Online/ }).click();

@@ -2,7 +2,10 @@ package app.hyperlpa.ui.screens
 
 import app.hyperlpa.ui.components.MishkaPageContent
 import app.hyperlpa.ui.components.PageStart
+import android.app.LocaleConfig
+import android.app.LocaleManager
 import android.os.Build
+import android.os.LocaleList
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -51,6 +54,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
@@ -2014,6 +2019,7 @@ fun SettingsScreen(
         item(contentType = PageStart.Heading) { SectionHeading(stringResource(R.string.settings_personalisation)) }
         item {
             GroupedCard {
+                LanguagePreference()
                 ArrowPreference(
                     title = stringResource(R.string.settings_appearance_theme),
                     summary = stringResource(R.string.settings_appearance_theme_summary),
@@ -2082,6 +2088,34 @@ fun SettingsScreen(
             }
         }
     }
+}
+
+@Composable
+private fun LanguagePreference() {
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val localeManager = remember(context) { context.getSystemService(LocaleManager::class.java) }
+    val languages = remember(context) {
+        val supported = LocaleConfig(context).supportedLocales ?: LocaleList.getEmptyLocaleList()
+        List(supported.size()) { supported[it] }
+    }
+    val current = remember(localeManager, configuration) { localeManager.applicationLocales[0] }
+    val selected = current?.let { locale ->
+        val exactMatch = languages.indexOf(locale)
+        if (exactMatch >= 0) exactMatch else languages.indexOfFirst { LocaleList.matchesLanguageAndScript(locale, it) }
+    } ?: -1
+
+    OverlayDropdownPreference(
+        title = stringResource(R.string.settings_language),
+        items = listOf(stringResource(R.string.settings_language_system)) + languages.map { locale ->
+            locale.getDisplayName(locale).replaceFirstChar { it.titlecase(locale) }
+        },
+        selectedIndex = selected + 1,
+        enabled = languages.isNotEmpty(),
+        onSelectedIndexChange = { index ->
+            localeManager.applicationLocales = if (index == 0) LocaleList.getEmptyLocaleList() else LocaleList(languages[index - 1])
+        },
+    )
 }
 
 @Composable

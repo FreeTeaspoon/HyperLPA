@@ -15,6 +15,10 @@ files, support-report export, and device-local display settings still belong in
 the native app because the browser cannot grant those Android permissions or read
 its private stores.
 
+The **Language** menu in the header follows your browser by default and saves
+any language you choose on this device. See the [project README](../README.md)
+for the full list of languages and localized setup guides.
+
 ## Deploy
 
 Use the relay and Android app from this branch together. Older apps still support

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { t } from "@/lib/i18n";
 import type { ComponentProps, ReactNode } from "react";
 
 class FieldValidationError extends Error {
@@ -12,7 +13,7 @@ class FieldValidationError extends Error {
 }
 export async function validateField<T>(field: string, check: () => T | Promise<T>): Promise<T> {
   try { return await check(); }
-  catch (error) { throw new FieldValidationError(field, error instanceof Error ? error.message : "Check this value and try again."); }
+  catch (error) { throw new FieldValidationError(field, error instanceof Error ? error.message : t("Check this value and try again.")); }
 }
 export function useFormErrors() {
   const [failure, setFailure] = useState<{ message: string; field?: string }>();
@@ -20,25 +21,25 @@ export function useFormErrors() {
     if (failure?.field) document.getElementById(failure.field)?.focus();
   }, [failure]);
   return {
-    error: failure?.message ?? "", field: failure?.field,
+    error: failure ? t(failure.message) : "", field: failure?.field,
     clear: () => setFailure(undefined),
-    report: (error: unknown) => setFailure({ message: error instanceof Error ? error.message : "Something went wrong. Try again.",
+    report: (error: unknown) => setFailure({ message: error instanceof Error ? error.message : t("Something went wrong. Try again."),
       field: error instanceof FieldValidationError ? error.field : undefined }),
     props: (id: string) => ({ "aria-invalid": failure?.field === id || undefined,
       "aria-describedby": failure?.field === id ? id + "-error" : undefined }),
-    message: (id: string) => failure?.field === id ? <FieldDescription id={id + "-error"} className="text-destructive">{failure.message}</FieldDescription> : null,
+    message: (id: string) => failure?.field === id ? <FieldDescription id={id + "-error"} className="text-destructive">{t(failure.message)}</FieldDescription> : null,
   };
 }
 
-export function CopyButton({ value, label = "Copy" }: { value: string; label?: string }) {
+export function CopyButton({ value, label = t("Copy") }: { value: string; label?: string }) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
-  return <Button variant="ghost" size="icon" aria-label={copied ? "Copied" : label} title={label} onClick={async () => {
+  return <Button variant="ghost" size="icon" aria-label={copied ? t("Copied") : label} title={label} onClick={async () => {
     try {
       await navigator.clipboard.writeText(value); setCopied(true); clearTimeout(timer.current);
-      timer.current = setTimeout(() => setCopied(false), 1400); toast.success("Copied");
-    } catch { toast.error("Clipboard access failed. Select the value and copy it manually."); }
+      timer.current = setTimeout(() => setCopied(false), 1400); toast.success(t("Copied"));
+    } catch { toast.error(t("Clipboard access failed. Select the value and copy it manually.")); }
   }}><span className="copy-glyph" data-copied={copied}><Copy /><Check /></span></Button>;
 }
 export function BusyButton({ busy, children, ...props }: ComponentProps<typeof Button> & { busy?: boolean }) {
@@ -57,7 +58,7 @@ export function Modal({ open, onClose, title, description, children, footer, wid
   return <Dialog open={open} onOpenChange={value => { if (!value) onClose(); }}><DialogContent className={wide ? "dialog-wide" : undefined} showCloseButton={false}
     onCloseAutoFocus={event => { event.preventDefault(); (returnFocus?.isConnected ? returnFocus : document.getElementById("main"))?.focus({ preventScroll: true }); }}>
     <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription className={description ? undefined : "sr-only"}>{description ?? title}</DialogDescription></DialogHeader>
-    <DialogClose asChild><Button variant="ghost" size="icon-sm" className="dialog-close" aria-label="Close"><X /></Button></DialogClose>
+    <DialogClose asChild><Button variant="ghost" size="icon-sm" className="dialog-close" aria-label={t("Close")}><X /></Button></DialogClose>
     {children && <div className="dialog-body">{children}</div>}
     {footer && <DialogFooter>{footer}</DialogFooter>}
   </DialogContent></Dialog>;

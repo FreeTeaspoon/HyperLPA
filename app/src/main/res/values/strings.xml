@@ -259,6 +259,8 @@
 
     <!-- Settings landing page -->
     <string name="settings_personalisation">Personalisation</string>
+    <string name="settings_language">Language</string>
+    <string name="settings_language_system">Follow system</string>
     <string name="settings_appearance_theme">Appearance &amp; Theme</string>
     <string name="settings_appearance_theme_summary">Color mode, palette, interface scale and bottom bar style</string>
     <string name="settings_profile_display">Profile display</string>

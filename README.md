@@ -4,6 +4,8 @@
 
 <h1 align="center">HyperLPA</h1>
 
+**English** · [简体中文](readme/zh-Hans.md)
+
 <p align="center">
   A native Android Local Profile Assistant for managing eSIM profiles through compatible eUICC readers.
 </p>
@@ -85,6 +87,12 @@ in Android settings first and grant Nearby devices permission.
 
 Other release APKs support older ARM devices and x86 emulators. Use the ABI that
 matches your device and check the download against the release's `SHA256SUMS`.
+
+In HyperLPA, open **Settings → Language** to choose a language or follow Android's language setting.
+On the web dashboard, use the **Language** menu or follow your browser language.
+Both support English, Spanish, Simplified Chinese, Traditional Chinese, French,
+German, Japanese, Korean, and Brazilian Portuguese.
+Strings without a translation appear in English.
 
 ## Features
 

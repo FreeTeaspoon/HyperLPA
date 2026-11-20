@@ -4,7 +4,7 @@ import { forgetIdentity, loadIdentity, saveIdentity, validateIdentity, validateP
 import type { Activity, Command, Envelope, Identity, Message, Peer, Snapshot, ViewState } from "./types";
 
 type GroupResponse = { owner: string; package: string; revision: number; members: { id: string; role: string; status: string; revision: number }[] };
-const label = (action: string) => ({ READERS: "Read devices", REFRESH: "Refresh profiles", SWITCH: "Switch profile",
+export const commandLabel = (action: string) => ({ READERS: "Read devices", REFRESH: "Refresh profiles", SWITCH: "Switch profile",
   DELETE: "Delete profile", RENAME: "Rename profile", DOWNLOAD: "Download profile", RESET: "Reset eUICC",
   TAGS: "Update tags", PIN: "Pin profile", PROCESS_NOTIFICATION: "Process eUICC notification" })[action] ?? action.toLowerCase().replaceAll("_", " ");
 
@@ -303,7 +303,7 @@ export class Controller {
     }
     const requestId = uuid();
     const operation = { id: requestId, peer: id, action: command.action, readerId: command.readerId ?? "", started: Date.now() };
-    this.emit({ activities: [{ id: requestId, peer: id, label: label(command.action), status: "Sending", time: Date.now() }, ...this.state.activities].slice(0, 100) });
+    this.emit({ activities: [{ id: requestId, peer: id, label: commandLabel(command.action), status: "Sending", time: Date.now() }, ...this.state.activities].slice(0, 100) });
     if (mutating) await this.persist({ ...this.identity, pending: [...this.identity.pending, operation] });
     else this.reads.set(requestId, { peer: id, readerId: command.readerId ?? "" });
     try { await this.send(peer, { kind: "command", requestId, command }); }
