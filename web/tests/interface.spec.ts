@@ -66,6 +66,7 @@ test("keyboard context, field errors and theme choices remain accessible", async
 test("History deletion requires confirmation and cancellation sends nothing", async ({ page }) => {
   await dashboard(page);
   await nav(page, "History");
+  await expect(page.getByText(/notification · Completed/)).toBeVisible();
   await page.getByRole("button", { name: "Delete history entry", exact: true }).click();
   await expect(page.getByRole("dialog")).toContainText("cannot be undone");
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -77,7 +78,7 @@ test("History deletion requires confirmation and cancellation sends nothing", as
   await page.getByRole("button", { name: "Delete entry", exact: true }).click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await nav(page, "Activity");
-  await expect(page.getByText("Delete history", { exact: true })).toBeVisible();
+  await expect(page.getByText("Delete history entry", { exact: true })).toBeVisible();
 });
 
 test("long names reflow and shared controls retain their theme", async ({ page }) => {

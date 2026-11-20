@@ -66,7 +66,7 @@
     <string name="last_profile_disable_title">要停用最後一個已啟用的 eSIM 設定檔嗎？</string>
     <string name="last_profile_disable_summary">停用後可能無法使用行動網路，也可能無法連接用於重新啟用該設定檔的讀卡機。請確認還有其他方式重新連接後再繼續。</string>
     <string name="last_profile_disable_action">停用 eSIM 設定檔</string>
-    <string name="common_loading">正在裝入</string>
+    <string name="common_loading">載入中…</string>
     <string name="common_nothing_here">暫無內容</string>
     <string name="common_content_available_later">有內容時會在這裡顯示。</string>
     <string name="common_something_went_wrong">操作出現問題</string>
@@ -77,13 +77,13 @@
     <string name="common_remove">刪除</string>
     <string name="common_none">無</string>
     <string name="common_cancel">取消</string>
-    <string name="common_ok">罷</string>
+    <string name="common_ok">確定</string>
     <string name="common_save">儲存</string>
     <string name="common_restore_defaults">還原預設值</string>
     <string name="common_connected">已連接</string>
     <string name="common_off">關</string>
-    <string name="common_granted">獲准</string>
-    <string name="common_not_granted">不予核准</string>
+    <string name="common_granted">已授權</string>
+    <string name="common_not_granted">未授權</string>
     <string name="common_unavailable">無法取得</string>
     <string name="onboarding_welcome">歡迎使用 HyperLPA</string>
     <string name="onboarding_welcome_summary">使用相容的 eSIM 卡和讀卡機管理 eSIM 設定檔。</string>
@@ -110,7 +110,7 @@
     <string name="onboarding_sizes_summary">無法取得實際大小時顯示估算值。</string>
     <string name="onboarding_local_data">關閉這些選項後，仍可查看實際大小和使用自定義圖示。</string>
     <string name="onboarding_online_privacy">哪些功能需要聯網？</string>
-    <string name="onboarding_appearance_title">自定義 eSIM 列表</string>
+    <string name="onboarding_appearance_title">自訂設定檔清單</string>
     <string name="onboarding_more_options">更多選項</string>
     <string name="onboarding_waterfall_hint">空間足夠時，瀑布流佈局會分多列顯示。</string>
     <string name="onboarding_live_preview">eSIM 列表預覽</string>
@@ -132,7 +132,7 @@
     <string name="profiles_none_installed">尚未安裝 eSIM 設定檔</string>
     <string name="profiles_choose_reader_message">請選擇可用的安全元件讀卡機。</string>
     <string name="profiles_search_empty_message">請換個關鍵詞搜索。</string>
-    <string name="profiles_none_installed_message">使用啟用碼下載並安裝第一個 eSIM 設定檔。</string>
+    <string name="profiles_none_installed_message">輸入啟用碼或掃描 QR Code，安裝第一個 eSIM 設定檔。</string>
     <string name="profiles_find_readers">尋找讀卡機</string>
     <string name="profiles_active_reader">當前讀卡機</string>
     <string name="profiles_reader_switch_busy">請等待當前操作完成後再切換讀卡機。</string>
@@ -287,7 +287,7 @@
     <string name="appearance_predictive_back">預測性返回手勢</string>
     <string name="appearance_predictive_back_summary">使用返回手勢時預覽上一層介面</string>
     <string name="appearance_interface_scale">介面縮放</string>
-    <string name="appearance_interface_scale_summary">調整應用程式介面的整體縮放比例（80%–110%）</string>
+    <string name="appearance_interface_scale_summary">調整應用程式介面的整體縮放比例（80–110%）</string>
     <string name="appearance_bottom_navigation">底部導航</string>
     <string name="appearance_floating_bottom_bar">懸浮底部導航欄</string>
     <string name="appearance_floating_bottom_bar_summary">在手機上使用懸浮底部導航欄</string>
@@ -332,9 +332,9 @@
     <string name="profile_display_reminders">提醒</string>
     <string name="profile_display_reminders_summary">在首頁顯示已設定的提醒日期</string>
     <string name="profile_display_size">設定檔大小</string>
-    <string name="profile_display_size_summary">在首頁顯示配置佔用的實際或估算儲存空間</string>
+    <string name="profile_display_size_summary">在首頁顯示設定檔實際或預估佔用的空間</string>
     <string name="profile_display_switch">啟用開關</string>
-    <string name="profile_display_switch_summary">在首頁顯示用於啟用或停用配置的開關</string>
+    <string name="profile_display_switch_summary">在首頁顯示啟用或停用設定檔的開關</string>
     <string name="profile_display_home_reader">首頁讀卡機</string>
     <string name="profile_display_reader_selector">讀卡機選擇器</string>
     <string name="profile_display_reader_selector_summary">在主頁上顯示活動的讀卡機控件</string>
@@ -361,7 +361,7 @@
     <string name="reader_remote_title">遠端讀卡機</string>
     <string name="reader_remote_enable">使用遠端讀卡機</string>
     <string name="reader_remote_credentials">存取憑證</string>
-    <string name="reader_remote_summary">使用明確配置的網路APDU端點</string>
+    <string name="reader_remote_summary">使用手動設定的網路 APDU 端點</string>
     <string name="reader_remote_addresses">遠端讀卡機位址</string>
     <string name="reader_remote_credential_stored">已安全儲存存取權杖</string>
     <string name="reader_remote_credential_none">未設定存取權杖</string>
@@ -402,7 +402,7 @@
     <string name="reader_remote_duplicate_endpoint_line">第 %1$d 行的位址與前面的位址重復</string>
     <string name="reader_remote_secure_detail">RemoCard v2 使用安全運輸</string>
     <string name="reader_remote_unavailable_detail">無法連接 RemoCard v2。請檢查 TLS、存取權杖和服務器相容性。</string>
-    <string name="reader_remote_configured_name">已配置的遠端讀卡機</string>
+    <string name="reader_remote_configured_name">已設定的遠端讀卡機</string>
     <string name="reader_telephony_not_in_build">未列入本建築</string>
     <string name="reader_telephony_permission_status">電話:%1$s;保護存取:%2$s</string>
     <string name="reader_diagnostics_android_line">Android %1$s (API %2$d)</string>
@@ -419,7 +419,7 @@
         <item quantity="other">遠端讀器: %1$s( 已設定 %2$d)</item>
     </plurals>
     <string name="reader_diagnostics_unavailable">無</string>
-    <string name="reader_remote_none_configured">未配置遠端端點</string>
+    <string name="reader_remote_none_configured">尚未設定遠端端點</string>
     <plurals name="reader_remote_endpoint_count">
         <item quantity="other">%1$d 端點</item>
     </plurals>
@@ -444,7 +444,7 @@
     <string name="privacy_eid_redaction">EID 編輯</string>
     <string name="privacy_eid_redaction_summary">如何顯示 eUICC 識別碼的控制</string>
     <string name="privacy_iccid_redaction">ICCID 編輯</string>
-    <string name="privacy_iccid_redaction_summary">控制配置識別碼的顯示方式</string>
+    <string name="privacy_iccid_redaction_summary">設定如何顯示設定檔的 ICCID</string>
     <string name="redaction_none">無</string>
     <string name="redaction_middle">中間</string>
     <string name="redaction_full">滿</string>
@@ -478,17 +478,17 @@
     <string name="advanced_developer_mode_summary">曝光協議細節和診斷控制</string>
     <string name="advanced_apdu_logging">Verbose 協議記錄</string>
     <string name="advanced_apdu_logging_summary">記錄只包含協議消息大小和響應狀態單詞。 APDU 有效載荷從未被登錄。</string>
-    <string name="advanced_hide_deletion">隱藏配置刪除</string>
-    <string name="advanced_hide_deletion_summary">從配置細節中刪除刪除動作</string>
+    <string name="advanced_hide_deletion">隱藏刪除設定檔選項</string>
+    <string name="advanced_hide_deletion_summary">在設定檔詳細資料中隱藏刪除選項</string>
     <string name="advanced_hide_memory_reset">隱藏 eUICC 內存重設</string>
     <string name="advanced_hide_memory_reset_summary">從 eUICC 資訊中刪除重設動作</string>
     <string name="advanced_mss_dialog_title">最大線段大小</string>
     <string name="advanced_mss_dialog_summary">輸入32至255字節的值。</string>
     <string name="advanced_mss_out_of_range">一定在32到255之間</string>
-    <string name="advanced_imei_dialog_summary">可選。 HyperLPA 在當地儲存,僅在配置下載時提供。</string>
+    <string name="advanced_imei_dialog_summary">選填。HyperLPA 只會在這部裝置上儲存 IMEI，並在下載設定檔時提供給伺服器。</string>
     <string name="backup_title">備份與還原</string>
     <string name="backup_create">創建備份</string>
-    <string name="backup_create_summary">儲存設定和eSIM 設定檔資料,無論是否密碼</string>
+    <string name="backup_create_summary">備份設定和已儲存的設定檔資料，可選擇設定密碼。</string>
     <string name="backup_restore">還原備份</string>
     <string name="backup_restore_summary">替換本地設定並儲存來自 HyperLPA 備份的eSIM 設定檔資料</string>
     <string name="backup_reset_settings">重設設定</string>
@@ -496,7 +496,7 @@
     <string name="backup_keep_secure_summary">備份可以包含 ICCIDs, EID, IMEI, 遠端讀者位址和自訂影像。 如果您要加密檔案, 請加入密碼 。</string>
     <string name="backup_esim_profiles_summary">安裝的設定檔仍保留在 eUICC 上, 不复制到備份中 。</string>
     <string name="backup_protect_title">保護此備份</string>
-    <string name="backup_protect_summary">添加至少 10 個字符的密碼來加密此備份, 或將兩個字段留空以儲存它而不包含一個。</string>
+    <string name="backup_protect_summary">輸入至少 10 個字元的密碼來加密備份。如果不需要加密，請將兩個密碼欄位留空。</string>
     <string name="backup_password">備份密碼</string>
     <string name="backup_confirm_password">確認密碼</string>
     <string name="backup_passwords_differ">密碼不匹配。</string>
@@ -540,14 +540,14 @@
     <string name="failure_notification_resend_no_address">本歷史條目不含有效通知位址.</string>
     <string name="failure_select_reader">先選擇一個 eUICC 讀卡機</string>
     <string name="failure_selected_reader_unavailable">選中的 eUICC 讀卡機已無法使用</string>
-    <string name="failure_selected_euicc_changed">選中的讀卡機中的 eUICC 更改了。在再次嘗試之前先審查它的配置。</string>
+    <string name="failure_selected_euicc_changed">所選讀卡機中的 eUICC 已變更。請先確認設定檔清單，再試一次。</string>
     <string name="failure_reconnect">eUICC 沒有重新連接</string>
     <string name="failure_download_title">eSIM 設定檔下載失敗</string>
     <string name="failure_download_outcome_unverified">eUICC 可能安裝了eSIM 設定檔, 但重新連接失敗, 因此無法校驗結果。在重試前重新連接或重新整理 eUICC。</string>
     <string name="failure_profile_switch_outcome_unverified">eUICC 可能已切換eSIM 設定檔, 但重新連接失敗, 因此無法校驗結果。在再次嘗試之前重新連接或重新整理 eUICC。</string>
     <string name="failure_profile_delete_outcome_unverified">eUICC 可能刪除了eSIM 設定檔, 但結果無法校驗。在再次嘗試之前重新連接或重新整理 eUICC。</string>
     <string name="failure_memory_reset_outcome_unverified">eUICC 內存重置可能已經改變了卡片, 但無法驗證它是否完成。 在再次試試之前重新連接或刷新 eUICC 。</string>
-    <string name="failure_mutation_refresh_required">先前的卡片更改有未經驗證的結果。在另一個配置更改前重新連接或重新整理 eUICC。</string>
+    <string name="failure_mutation_refresh_required">上一次變更 eUICC 的結果尚未確認。請重新連接 eUICC 或重新整理資訊，再變更設定檔。</string>
     <string name="failure_sim_access_title">SIM 存取被拒絕</string>
     <string name="failure_sim_access_message">eUICC 不授權此 APK 簽署憑證。 使用它相匹配的商家/ 社區建築、 NBridge 或特權/ root 存取 。</string>
     <string name="failure_lpa_title">LPA 操作失敗</string>
@@ -561,7 +561,7 @@
     <string name="install_progress_bytes">安裝( %1$d / %2$d 字節)...</string>
     <string name="install_progress_preparing">正在準備安全安裝...</string>
     <string name="download_progress_preparing">正在準備 eSIM 設定檔…</string>
-    <string name="download_progress_connecting">正在連接配置服務器…</string>
+    <string name="download_progress_connecting">正在連線至設定檔下載伺服器…</string>
     <string name="download_progress_authenticating">正在驗證 eSIM 設定檔…</string>
     <string name="download_progress_downloading">正在下載…</string>
     <string name="download_progress_finalizing">正在完成最後步驟…</string>
@@ -613,7 +613,7 @@
     <string name="accessibility_show_more">顯示更多</string>
     <string name="profile_notification_address">通知服務器位址</string>
     <string name="profile_notification_events">通知事件</string>
-    <string name="profile_policy_rules">配置策略規則</string>
+    <string name="profile_policy_rules">設定檔原則規則</string>
     <string name="profile_technical_data_label">技術資訊</string>
     <string name="profile_technical_empty">沒有其他技術資訊</string>
     <string name="profile_danger_zone">危險操作</string>
@@ -642,7 +642,7 @@
     <string name="profile_icon_choose_profile">為此設定檔選擇圖片</string>
     <string name="profile_icon_choose_profile_summary">只有此設定檔會使用所選圖片</string>
     <string name="profile_icon_choose_provider">為 %1$s 的所有設定檔選擇圖片</string>
-    <string name="profile_icon_choose_provider_summary">同一電信業者名稱下的配置將使用同一張圖片</string>
+    <string name="profile_icon_choose_provider_summary">同一電信業者的設定檔共用這張圖片</string>
     <string name="profile_icon_use_provider">將目前的圖示用於 %1$s 的所有設定檔</string>
     <string name="profile_icon_use_provider_summary">共享此設定檔當前顯示的圖示</string>
     <string name="profile_icon_remove_profile">移除此設定檔的自定義圖示</string>
@@ -653,16 +653,16 @@
     <string name="profile_icon_restore_profile">此設定檔使用共享圖示</string>
     <string name="profile_icon_restore_profile_summary">在此設定檔上重新顯示電信業者共享圖示</string>
     <string name="profile_icon_remove_provider">移除 %1$s 的共享圖示</string>
-    <string name="profile_icon_remove_provider_summary">清除同一電信業者名稱下所有配置使用的共享圖示</string>
+    <string name="profile_icon_remove_provider_summary">清除此電信業者各設定檔共用的圖示</string>
     <string name="profile_icon_remove_provider_title">要移除 %1$s 的共享圖示嗎？</string>
-    <string name="profile_icon_remove_provider_confirmation_summary">此操作會清除此電信業者所有配置使用的共享圖示。沒有自定義圖示的配置將使用預設電信業者圖示。</string>
+    <string name="profile_icon_remove_provider_confirmation_summary">這會清除此電信業者各設定檔共用的圖示。未設定自訂圖示的設定檔將使用預設電信業者圖示。</string>
     <string name="profile_icon_remove_title">要移除此設定檔的自定義圖示嗎？</string>
     <string name="profile_icon_remove_summary">移除後將顯示電信業者共享圖示或預設圖示。</string>
     <string name="profile_icon_import_failed">無法匯入所選圖片。請選擇不超過 4 MB 的有效圖片。</string>
     <string name="profile_icon_update_failed">無法更新圖示，請重試。</string>
     <string name="profile_class_operational">正式使用</string>
     <string name="profile_class_testing">測試</string>
-    <string name="profile_class_provisioning">預配置</string>
+    <string name="profile_class_provisioning">佈建</string>
     <string name="profile_class_unknown">未知</string>
     <string name="activation_error_too_long">激活密碼太長了</string>
     <string name="activation_error_image_open">無法打開所選圖片。</string>
@@ -717,7 +717,7 @@
     <string name="download_enable_profile_summary">切換到此設定檔並返回 eSIM 列表</string>
     <string name="common_done">完成</string>
     <string name="batch_download_title">批次下載</string>
-    <string name="batch_download_instructions">輸入每行一個啟動碼。 对于需要確認的碼, 請使用「 LPA:... 」 。 下載依序執行 。</string>
+    <string name="batch_download_instructions">每行輸入一組啟用碼。如果需要確認碼，請使用「LPA:… | 確認碼」格式。下載會依輸入順序進行。</string>
     <string name="batch_download_codes_label">啟用碼</string>
     <string name="batch_codes">啟用碼</string>
     <string name="batch_valid">有效</string>
@@ -741,14 +741,14 @@
     <string name="batch_progress_value">已安裝 %1$d 個，失敗 %2$d 個</string>
     <string name="batch_download_in_progress">下載中</string>
     <plurals name="batch_download_profiles">
-        <item quantity="other">下載 %1$d 設定檔</item>
+        <item quantity="other">下載 %1$d 個 eSIM 設定檔</item>
     </plurals>
     <string name="batch_cancel_remaining">取消剩餘下載</string>
     <plurals name="batch_resume_pending">
-        <item quantity="other">恢复%1$d次等待下載</item>
+        <item quantity="other">繼續 %1$d 項待下載工作</item>
     </plurals>
     <plurals name="batch_retry_failed">
-        <item quantity="other">重試%1$d次下載失敗</item>
+        <item quantity="other">重試 %1$d 項失敗的下載</item>
     </plurals>
     <string name="batch_clear_saved">清除已儲存的佇列</string>
     <string name="batch_clear_title">要清除已儲存的佇列嗎？</string>
@@ -786,10 +786,10 @@
     <string name="euicc_provisioning">佈建</string>
     <string name="euicc_default_smdp">預設 SM-DP+</string>
     <string name="euicc_root_smds">根 SM-DS</string>
-    <string name="euicc_not_configured">未配置</string>
+    <string name="euicc_not_configured">尚未設定</string>
     <string name="euicc_platform_label">平台標籤</string>
     <string name="euicc_discovery_service">發現服務</string>
-    <string name="euicc_discovered_profiles">找到的可下載配置</string>
+    <string name="euicc_discovered_profiles">找到的可下載設定檔</string>
     <string name="euicc_open_discovered_summary">在下載 eSIM 設定檔頁面中使用此 SM-DP+ 位址</string>
     <string name="euicc_keys_policy">金鑰與策略</string>
     <string name="euicc_keys_policy_hide">隱藏金鑰 ID 和策略規則</string>
@@ -854,8 +854,8 @@
     <string name="tags_reminders_title">標記提醒</string>
     <string name="tags_reminders_general">A. 概況</string>
     <string name="tags_manager">標籤管理器</string>
-    <string name="tags_manager_summary">查看、搜索和編輯配置標籤</string>
-    <string name="reminders_profile">配置提醒</string>
+    <string name="tags_manager_summary">檢視、搜尋及編輯設定檔標籤</string>
+    <string name="reminders_profile">設定檔提醒</string>
     <string name="reminders_profile_summary">簡介日期和事件的時間表通知</string>
     <string name="reminders_notifications">通知</string>
     <string name="reminders_permission">通知許可</string>
@@ -866,15 +866,15 @@
     <string name="reminders_view_scheduled">查看預定的提醒</string>
     <string name="reminders_view_scheduled_summary">管理即將到來的eSIM 設定檔通知</string>
     <string name="tags_no_profiles">無eSIM 設定檔</string>
-    <string name="tags_no_profiles_message">連接一個 eUICC 來組織它的配置。</string>
+    <string name="tags_no_profiles_message">連接 eUICC 後即可整理其中的設定檔。</string>
     <string name="tags_search">搜索標籤或eSIM 設定檔</string>
     <string name="tags_active">活動標記</string>
     <string name="tags_none_yet">還沒有標記</string>
-    <string name="tags_none_yet_summary">在下面打開一個配置以添加標籤</string>
+    <string name="tags_none_yet_summary">開啟下方任一設定檔即可新增標籤</string>
     <string name="tags_no_matching">沒有匹配的標籤</string>
-    <string name="tags_no_matching_summary">配置匹配可能還會在下面顯示</string>
+    <string name="tags_no_matching_summary">符合搜尋條件的設定檔仍會顯示在下方</string>
     <plurals name="tags_profile_count">
-        <item quantity="other">%1$d配置</item>
+        <item quantity="other">%1$d 個設定檔</item>
     </plurals>
     <string name="tags_profiles_section">eSIM 設定檔</string>
     <string name="tags_none_found">未找到標籤</string>
@@ -973,7 +973,7 @@
     <string name="remote_storage_unavailable">無法讀取裝置金鑰。請解鎖手機並重新打開 HyperLPA。</string>
     <string name="remote_action_failed">遠端操作無法完成。</string>
     <string name="remote_disconnect_first">請先關閉遠端存取並移除已配對的裝置，再更換中繼服務。</string>
-    <string name="remote_configure_first">先配置中繼器.</string>
+    <string name="remote_configure_first">請先設定中繼站。</string>
     <string name="remote_connect_first">先連線至中繼器.</string>
     <string name="remote_pair_wrong_relay">請使用連線至同一中繼服務的裝置產生的配對碼。</string>
     <string name="remote_already_paired">此裝置已經對齊, 或者配對限制已經達到。</string>
@@ -1079,8 +1079,8 @@
     <string name="common_retry">重試</string>
     <string name="reader_remove_credentials_title">要移除已儲存的驗證資訊嗎？</string>
     <string name="reader_remove_credentials_summary">儲存後，被移除的讀卡機位址對應的驗證資訊也會刪除。以後重新添加這些讀卡機時，需要再次輸入憑證。</string>
-    <string name="common_enabled">打開</string>
-    <string name="common_disabled">關</string>
+    <string name="common_enabled">已開啟</string>
+    <string name="common_disabled">已關閉</string>
     <string name="history_clear_local">清除本地歷史</string>
     <string name="history_clear_local_summary">刪除此手機儲存了 eUICC 通知歷史嗎 ? 這不會從 eUICC 中刪除待發通知, 也不會刪除其他裝置上的記錄。</string>
     <string name="phone_inbox_all_devices">所有裝置</string>
@@ -1144,4 +1144,14 @@
     <string name="technical_cat_tp">CAT-TP 計算機輔助技術</string>
     <string name="support_report_flag">%1$s=%2$s (韓語).</string>
     <string name="remote_relay_address_hint">https://relay.example.workers.dev</string>
+    <string name="reader_usb_summary">使用外接智慧卡和 eUICC 讀卡機</string>
+    <string name="reader_diagnostics_clipboard_label">HyperLPA 診斷資訊</string>
+    <string name="notification_settings_auto_send_summary">將 eUICC 中待傳送的通知傳送到對應的 SM-DP+ 伺服器</string>
+    <string name="advanced_imei_not_supplied">不向 SM-DP+ 伺服器提供 IMEI</string>
+    <string name="failure_smdp_address_required">請輸入 SM-DP+ 位址</string>
+    <string name="failure_default_smdp_rejected">eUICC 拒絕了這個預設 SM-DP+ 位址</string>
+    <string name="failure_download_session">SM-DP+ 連線作業失敗</string>
+    <string name="operation_keep_connected_summary">請保持 eUICC 連線。這可能需要幾秒鐘。</string>
+    <string name="install_progress_summary">安裝完成前請保持 eUICC 連線。</string>
+    <string name="compatibility_list_separator">、</string>
 </resources>

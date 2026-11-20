@@ -147,7 +147,7 @@
     <string name="profiles_none_installed">No profiles installed</string>
     <string name="profiles_choose_reader_message">Select an available secure-element reader to continue.</string>
     <string name="profiles_search_empty_message">Try a different search.</string>
-    <string name="profiles_none_installed_message">Download an activation code to install your first eSIM profile.</string>
+    <string name="profiles_none_installed_message">Enter an activation code or scan a QR code to install your first eSIM profile.</string>
     <string name="profiles_find_readers">Find readers</string>
     <string name="profiles_active_reader">Active reader</string>
     <string name="profiles_reader_switch_busy">Wait for the current operation to finish before changing readers.</string>

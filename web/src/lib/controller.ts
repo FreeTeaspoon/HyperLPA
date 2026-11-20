@@ -6,7 +6,9 @@ import type { Activity, Command, Envelope, Identity, Message, Peer, Snapshot, Vi
 type GroupResponse = { owner: string; package: string; revision: number; members: { id: string; role: string; status: string; revision: number }[] };
 export const commandLabel = (action: string) => ({ READERS: "Read devices", REFRESH: "Refresh profiles", SWITCH: "Switch profile",
   DELETE: "Delete profile", RENAME: "Rename profile", DOWNLOAD: "Download profile", RESET: "Reset eUICC",
-  TAGS: "Update tags", PIN: "Pin profile", PROCESS_NOTIFICATION: "Process eUICC notification" })[action] ?? action.toLowerCase().replaceAll("_", " ");
+  TAGS: "Update tags", PIN: "Pin profile", PROCESS_NOTIFICATION: "Process eUICC notification",
+  DISCOVER: "Discover profiles", SETTINGS: "Update phone settings", DELETE_HISTORY: "Delete history entry",
+  RESEND_NOTIFICATION: "Resend notification" })[action] ?? action.toLowerCase().replaceAll("_", " ");
 
 export class Controller {
   private state: ViewState = { loaded: false, connected: false, online: {}, snapshots: {}, notifications: {}, activities: [], phoneRevisions: {} };
