@@ -173,6 +173,8 @@ import app.hyperlpa.ui.components.Os4DropdownPreference as OverlayDropdownPrefer
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
+private enum class DeleteProfileStep { Warning, Confirm, Confirmed }
+
 @Composable
 fun ProfileDetailsScreen(
     profile: ProfileInfo?,
@@ -198,12 +200,9 @@ fun ProfileDetailsScreen(
     onApplyIconToProvider: (onComplete: (Boolean) -> Unit) -> Unit,
 ) {
     var showRename by remember { mutableStateOf(false) }
-    var showDelete by remember { mutableStateOf(false) }
-    var deleteNext by remember { mutableStateOf(false) }
-    var deleteAfterExit by remember { mutableStateOf(false) }
+    var deleteStep by remember(profile?.iccid) { mutableStateOf<DeleteProfileStep?>(null) }
     var pendingIconAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var showClearReminder by remember { mutableStateOf(false) }
-    var showDeleteConfirmation by remember { mutableStateOf(false) }
     var showTags by remember { mutableStateOf(false) }
     var editableTags by remember(profile?.tags) { mutableStateOf(profile?.tags.orEmpty()) }
     var showReminder by remember { mutableStateOf(false) }
@@ -565,7 +564,7 @@ fun ProfileDetailsScreen(
                             titleColor = top.yukonga.miuix.kmp.basic.BasicComponentDefaults.titleColor(
                                 color = MiuixTheme.colorScheme.error,
                             ),
-                            onClick = { showDelete = true },
+                            onClick = { deleteStep = DeleteProfileStep.Warning },
                         )
                     }
                 }
@@ -583,43 +582,44 @@ fun ProfileDetailsScreen(
         },
     )
 
+    fun dismissDeleteStep(step: DeleteProfileStep) {
+        if (deleteStep == step) deleteStep = null
+    }
+
     OverlayDialog(
-        show = showDelete && !settings.hideProfileDeletion,
-        onDismissFinished = { if (deleteNext) { deleteNext = false; showDeleteConfirmation = true } },
+        show = deleteStep == DeleteProfileStep.Warning && !settings.hideProfileDeletion,
         title = stringResource(R.string.profile_delete_first_title),
         summary = stringResource(R.string.profile_delete_first_summary),
-        onDismissRequest = { showDelete = false },
+        onDismissRequest = { dismissDeleteStep(DeleteProfileStep.Warning) },
     ) {
         DialogActionRow(
-            onCancel = { showDelete = false },
+            onCancel = { dismissDeleteStep(DeleteProfileStep.Warning) },
             confirmText = stringResource(R.string.common_continue),
             destructive = true,
             onConfirm = {
-                deleteNext = true
-                showDelete = false
+                if (deleteStep == DeleteProfileStep.Warning) deleteStep = DeleteProfileStep.Confirm
             },
         )
     }
 
     OverlayDialog(
-        show = showDeleteConfirmation && !settings.hideProfileDeletion,
+        show = deleteStep == DeleteProfileStep.Confirm && !settings.hideProfileDeletion,
         onDismissFinished = {
-            if (deleteAfterExit) {
-                deleteAfterExit = false
+            if (deleteStep == DeleteProfileStep.Confirmed) {
+                deleteStep = null
                 onDelete { success -> if (success) onBack() }
             }
         },
         title = stringResource(R.string.profile_delete_final_title),
         summary = stringResource(profileDeleteFinalSummaryRes(profile?.state)),
-        onDismissRequest = { showDeleteConfirmation = false },
+        onDismissRequest = { dismissDeleteStep(DeleteProfileStep.Confirm) },
     ) {
         DialogActionRow(
-            onCancel = { showDeleteConfirmation = false },
+            onCancel = { dismissDeleteStep(DeleteProfileStep.Confirm) },
             confirmText = stringResource(R.string.common_delete),
             destructive = true,
             onConfirm = {
-                deleteAfterExit = true
-                showDeleteConfirmation = false
+                if (deleteStep == DeleteProfileStep.Confirm) deleteStep = DeleteProfileStep.Confirmed
             },
         )
     }
@@ -1891,6 +1891,8 @@ fun BatchDownloadScreen(
     }
 }
 
+private enum class ResetEuiccStep { Warning, Confirm, Final, Confirmed }
+
 @Composable
 fun EuiccDetailsScreen(
     info: EuiccInfo?,
@@ -1907,10 +1909,7 @@ fun EuiccDetailsScreen(
     onDiscoverProfiles: (String?) -> Unit,
     onUseDiscoveredAddress: (String) -> Unit,
 ) {
-    var showReset by remember { mutableStateOf(false) }
-    var pendingResetStage by remember { mutableIntStateOf(0) }
-    var showResetConfirmation by remember { mutableStateOf(false) }
-    var showFinalResetConfirmation by remember { mutableStateOf(false) }
+    var resetStep by remember(info?.eid) { mutableStateOf<ResetEuiccStep?>(null) }
     var advancedDetailsExpanded by rememberSaveable(info?.eid) { mutableStateOf(false) }
     var showDefaultSmdpEditor by remember { mutableStateOf(false) }
     var showSmdsEditor by remember { mutableStateOf(false) }
@@ -2145,7 +2144,7 @@ fun EuiccDetailsScreen(
                             title = stringResource(R.string.euicc_reset_memory),
                             summary = stringResource(R.string.euicc_reset_memory_summary),
                             titleColor = BasicComponentDefaults.titleColor(color = MiuixTheme.colorScheme.error),
-                            onClick = { showReset = true },
+                            onClick = { resetStep = ResetEuiccStep.Warning },
                         )
                     }
                 }
@@ -2191,54 +2190,58 @@ fun EuiccDetailsScreen(
             showCardNameEditor = false
         },
     )
+    fun dismissResetStep(step: ResetEuiccStep) {
+        if (resetStep == step) resetStep = null
+    }
+
     OverlayDialog(
-        show = showReset,
-        onDismissFinished = { if (pendingResetStage == 1) { pendingResetStage = 0; showResetConfirmation = true } },
+        show = resetStep == ResetEuiccStep.Warning,
         title = stringResource(R.string.euicc_reset_first_title),
         summary = stringResource(R.string.euicc_reset_first_summary),
-        onDismissRequest = { showReset = false },
+        onDismissRequest = { dismissResetStep(ResetEuiccStep.Warning) },
     ) {
         DialogActionRow(
-            onCancel = { showReset = false },
+            onCancel = { dismissResetStep(ResetEuiccStep.Warning) },
             confirmText = stringResource(R.string.common_continue),
             destructive = true,
             onConfirm = {
-                pendingResetStage = 1
-                showReset = false
+                if (resetStep == ResetEuiccStep.Warning) resetStep = ResetEuiccStep.Confirm
             },
         )
     }
     OverlayDialog(
-        show = showResetConfirmation,
-        onDismissFinished = { if (pendingResetStage == 2) { pendingResetStage = 0; showFinalResetConfirmation = true } },
+        show = resetStep == ResetEuiccStep.Confirm,
         title = stringResource(R.string.euicc_reset_second_title),
         summary = stringResource(R.string.euicc_reset_second_summary),
-        onDismissRequest = { showResetConfirmation = false },
+        onDismissRequest = { dismissResetStep(ResetEuiccStep.Confirm) },
     ) {
         DialogActionRow(
-            onCancel = { showResetConfirmation = false },
+            onCancel = { dismissResetStep(ResetEuiccStep.Confirm) },
             confirmText = stringResource(R.string.common_continue),
             destructive = true,
             onConfirm = {
-                pendingResetStage = 2
-                showResetConfirmation = false
+                if (resetStep == ResetEuiccStep.Confirm) resetStep = ResetEuiccStep.Final
             },
         )
     }
     OverlayDialog(
-        show = showFinalResetConfirmation,
-        onDismissFinished = { if (pendingResetStage == 3) { pendingResetStage = 0; onReset() } },
+        show = resetStep == ResetEuiccStep.Final,
+        onDismissFinished = {
+            if (resetStep == ResetEuiccStep.Confirmed) {
+                resetStep = null
+                onReset()
+            }
+        },
         title = stringResource(R.string.euicc_reset_final_title),
         summary = stringResource(R.string.euicc_reset_final_summary),
-        onDismissRequest = { showFinalResetConfirmation = false },
+        onDismissRequest = { dismissResetStep(ResetEuiccStep.Final) },
     ) {
         DialogActionRow(
-            onCancel = { showFinalResetConfirmation = false },
+            onCancel = { dismissResetStep(ResetEuiccStep.Final) },
             confirmText = stringResource(R.string.common_reset),
             destructive = true,
             onConfirm = {
-                pendingResetStage = 3
-                showFinalResetConfirmation = false
+                if (resetStep == ResetEuiccStep.Final) resetStep = ResetEuiccStep.Confirmed
             },
         )
     }
