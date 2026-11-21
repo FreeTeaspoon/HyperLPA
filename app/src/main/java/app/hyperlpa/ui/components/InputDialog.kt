@@ -90,9 +90,11 @@ fun TextInputDialog(
         var editedSinceError by remember(error) { mutableStateOf(false) }
         val focusRequester = remember { FocusRequester() }
         val keyboard = LocalSoftwareKeyboardController.current
-        LaunchedEffect(Unit) {
-            focusRequester.requestFocus()
-            keyboard?.show()
+        LaunchedEffect(show) {
+            if (show) {
+                focusRequester.requestFocus()
+                keyboard?.show()
+            }
         }
         val validationError = value.text.takeIf { it.isNotBlank() }?.let(validate)
         val shownError = validationError ?: error.takeUnless { editedSinceError }

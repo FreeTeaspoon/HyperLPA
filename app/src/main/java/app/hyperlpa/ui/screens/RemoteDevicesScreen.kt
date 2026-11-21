@@ -615,9 +615,13 @@ internal fun PhoneNotificationHistoryScreen(devices: RemoteDevices, deviceId: St
     val local = deviceId == LocalHistory
     val peer = state.peers.firstOrNull { it.id == deviceId }
     var clearRequested by remember { mutableStateOf(false) }
-    var clearAfterExit by remember { mutableStateOf(false) }
-    var removeAfterExit by remember { mutableStateOf(false) }
     var removeRequested by remember { mutableStateOf(false) }
+    var removingDevice by remember { mutableStateOf(false) }
+    var removeDialogExiting by remember { mutableStateOf(false) }
+    var deviceRemoved by remember { mutableStateOf(false) }
+    LaunchedEffect(deviceRemoved, removeDialogExiting) {
+        if (deviceRemoved && !removeDialogExiting) onBack()
+    }
     LaunchedEffect(deviceId) {
         if (!local) devices.refreshPhoneNotifications(deviceId)
     }
@@ -645,7 +649,7 @@ internal fun PhoneNotificationHistoryScreen(devices: RemoteDevices, deviceId: St
         onBack = onBack,
         actions = {
             if (entries.isNotEmpty()) {
-                IconButton(onClick = { clearRequested = true }) {
+                IconButton(enabled = !clearingPopupLocked && view?.clearing != true, onClick = { clearRequested = true }) {
                     Icon(MiuixIcons.Glass.Delete, contentDescription = stringResource(R.string.phone_notifications_clear))
                 }
             }
@@ -653,7 +657,7 @@ internal fun PhoneNotificationHistoryScreen(devices: RemoteDevices, deviceId: St
                 OverlayIconDropdownMenu(
                     entry = DropdownEntry(listOf(DropdownItem(
                         text = stringResource(R.string.remote_remove_device),
-                        onClick = { removeRequested = true },
+                        onClick = { if (!removingDevice) removeRequested = true },
                     ))),
                 ) {
                     Icon(MiuixIcons.Glass.More, contentDescription = stringResource(R.string.remote_more_options))
@@ -708,7 +712,6 @@ internal fun PhoneNotificationHistoryScreen(devices: RemoteDevices, deviceId: St
         stringResource(R.string.phone_notifications_clear).takeIf { view?.clearing == true }) { clearingPopupLocked = it }
     OverlayDialog(
         show = clearRequested,
-        onDismissFinished = { if (clearAfterExit) { clearAfterExit = false; devices.clearPhoneNotifications(deviceId) } },
         title = stringResource(R.string.phone_notifications_clear_title),
         summary = if (local) stringResource(R.string.phone_notifications_clear_local_summary)
             else stringResource(R.string.phone_notifications_clear_remote_summary, title),
@@ -718,17 +721,17 @@ internal fun PhoneNotificationHistoryScreen(devices: RemoteDevices, deviceId: St
             onCancel = { clearRequested = false },
             confirmText = stringResource(R.string.common_clear),
             destructive = true,
-            onConfirm = { clearAfterExit = true; clearRequested = false },
+            onConfirm = {
+                if (clearRequested) {
+                    clearRequested = false
+                    devices.clearPhoneNotifications(deviceId)
+                }
+            },
         )
     }
     OverlayDialog(
         show = removeRequested,
-        onDismissFinished = {
-            if (removeAfterExit) {
-                removeAfterExit = false
-                devices.forget(deviceId) { success -> if (success) onBack() }
-            }
-        },
+        onDismissFinished = { removeDialogExiting = false },
         title = stringResource(R.string.remote_remove_title),
         summary = stringResource(R.string.remote_remove_summary),
         onDismissRequest = { removeRequested = false },
@@ -738,8 +741,15 @@ internal fun PhoneNotificationHistoryScreen(devices: RemoteDevices, deviceId: St
             confirmText = stringResource(R.string.remote_remove),
             destructive = true,
             onConfirm = {
-                removeAfterExit = true
-                removeRequested = false
+                if (removeRequested && !removingDevice) {
+                    removingDevice = true
+                    removeDialogExiting = true
+                    removeRequested = false
+                    devices.forget(deviceId) { success ->
+                        deviceRemoved = success
+                        if (!success) removingDevice = false
+                    }
+                }
             },
         )
     }

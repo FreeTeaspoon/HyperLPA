@@ -768,8 +768,6 @@ fun RemoteReadersScreen(
     var remoteInputTooLong by remember { mutableStateOf(false) }
     var showRemoteToken by remember { mutableStateOf(false) }
     var confirmCredentialRemoval by remember { mutableStateOf(false) }
-    var removalAfterEditorExit by remember { mutableStateOf(false) }
-    var reopenEditorAfterRemoval by remember { mutableStateOf(false) }
     var remoteTokenEndpoint by remember { mutableStateOf<String?>(null) }
     var remoteTokenSaving by remember { mutableStateOf(false) }
     var remoteTokenSaveFailed by remember { mutableStateOf(false) }
@@ -804,7 +802,14 @@ fun RemoteReadersScreen(
         )
         else -> null
     }
+    fun returnToRemoteEditor() {
+        if (confirmCredentialRemoval && !remoteUrlsSaving) {
+            confirmCredentialRemoval = false
+            showRemoteEditor = true
+        }
+    }
     fun saveRemoteUrls() {
+        if (remoteUrlsSaving) return
         remoteUrlsSaving = true
         remoteUrlsSaveFailed = false
         viewModel.setRemoteReaderUrls(remoteUrlEntries) { success ->
@@ -812,7 +817,7 @@ fun RemoteReadersScreen(
             if (success) { remoteInputTooLong = false; showRemoteEditor = false; confirmCredentialRemoval = false }
             else {
                 remoteUrlsSaveFailed = true
-                if (confirmCredentialRemoval) { reopenEditorAfterRemoval = true; confirmCredentialRemoval = false }
+                returnToRemoteEditor()
             }
         }
     }
@@ -873,30 +878,28 @@ fun RemoteReadersScreen(
             }
         },
         onDismissFinished = {
-            if (removalAfterEditorExit) { removalAfterEditorExit = false; confirmCredentialRemoval = true }
-            else if (!showRemoteEditor) remoteUrls = ""
+            if (!showRemoteEditor && !confirmCredentialRemoval) remoteUrls = ""
         },
         onConfirm = {
-            if (!remoteUrlsSaving && remoteEditorError == null) {
+            if (showRemoteEditor && !remoteUrlsSaving && remoteEditorError == null) {
                 val retained = validateRemoteReaderSettings(remoteUrlEntries).map { it.endpointUrl }.toSet()
                 if (settings.remoteReaderTokens.keys.any { it !in retained }) {
-                    removalAfterEditorExit = true
                     showRemoteEditor = false
+                    confirmCredentialRemoval = true
                 } else saveRemoteUrls()
             }
         },
     )
     OverlayDialog(show = confirmCredentialRemoval, title = stringResource(R.string.reader_remove_credentials_title),
         summary = stringResource(R.string.reader_remove_credentials_summary),
-        onDismissRequest = { reopenEditorAfterRemoval = true; confirmCredentialRemoval = false },
+        onDismissRequest = ::returnToRemoteEditor,
         onDismissFinished = {
-            if (reopenEditorAfterRemoval) { reopenEditorAfterRemoval = false; showRemoteEditor = true }
-            else if (!confirmCredentialRemoval) remoteUrls = ""
+            if (!confirmCredentialRemoval && !showRemoteEditor) remoteUrls = ""
         },
     ) {
-        DialogActionRow(onCancel = { reopenEditorAfterRemoval = true; confirmCredentialRemoval = false },
+        DialogActionRow(onCancel = ::returnToRemoteEditor,
             confirmText = stringResource(R.string.common_save), destructive = true,
-            confirmEnabled = !remoteUrlsSaving, onConfirm = ::saveRemoteUrls)
+            confirmEnabled = !remoteUrlsSaving, onConfirm = { if (confirmCredentialRemoval) saveRemoteUrls() })
     }
 
     TextInputDialog(
@@ -1333,11 +1336,14 @@ fun BackupRestoreSettingsScreen(onBack: () -> Unit, viewModel: HyperLpaViewModel
     var confirmation by remember { mutableStateOf("") }
     var restorePassword by remember { mutableStateOf("") }
     var restoreUri by remember { mutableStateOf<Uri?>(null) }
-    var createAfterExit by remember { mutableStateOf(false) }
-    var restoreAfterExit by remember { mutableStateOf(false) }
-    var resetAfterExit by remember { mutableStateOf(false) }
-    var retryRestoreAfterProgress by remember { mutableStateOf(false) }
+    var restoring by remember { mutableStateOf(false) }
+    var restoreDialogExiting by remember { mutableStateOf(false) }
     var restoreError by remember { mutableStateOf(false) }
+    fun clearRestoreDraft() {
+        restoreUri = null
+        restorePassword = ""
+        restoreError = false
+    }
     val createPicker = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri == null) viewModel.cancelPreparedBackup()
         else {
@@ -1374,12 +1380,9 @@ fun BackupRestoreSettingsScreen(onBack: () -> Unit, viewModel: HyperLpaViewModel
         summary = stringResource(R.string.backup_protect_summary) + "\n" + stringResource(R.string.backup_keep_secure_summary),
         onDismissRequest = { showCreate = false },
         onDismissFinished = {
-            backupPassword = ""
-            confirmation = ""
-            if (createAfterExit) {
-                createAfterExit = false
-                runCatching { createPicker.launch("hyperlpa-backup-${LocalDate.now()}.json") }
-                    .onFailure { viewModel.cancelPreparedBackup(); snackbar(pickerUnavailable, SnackbarDuration.Long) }
+            if (!showCreate) {
+                backupPassword = ""
+                confirmation = ""
             }
         },
     ) {
@@ -1402,28 +1405,24 @@ fun BackupRestoreSettingsScreen(onBack: () -> Unit, viewModel: HyperLpaViewModel
             confirmEnabled = (backupPassword.isEmpty() && confirmation.isEmpty()) ||
                 (backupPassword.length >= 10 && backupPassword == confirmation),
             onConfirm = {
-                if (viewModel.prepareBackup(backupPassword)) { createAfterExit = true; showCreate = false }
-                else snackbar(createFailed, SnackbarDuration.Short)
+                if (showCreate) {
+                    if (viewModel.prepareBackup(backupPassword)) {
+                        showCreate = false
+                        runCatching { createPicker.launch("hyperlpa-backup-${LocalDate.now()}.json") }
+                            .onFailure {
+                                viewModel.cancelPreparedBackup()
+                                snackbar(pickerUnavailable, SnackbarDuration.Long)
+                            }
+                    } else snackbar(createFailed, SnackbarDuration.Short)
+                }
             })
     }
     OverlayDialog(show = showRestore, title = stringResource(R.string.backup_restore_dialog_title),
         summary = stringResource(R.string.backup_restore_dialog_summary),
         onDismissRequest = { showRestore = false },
         onDismissFinished = {
-            if (restoreAfterExit) {
-                restoreAfterExit = false
-                restoreUri?.let { uri ->
-                    viewModel.restoreBackup(uri, restorePassword) { success ->
-                        if (success) { restoreUri = null; restorePassword = "" }
-                        else { restoreError = true; retryRestoreAfterProgress = true }
-                        snackbar(if (success) restored else restoreFailed, SnackbarDuration.Short)
-                    }
-                }
-            } else if (!retryRestoreAfterProgress && progress == null) {
-                restoreUri = null
-                restorePassword = ""
-                restoreError = false
-            }
+            restoreDialogExiting = false
+            if (!showRestore && !restoring) clearRestoreDraft()
         },
     ) {
         TextField(value = restorePassword, onValueChange = { restorePassword = it.take(128); restoreError = false },
@@ -1434,25 +1433,40 @@ fun BackupRestoreSettingsScreen(onBack: () -> Unit, viewModel: HyperLpaViewModel
         if (restoreError) FieldError(restoreFailed)
         Spacer(Modifier.height(12.dp))
         DialogActionRow(onCancel = { showRestore = false }, confirmText = stringResource(R.string.common_restore),
-            onConfirm = { restoreAfterExit = true; showRestore = false })
+            onConfirm = {
+                val uri = restoreUri
+                if (showRestore && !restoring && uri != null) {
+                    showRestore = false
+                    restoreDialogExiting = true
+                    restoring = true
+                    viewModel.restoreBackup(uri, restorePassword) { success ->
+                        restoring = false
+                        if (success) {
+                            if (!restoreDialogExiting) clearRestoreDraft()
+                        } else {
+                            restoreError = true
+                            showRestore = true
+                        }
+                        snackbar(if (success) restored else restoreFailed, SnackbarDuration.Short)
+                    }
+                }
+            })
     }
     OverlayDialog(show = showReset, title = stringResource(R.string.backup_reset_dialog_title),
-        summary = stringResource(R.string.backup_reset_dialog_summary), onDismissRequest = { showReset = false },
-        onDismissFinished = {
-            if (resetAfterExit) {
-                resetAfterExit = false
-                viewModel.resetSettings { success ->
-                    snackbar(if (success) reset else resetFailed, SnackbarDuration.Short)
-                }
-            }
-        }) {
+        summary = stringResource(R.string.backup_reset_dialog_summary), onDismissRequest = { showReset = false }) {
         DialogActionRow(onCancel = { showReset = false }, confirmText = stringResource(R.string.common_reset),
-            destructive = true, onConfirm = { resetAfterExit = true; showReset = false })
+            destructive = true, onConfirm = {
+                if (showReset) {
+                    showReset = false
+                    viewModel.resetSettings { success ->
+                        snackbar(if (success) reset else resetFailed, SnackbarDuration.Short)
+                    }
+                }
+            })
     }
     app.hyperlpa.ui.components.CompactProgressDialog(progress) { locked ->
         progressLocked = locked
         viewModel.updateOperationPopupLock(locked, owner = "backup")
-        if (!locked && retryRestoreAfterProgress) { retryRestoreAfterProgress = false; showRestore = true }
     }
 }
 
@@ -1560,7 +1574,12 @@ private fun TextEditorDialog(
         val focusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
         val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
         var field by remember { mutableStateOf(androidx.compose.ui.text.input.TextFieldValue(value, androidx.compose.ui.text.TextRange(value.length))) }
-        LaunchedEffect(Unit) { focusRequester.requestFocus(); keyboard?.show() }
+        LaunchedEffect(show) {
+            if (show) {
+                focusRequester.requestFocus()
+                keyboard?.show()
+            }
+        }
         Column {
             TextField(value = field, onValueChange = { field = it; onValueChange(it.text) },
                 label = stringResource(R.string.reader_addresses_label), useLabelAsPlaceholder = true,

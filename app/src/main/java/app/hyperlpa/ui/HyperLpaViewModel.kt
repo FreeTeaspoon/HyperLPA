@@ -284,8 +284,6 @@ class HyperLpaViewModel(
     val batchDownloadState = provisioningCoordinator.batchState
     val singleDownloadActive = provisioningCoordinator.singleDownloadActive
     private var simStateRefreshJob: Job? = null
-    private var profileDownloadHistoryCompactionJob: Job? = null
-    private var pendingProfileDownloadFinishJob: Job? = null
     private var profileDownloadFinishInProgress = false
     private var pendingBackupPassword: CharArray? = null
     private var notificationPermissionContinuation: ((Boolean) -> Unit)? = null
@@ -595,7 +593,6 @@ class HyperLpaViewModel(
                         val resultRoute = AppRoute.ProfileDownloadResult(lpa.completedProfileDownload)
                         if (top == AppRoute.ConfirmProfileDownload) {
                             backStack.add(resultRoute)
-                            scheduleProfileDownloadHistoryCompaction(resultRoute)
                         } else {
                             backStack.removeAll { route ->
                                 route == AppRoute.DownloadProfile ||
@@ -688,7 +685,7 @@ class HyperLpaViewModel(
     private val routeGuard = app.hyperlpa.ui.navigation.RouteTransitionGuard(backStack)
 
     fun navigate(route: AppRoute, expected: NavKey? = backStack.lastOrNull()) {
-        if (firstRunHandoffPending || instantNavigation) return
+        if (firstRunHandoffPending || instantNavigation || profileDownloadFinishInProgress) return
         if (routeGuard.open(expected, route)) backStack.add(route)
     }
 
@@ -885,64 +882,39 @@ class HyperLpaViewModel(
         provisioningCoordinator.cancelSingleDownload()
     }
     fun finishProfileDownload() {
-        if (profileDownloadFinishInProgress) return
+        if (profileDownloadFinishInProgress || backStack.lastOrNull() !is AppRoute.ProfileDownloadResult) return
         profileDownloadFinishInProgress = true
-        val pendingCompaction = profileDownloadHistoryCompactionJob
-        profileDownloadHistoryCompactionJob = null
-        pendingProfileDownloadFinishJob = viewModelScope.launch {
-            if (pendingCompaction?.isActive == true) {
-                pendingCompaction.join()
-            }
-            val compactedBeforePop = compactProfileDownloadHistory()
-            if (compactedBeforePop) {
-                delay(ProfileDownloadNavigationTransitionDurationMillis)
-            }
-            clearProfileDownloadState()
-            if (backStack.lastOrNull() is AppRoute.ProfileDownloadResult) {
-                backStack.removeAt(backStack.lastIndex)
-                delay(ProfileDownloadNavigationTransitionDurationMillis)
-            }
-            finishProfileDownloadNow()
+        val predecessor = backStack.getOrNull(backStack.lastIndex - 1)
+        if (predecessor == AppRoute.Shell || predecessor is AppRoute.ProfileDownloadHistorySlot) {
+            popProfileDownloadResult()
         }
     }
-    private fun clearProfileDownloadState() {
+
+    fun onProfileDownloadResultSettled(route: AppRoute.ProfileDownloadResult) {
+        if (backStack.lastOrNull() != route) return
+        val previousIndex = backStack.lastIndex - 1
+        if (previousIndex > 0 && backStack[previousIndex] !is AppRoute.ProfileDownloadHistorySlot) {
+            backStack[previousIndex] = AppRoute.ProfileDownloadHistorySlot(slot = 0)
+        } else if (profileDownloadFinishInProgress) {
+            popProfileDownloadResult()
+        }
+    }
+
+    private fun popProfileDownloadResult() {
         showCancelDownloadConfirmation.value = false
         activationCodeDraft.value = ""
         selectedTab.value = AppTab.PROFILES
         repository.clearProfileDownloadResult()
         downloadPreviewCloudData.value = DownloadPreviewCloudData()
+        backStack.removeAt(backStack.lastIndex)
+        if (backStack.lastOrNull() == AppRoute.Shell) profileDownloadFinishInProgress = false
     }
-    private fun finishProfileDownloadNow() {
-        clearProfileDownloadState()
-        pendingProfileDownloadFinishJob = null
-        backStack.clear()
-        backStack.add(AppRoute.Shell)
+
+    fun onProfileDownloadHistorySettled(route: AppRoute.ProfileDownloadHistorySlot) {
+        if (!profileDownloadFinishInProgress || backStack.lastOrNull() != route) return
+        instantNavigation = true
+        backStack.removeAll { it != AppRoute.Shell }
         profileDownloadFinishInProgress = false
-    }
-    private fun scheduleProfileDownloadHistoryCompaction(
-        resultRoute: AppRoute.ProfileDownloadResult,
-    ) {
-        profileDownloadHistoryCompactionJob?.cancel()
-        profileDownloadHistoryCompactionJob = viewModelScope.launch {
-            delay(ProfileDownloadNavigationTransitionDurationMillis)
-            if (backStack.lastOrNull() == resultRoute) {
-                compactProfileDownloadHistory()
-            }
-        }
-    }
-    private fun compactProfileDownloadHistory(): Boolean {
-        val resultIndex = backStack.lastIndex
-        if (backStack.getOrNull(resultIndex) !is AppRoute.ProfileDownloadResult) return false
-        val downloadIndex = resultIndex - 2
-        if (downloadIndex < 1 ||
-            backStack.getOrNull(downloadIndex) != AppRoute.DownloadProfile ||
-            backStack.getOrNull(downloadIndex + 1) != AppRoute.ConfirmProfileDownload
-        ) {
-            return false
-        }
-        backStack[downloadIndex] = AppRoute.ProfileDownloadHistorySlot(slot = 0)
-        backStack[downloadIndex + 1] = AppRoute.ProfileDownloadHistorySlot(slot = 1)
-        return true
     }
     fun processNotification(sequenceNumber: Long) = readerAction { repository.processNotification(sequenceNumber) }
     fun deleteNotification(sequenceNumber: Long) = readerAction { repository.deleteNotification(sequenceNumber) }
@@ -1752,7 +1724,6 @@ private const val MinBackupPasswordCharacters = 10
 private const val MaxBackupPasswordCharacters = 128
 private const val MaxActivationInputCharacters = 4_096
 private const val CloudEnrichmentConcurrency = 4
-private const val ProfileDownloadNavigationTransitionDurationMillis = 500L
 
 internal fun shouldOpenCompatibilityWizard(
     settingsLoaded: Boolean,

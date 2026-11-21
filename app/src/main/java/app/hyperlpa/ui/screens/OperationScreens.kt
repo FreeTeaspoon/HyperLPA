@@ -201,7 +201,6 @@ fun ProfileDetailsScreen(
 ) {
     var showRename by remember { mutableStateOf(false) }
     var deleteStep by remember(profile?.iccid) { mutableStateOf<DeleteProfileStep?>(null) }
-    var pendingIconAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var showClearReminder by remember { mutableStateOf(false) }
     var showTags by remember { mutableStateOf(false) }
     var editableTags by remember(profile?.tags) { mutableStateOf(profile?.tags.orEmpty()) }
@@ -643,7 +642,6 @@ fun ProfileDetailsScreen(
 
     OverlayBottomSheet(
         show = showReminder,
-        onDismissFinished = { pendingIconAction?.also { pendingIconAction = null }?.invoke() },
         title = stringResource(R.string.profile_reminder_title_sheet),
         onDismissRequest = { showReminder = false },
     ) {
@@ -664,15 +662,19 @@ fun ProfileDetailsScreen(
                 stringResource(R.string.reminder_custom),
                 stringResource(R.string.reminder_custom_summary),
             ) {
-                pendingIconAction = { showCustomReminderDatePicker = true }
-                showReminder = false
+                if (showReminder) {
+                    showReminder = false
+                    showCustomReminderDatePicker = true
+                }
             }
             ReminderOption(
                 stringResource(R.string.reminder_clear),
                 profile?.reminderAt?.formatReminderDate() ?: stringResource(R.string.profile_no_reminder),
             ) {
-                pendingIconAction = { showClearReminder = true }
-                showReminder = false
+                if (showReminder) {
+                    showReminder = false
+                    showClearReminder = true
+                }
             }
             BottomSheetFooterSpacer()
         }
@@ -700,7 +702,6 @@ fun ProfileDetailsScreen(
 
     OverlayBottomSheet(
         show = showIconOptions,
-        onDismissFinished = { pendingIconAction?.also { pendingIconAction = null }?.invoke() },
         title = stringResource(R.string.profile_custom_icon),
         onDismissRequest = { showIconOptions = false },
     ) {
@@ -709,23 +710,26 @@ fun ProfileDetailsScreen(
                 stringResource(R.string.profile_icon_choose_profile),
                 stringResource(R.string.profile_icon_choose_profile_summary),
             ) {
-                pickForProvider = false
-                showIconOptions = false
-                pendingIconAction = { runCatching { pickIcon.launch("image/*") }
-                    .onFailure { showSnackbar(filePickerUnavailable, SnackbarDuration.Long) } }
+                if (showIconOptions) {
+                    pickForProvider = false
+                    showIconOptions = false
+                    runCatching { pickIcon.launch("image/*") }
+                        .onFailure { showSnackbar(filePickerUnavailable, SnackbarDuration.Long) }
+                }
             }
             if (canShareByProvider) {
                 ReminderOption(
                     stringResource(R.string.profile_icon_choose_provider, providerLabel),
                     stringResource(R.string.profile_icon_choose_provider_summary),
                 ) {
-                    pickForProvider = true
-                    showIconOptions = false
-                    pendingIconAction = { runCatching { pickIcon.launch("image/*") }
-                        .onFailure {
+                    if (showIconOptions) {
+                        pickForProvider = true
+                        showIconOptions = false
+                        runCatching { pickIcon.launch("image/*") }.onFailure {
                             pickForProvider = false
                             showSnackbar(filePickerUnavailable, SnackbarDuration.Long)
-                        } }
+                        }
+                    }
                 }
             }
             if (canShareByProvider && (hasProfileIcon || hasProviderIcon)) {
@@ -742,8 +746,10 @@ fun ProfileDetailsScreen(
                     stringResource(R.string.profile_icon_remove_profile),
                     stringResource(R.string.profile_icon_remove_profile_summary),
                 ) {
-                    pendingIconAction = { showRemoveProfileIconConfirmation = true }
-                    showIconOptions = false
+                    if (showIconOptions) {
+                        showIconOptions = false
+                        showRemoveProfileIconConfirmation = true
+                    }
                 }
             }
             if (hasProviderIcon && !hasProfileIcon && !isProviderIconHidden) {
@@ -751,8 +757,10 @@ fun ProfileDetailsScreen(
                     stringResource(R.string.profile_icon_remove_shared_profile),
                     stringResource(R.string.profile_icon_remove_shared_profile_summary),
                 ) {
-                    pendingIconAction = { showRemoveSharedProviderIconForProfileConfirmation = true }
-                    showIconOptions = false
+                    if (showIconOptions) {
+                        showIconOptions = false
+                        showRemoveSharedProviderIconForProfileConfirmation = true
+                    }
                 }
             }
             if (hasProviderIcon && isProviderIconHidden) {
@@ -769,8 +777,10 @@ fun ProfileDetailsScreen(
                     stringResource(R.string.profile_icon_remove_provider, providerLabel),
                     stringResource(R.string.profile_icon_remove_provider_summary),
                 ) {
-                    pendingIconAction = { showRemoveProviderIconConfirmation = true }
-                    showIconOptions = false
+                    if (showIconOptions) {
+                        showIconOptions = false
+                        showRemoveProviderIconConfirmation = true
+                    }
                 }
             }
             BottomSheetFooterSpacer()
@@ -2619,7 +2629,6 @@ fun LogsScreen(
 ) {
     val showSnackbar = LocalMiuixSnackbar.current
     var confirmExport by remember { mutableStateOf(false) }
-    var exportAfterExit by remember { mutableStateOf(false) }
     val logsExported = stringResource(R.string.logs_exported)
     val logsExportFailed = stringResource(R.string.logs_export_failed)
     val filePickerUnavailable = stringResource(R.string.common_file_picker_unavailable)
@@ -2693,15 +2702,15 @@ fun LogsScreen(
     }
     OverlayDialog(show = confirmExport, title = stringResource(R.string.logs_export_report),
         summary = stringResource(R.string.logs_support_included) + "\n" + stringResource(R.string.logs_support_excluded),
-        onDismissRequest = { confirmExport = false },
-        onDismissFinished = {
-            if (exportAfterExit) { exportAfterExit = false
-                runCatching { exportSupportReport.launch("hyperlpa-support-report.txt") }
-                    .onFailure { showSnackbar(filePickerUnavailable, SnackbarDuration.Long) }
-            }
-        }) {
+        onDismissRequest = { confirmExport = false }) {
         DialogActionRow(onCancel = { confirmExport = false }, confirmText = stringResource(R.string.common_save),
-            onConfirm = { exportAfterExit = true; confirmExport = false })
+            onConfirm = {
+                if (confirmExport) {
+                    confirmExport = false
+                    runCatching { exportSupportReport.launch("hyperlpa-support-report.txt") }
+                        .onFailure { showSnackbar(filePickerUnavailable, SnackbarDuration.Long) }
+                }
+            })
     }
 
 }

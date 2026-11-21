@@ -954,3 +954,128 @@ index 7fc164bf..596757b5 100644
              .windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Top))
              .pointerInput(Unit) {
                  detectTapGestures { /* Consume click */ }
+diff --git a/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/DialogContentLayout.kt b/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/DialogContentLayout.kt
+index 0bad8971..fed9b8c4 100644
+--- a/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/DialogContentLayout.kt
++++ b/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/layout/DialogContentLayout.kt
+@@ -7,6 +7,7 @@ import androidx.compose.animation.core.Animatable
+ import androidx.compose.animation.core.animate
+ import androidx.compose.animation.core.spring
+ import androidx.compose.animation.core.tween
++import androidx.compose.foundation.focusGroup
+ import androidx.compose.foundation.gestures.detectTapGestures
+ import androidx.compose.foundation.layout.Box
+ import androidx.compose.foundation.layout.Column
+@@ -18,7 +19,6 @@ import androidx.compose.foundation.layout.displayCutout
+ import androidx.compose.foundation.layout.fillMaxSize
+ import androidx.compose.foundation.layout.fillMaxWidth
+ import androidx.compose.foundation.layout.heightIn
+-import androidx.compose.foundation.layout.ime
+ import androidx.compose.foundation.layout.imePadding
+ import androidx.compose.foundation.layout.navigationBars
+ import androidx.compose.foundation.layout.navigationBarsPadding
+@@ -38,16 +38,18 @@ import androidx.compose.runtime.mutableStateOf
+ import androidx.compose.runtime.remember
+ import androidx.compose.runtime.rememberCoroutineScope
+ import androidx.compose.runtime.rememberUpdatedState
++import androidx.compose.runtime.setValue
+ import androidx.compose.runtime.snapshotFlow
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.draw.drawBehind
++import androidx.compose.ui.focus.onFocusChanged
+ import androidx.compose.ui.graphics.Color
+ import androidx.compose.ui.graphics.graphicsLayer
+ import androidx.compose.ui.input.pointer.pointerInput
+ import androidx.compose.ui.layout.onGloballyPositioned
+ import androidx.compose.ui.platform.LocalDensity
+-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
++import androidx.compose.ui.platform.LocalFocusManager
+ import androidx.compose.ui.platform.LocalWindowInfo
+ import androidx.compose.ui.semantics.onClick
+ import androidx.compose.ui.semantics.semantics
+@@ -131,9 +133,6 @@ internal fun DialogContentLayout(
+     val currentOnDismissFinished by rememberUpdatedState(onDismissFinished)
+     val internalVisible = remember { mutableStateOf(false) }
+ 
+-    val density = LocalDensity.current
+-    val imeInsets = WindowInsets.ime
+-    val keyboardController = LocalSoftwareKeyboardController.current
+     val isLargeScreen = largeScreen ?: DialogDefaults.isLargeScreen()
+ 
+     LaunchedEffect(show) {
+@@ -155,9 +154,6 @@ internal fun DialogContentLayout(
+             )
+         } else {
+             if (!internalVisible.value) return@LaunchedEffect
+-            if (imeInsets.getBottom(density) > 0) {
+-                keyboardController?.hide()
+-            }
+             if (enableWindowDim) {
+                 launch { dimProgress.animateTo(0f, tween(250, easing = DecelerateEasing(1.5f))) }
+             }
+@@ -213,6 +209,11 @@ internal fun DialogContentLayout(
+     }
+ 
+     popupHost(internalVisible.value) {
++        var hasFocus by remember { mutableStateOf(false) }
++        val focusManager = LocalFocusManager.current
++        LaunchedEffect(show) {
++            if (!show && hasFocus) focusManager.clearFocus()
++        }
+         val navigationEventState = rememberNavigationEventState(currentInfo = NavigationEventInfo.None)
+         NavigationBackHandler(
+             state = navigationEventState,
+@@ -263,6 +264,8 @@ internal fun DialogContentLayout(
+                     alpha = 1f
+                 }
+             }
++            .onFocusChanged { hasFocus = it.hasFocus }
++            .focusGroup()
+             .then(modifier)
+ 
+         DialogContent(
+diff --git a/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/MiuixPopupUtils.kt b/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/MiuixPopupUtils.kt
+index 6827c5f3..b866e842 100644
+--- a/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/MiuixPopupUtils.kt
++++ b/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/utils/MiuixPopupUtils.kt
+@@ -17,9 +17,7 @@ import androidx.compose.animation.slideInVertically
+ import androidx.compose.animation.slideOutVertically
+ import androidx.compose.foundation.background
+ import androidx.compose.foundation.layout.Box
+-import androidx.compose.foundation.layout.WindowInsets
+ import androidx.compose.foundation.layout.fillMaxSize
+-import androidx.compose.foundation.layout.ime
+ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.DisposableEffect
+ import androidx.compose.runtime.LaunchedEffect
+@@ -38,8 +36,6 @@ import androidx.compose.ui.ExperimentalComposeUiApi
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.draw.drawBehind
+ import androidx.compose.ui.input.pointer.pointerInput
+-import androidx.compose.ui.platform.LocalDensity
+-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+ import androidx.compose.ui.platform.LocalWindowInfo
+ import androidx.compose.ui.unit.dp
+ import androidx.compose.ui.zIndex
+@@ -316,10 +312,6 @@ class MiuixPopupUtils {
+             val visibleState = remember { MutableTransitionState(false) }
+             var pendingOpen by remember { mutableStateOf(false) }
+             var lastTarget by remember { mutableStateOf(false) }
+-            val keyboardController = LocalSoftwareKeyboardController.current
+-            val density = LocalDensity.current
+-            val imeInsets = WindowInsets.ime
+-
+             LaunchedEffect(dialogState.showState.value) {
+                 val newTarget = dialogState.showState.value
+                 if (newTarget) {
+@@ -329,9 +321,6 @@ class MiuixPopupUtils {
+                         visibleState.targetState = true
+                     }
+                 } else {
+-                    if (imeInsets.getBottom(density) > 0) {
+-                        keyboardController?.hide()
+-                    }
+                     pendingOpen = false
+                     visibleState.targetState = false
+                 }

@@ -496,7 +496,6 @@ private fun ProfileActionsOverlay(
 ) {
     var showHomeRename by remember { mutableStateOf(false) }
     var renameProfile by remember { mutableStateOf<ProfileInfo?>(null) }
-    var pendingRenameProfile by remember { mutableStateOf<ProfileInfo?>(null) }
     var isClosing by remember { mutableStateOf(false) }
     val profile = profileState.value
 
@@ -509,11 +508,8 @@ private fun ProfileActionsOverlay(
         title = stringResource(R.string.profile_actions_title),
         onDismissRequest = { isClosing = true },
         onDismissFinished = {
-            val nextRenameProfile = pendingRenameProfile
-            pendingRenameProfile = null
             profileState.value = null
             isClosing = false
-            if (nextRenameProfile != null) { renameProfile = nextRenameProfile; showHomeRename = true }
         },
     ) {
         profile?.let { selectedProfile ->
@@ -543,8 +539,11 @@ private fun ProfileActionsOverlay(
                     title = stringResource(R.string.profile_rename),
                     summary = stringResource(R.string.profile_rename_summary),
                     onClick = {
-                        pendingRenameProfile = selectedProfile
-                        isClosing = true
+                        if (!isClosing) {
+                            renameProfile = selectedProfile
+                            isClosing = true
+                            showHomeRename = true
+                        }
                     },
                 )
                 ArrowPreference(
@@ -1175,14 +1174,14 @@ fun NotificationsScreen(
     val profilesByIccid = remember(state.profiles) {
         state.profiles.associateBy(ProfileInfo::iccid)
     }
-    var selectedNotification by remember { mutableStateOf<LpaNotification?>(null) }
+    var actionNotification by remember { mutableStateOf<LpaNotification?>(null) }
+    var detailNotification by remember { mutableStateOf<LpaNotification?>(null) }
     var showNotificationDetails by remember { mutableStateOf(false) }
     var showNotificationActions by remember { mutableStateOf(false) }
-    var openDetailsAfterActions by remember { mutableStateOf(false) }
-    var confirmDeleteAfterActions by remember { mutableStateOf(false) }
     var deleteNotification by remember { mutableStateOf<LpaNotification?>(null) }
+    var showDeleteNotification by remember { mutableStateOf(false) }
     val openActions: (LpaNotification) -> Unit = { notification ->
-        selectedNotification = notification
+        actionNotification = notification
         showNotificationActions = true
     }
     val isRefreshing = refreshPending
@@ -1245,38 +1244,35 @@ fun NotificationsScreen(
         }
     }
 
-    selectedNotification?.let { notification ->
-        val profile = profilesByIccid[notification.iccid]
+    actionNotification?.let { notification ->
         NotificationActionsSheet(
             show = showNotificationActions,
             onSend = {
-                showNotificationActions = false
-                onProcess(notification.sequenceNumber)
-            },
-            onViewDetails = {
-                openDetailsAfterActions = true
-                showNotificationActions = false
-            },
-            onDelete = {
-                confirmDeleteAfterActions = true
-                showNotificationActions = false
-            },
-            onDismissRequest = { showNotificationActions = false },
-            onDismissFinished = {
-                when {
-                    openDetailsAfterActions -> {
-                        openDetailsAfterActions = false
-                        showNotificationDetails = true
-                    }
-                    confirmDeleteAfterActions -> {
-                        confirmDeleteAfterActions = false
-                        deleteNotification = notification
-                        selectedNotification = null
-                    }
-                    else -> selectedNotification = null
+                if (showNotificationActions) {
+                    detailNotification = notification
+                    showNotificationActions = false
+                    onProcess(notification.sequenceNumber)
                 }
             },
+            onViewDetails = {
+                if (showNotificationActions) {
+                    showNotificationActions = false
+                    showNotificationDetails = true
+                }
+            },
+            onDelete = {
+                if (showNotificationActions) {
+                    deleteNotification = notification
+                    showNotificationActions = false
+                    showDeleteNotification = true
+                }
+            },
+            onDismissRequest = { showNotificationActions = false },
+            onDismissFinished = { if (!showNotificationActions) actionNotification = null },
         )
+    }
+    detailNotification?.let { notification ->
+        val profile = profilesByIccid[notification.iccid]
         NotificationDetailsSheet(
             notification = notification,
             profile = profile,
@@ -1291,23 +1287,26 @@ fun NotificationsScreen(
             iccid = notification.iccid,
             show = showNotificationDetails,
             onDismissRequest = { showNotificationDetails = false },
-            onDismissFinished = { selectedNotification = null },
+            onDismissFinished = { if (!showNotificationDetails) detailNotification = null },
         )
     }
 
     OverlayDialog(
-        show = deleteNotification != null,
+        show = showDeleteNotification,
         title = stringResource(R.string.notifications_delete_title),
         summary = stringResource(R.string.notifications_delete_summary),
-        onDismissRequest = { deleteNotification = null },
+        onDismissRequest = { showDeleteNotification = false },
+        onDismissFinished = { if (!showDeleteNotification) deleteNotification = null },
     ) {
         DialogActionRow(
-            onCancel = { deleteNotification = null },
+            onCancel = { showDeleteNotification = false },
             confirmText = stringResource(R.string.notifications_option_delete),
             destructive = true,
             onConfirm = {
-                deleteNotification?.let { onDelete(it.sequenceNumber) }
-                deleteNotification = null
+                if (showDeleteNotification) {
+                    showDeleteNotification = false
+                    deleteNotification?.let { onDelete(it.sequenceNumber) }
+                }
             },
         )
     }
@@ -1362,13 +1361,12 @@ fun NotificationHistoryScreen(
     var clearHistoryRequested by remember { mutableStateOf(false) }
     var historyRefreshing by remember { mutableStateOf(false) }
     var clearingHistory by remember { mutableStateOf(false) }
-    var clearHistoryAfterExit by remember { mutableStateOf(false) }
     var historyPopupLocked by remember { mutableStateOf(false) }
     val historyScope = rememberCoroutineScope()
-    var selectedHistoryEntry by remember { mutableStateOf<NotificationHistoryEntry?>(null) }
+    var actionHistoryEntry by remember { mutableStateOf<NotificationHistoryEntry?>(null) }
+    var detailHistoryEntry by remember { mutableStateOf<NotificationHistoryEntry?>(null) }
     var showHistoryDetails by remember { mutableStateOf(false) }
     var showHistoryActions by remember { mutableStateOf(false) }
-    var openDetailsAfterActions by remember { mutableStateOf(false) }
     var deleteHistoryEntry by remember { mutableStateOf<NotificationHistoryEntry?>(null) }
     var showDeleteConfirmation by remember { mutableStateOf(false) }
     val historyItems = remember(state.notificationHistory) {
@@ -1387,7 +1385,7 @@ fun NotificationHistoryScreen(
         },
         actions = {
             if (state.notificationHistory.isNotEmpty() && state.lpa.selectedReader?.kind != ReaderKind.REMOTE) {
-                IconButton(onClick = { clearHistoryRequested = true }) {
+                IconButton(enabled = !clearingHistory && !historyPopupLocked, onClick = { clearHistoryRequested = true }) {
                     Icon(MiuixIcons.Glass.Delete, contentDescription = stringResource(R.string.history_clear_local))
                 }
             }
@@ -1408,11 +1406,11 @@ fun NotificationHistoryScreen(
                 NotificationHistoryCard(
                     entry = entry,
                     onClick = {
-                        selectedHistoryEntry = entry
+                        detailHistoryEntry = entry
                         showHistoryDetails = true
                     },
                     onLongPress = {
-                        selectedHistoryEntry = entry
+                        actionHistoryEntry = entry
                         showHistoryActions = true
                     },
                 )
@@ -1422,54 +1420,52 @@ fun NotificationHistoryScreen(
     }
 
     OverlayDialog(show = clearHistoryRequested, title = stringResource(R.string.history_clear_local),
-        summary = stringResource(R.string.history_clear_local_summary), onDismissRequest = { clearHistoryRequested = false },
-        onDismissFinished = {
-            if (clearHistoryAfterExit) {
-                clearHistoryAfterExit = false
-                clearingHistory = true
-                onClearLocalHistory { clearingHistory = false }
-            }
-        }) {
+        summary = stringResource(R.string.history_clear_local_summary), onDismissRequest = { clearHistoryRequested = false }) {
         DialogActionRow(onCancel = { clearHistoryRequested = false }, confirmText = stringResource(R.string.common_clear),
             destructive = true, onConfirm = {
-                clearHistoryAfterExit = true
-                clearHistoryRequested = false
+                if (clearHistoryRequested) {
+                    clearHistoryRequested = false
+                    clearingHistory = true
+                    onClearLocalHistory { clearingHistory = false }
+                }
             })
     }
     app.hyperlpa.ui.components.CompactProgressDialog(stringResource(R.string.history_clear_local).takeIf { clearingHistory }) { historyPopupLocked = it }
 
-    selectedHistoryEntry?.let { entry ->
+    detailHistoryEntry?.let { entry ->
         NotificationHistoryDetailsSheet(
             entry = entry,
             show = showHistoryDetails,
             onDismissRequest = { showHistoryDetails = false },
-            onDismissFinished = { selectedHistoryEntry = null },
+            onDismissFinished = { if (!showHistoryDetails) detailHistoryEntry = null },
         )
+    }
+    actionHistoryEntry?.let { entry ->
         NotificationHistoryActionsSheet(
             entry = entry,
             show = showHistoryActions,
             onViewDetails = {
-                openDetailsAfterActions = true
-                showHistoryActions = false
-            },
-            onResend = {
-                showHistoryActions = false
-                onResendNotification(entry)
-            },
-            onDelete = {
-                deleteHistoryEntry = entry
-                showHistoryActions = false
-            },
-            onDismissRequest = { showHistoryActions = false },
-            onDismissFinished = {
-                if (deleteHistoryEntry != null) {
-                    showDeleteConfirmation = true
-                }
-                if (openDetailsAfterActions) {
-                    openDetailsAfterActions = false
+                if (showHistoryActions) {
+                    detailHistoryEntry = entry
+                    showHistoryActions = false
                     showHistoryDetails = true
                 }
             },
+            onResend = {
+                if (showHistoryActions) {
+                    showHistoryActions = false
+                    onResendNotification(entry)
+                }
+            },
+            onDelete = {
+                if (showHistoryActions) {
+                    deleteHistoryEntry = entry
+                    showHistoryActions = false
+                    showDeleteConfirmation = true
+                }
+            },
+            onDismissRequest = { showHistoryActions = false },
+            onDismissFinished = { if (!showHistoryActions) actionHistoryEntry = null },
         )
     }
 
@@ -1477,23 +1473,18 @@ fun NotificationHistoryScreen(
         show = showDeleteConfirmation,
         title = stringResource(R.string.notification_history_delete_title),
         summary = stringResource(R.string.notification_history_delete_summary),
-        onDismissRequest = {
-            showDeleteConfirmation = false
-            deleteHistoryEntry = null
-        },
+        onDismissRequest = { showDeleteConfirmation = false },
+        onDismissFinished = { if (!showDeleteConfirmation) deleteHistoryEntry = null },
     ) {
         DialogActionRow(
-            onCancel = {
-                showDeleteConfirmation = false
-                deleteHistoryEntry = null
-            },
+            onCancel = { showDeleteConfirmation = false },
             confirmText = stringResource(R.string.notification_history_delete_action),
             destructive = true,
             onConfirm = {
-                deleteHistoryEntry?.let(onDeleteHistoryEntry)
-                showDeleteConfirmation = false
-                deleteHistoryEntry = null
-                selectedHistoryEntry = null
+                if (showDeleteConfirmation) {
+                    showDeleteConfirmation = false
+                    deleteHistoryEntry?.let(onDeleteHistoryEntry)
+                }
             },
         )
     }

@@ -90,7 +90,6 @@ internal fun PhoneNotificationInboxScreen(
     val codeLabel = stringResource(R.string.phone_notifications_code_label)
     var deleteTarget by remember { mutableStateOf<Pair<String, PhoneNotificationEntry>?>(null) }
     var deleteRequested by remember { mutableStateOf(false) }
-    var deleteAfterExit by remember { mutableStateOf(false) }
     val refreshState = rememberPullToRefreshState()
     PullToRefresh(
         isRefreshing = refreshing || visibleViews.values.any { it.refreshing },
@@ -179,17 +178,18 @@ internal fun PhoneNotificationInboxScreen(
         title = stringResource(R.string.phone_inbox_delete_title),
         summary = stringResource(R.string.phone_inbox_delete_summary),
         onDismissRequest = { deleteRequested = false },
-        onDismissFinished = {
-            if (deleteAfterExit) deleteTarget?.let { (id, entry) -> onDelete(id, entry) }
-            deleteAfterExit = false
-            deleteTarget = null
-        },
+        onDismissFinished = { if (!deleteRequested) deleteTarget = null },
     ) {
         DialogActionRow(
             onCancel = { deleteRequested = false },
             confirmText = stringResource(R.string.common_delete),
             destructive = true,
-            onConfirm = { deleteAfterExit = true; deleteRequested = false },
+            onConfirm = {
+                if (deleteRequested) {
+                    deleteRequested = false
+                    deleteTarget?.let { (id, entry) -> onDelete(id, entry) }
+                }
+            },
         )
     }
 

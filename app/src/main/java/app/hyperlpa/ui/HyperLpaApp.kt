@@ -1,8 +1,6 @@
 package app.hyperlpa.ui
 
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animate
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -38,7 +36,6 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.snapshotFlow
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -111,7 +108,7 @@ import app.hyperlpa.ui.screens.ToolsScreen
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Badge
@@ -147,6 +144,7 @@ import top.yukonga.miuix.kmp.icon.glass.Timer
 import top.yukonga.miuix.kmp.icon.glass.Download
 import top.yukonga.miuix.kmp.icon.glass.ChevronBackward
 import top.yukonga.miuix.kmp.nav.core.NavBackStack
+import top.yukonga.miuix.kmp.nav.core.LocalNavTransitionScope
 import top.yukonga.miuix.kmp.nav.core.NavCornerClipMode
 import top.yukonga.miuix.kmp.nav.core.NavDisplay
 import top.yukonga.miuix.kmp.nav.core.NavDisplayEffects
@@ -215,19 +213,6 @@ fun HyperLpaApp(
         }
     }
 
-    LaunchedEffect(viewModel) {
-        snapshotFlow { viewModel.firstRunHandoffPending }.filter { it }.collect {
-            try {
-                // A Compose animation, unlike delay(), follows the system animation scale as the push does.
-                animate(0f, 1f, animationSpec = tween(FirstRunHandoffMillis)) { _, _ -> }
-                viewModel.completeFirstRunHandoff()
-                repeat(3) { withFrameNanos { } }
-            } finally {
-                viewModel.endInstantNavigation()
-            }
-        }
-    }
-
     val finishedPage = rememberAppBackdrop()
     CompositionLocalProvider(LocalMiuixSnackbar provides showSnackbar, LocalDialogBackdrop provides finishedPage) {
         Scaffold(
@@ -261,6 +246,14 @@ fun HyperLpaApp(
                 ),
                 ) {
                 entry<AppRoute.Shell>(swipeDismiss = swipeBackDirection) {
+                    when {
+                        viewModel.firstRunHandoffPending -> OnNavEntrySettled(AppRoute.FirstRunSetup) {
+                            viewModel.completeFirstRunHandoff()
+                        }
+                        viewModel.instantNavigation -> OnNavEntrySettled(AppRoute.Shell) {
+                            viewModel.endInstantNavigation()
+                        }
+                    }
                     Os4MenuHost(active = backStack.lastOrNull() == AppRoute.Shell) {
                         MainShell(
                             state = currentState.value,
@@ -406,6 +399,12 @@ fun HyperLpaApp(
                 transition = NavTransitions.MiuixDefault,
                 swipeDismiss = NavSwipeDirection.None,
             ) { route ->
+                val resultIndex = backStack.lastIndex
+                if (backStack.getOrNull(resultIndex) == route) {
+                    OnNavEntrySettled(backStack.getOrNull(resultIndex - 1)) {
+                        viewModel.onProfileDownloadResultSettled(route)
+                    }
+                }
                 val result = route.result
                 val profile = currentState.value.profiles
                     .firstOrNull { it.iccid == result.profile.iccid }
@@ -423,17 +422,22 @@ fun HyperLpaApp(
                 )
             }
             entry<AppRoute.ProfileDownloadHistorySlot>(
-                transition = NavTransitions.None,
+                transition = InstantNavTransition,
                 swipeDismiss = NavSwipeDirection.None,
-            ) {
-                MainShell(
-                    state = currentState.value,
-                    viewModel = viewModel,
-                    bluetoothReaderState = currentBluetoothReaderState.value,
-                    onResolveReaderAccess = { currentOnResolveReaderAccess.value() },
-                    snackbarHostState = snackbarHostState,
-                    rootTabBack = rootTabBack,
-                )
+            ) { route ->
+                if (backStack.lastOrNull() == route) {
+                    OnNavEntrySettled(route) { viewModel.onProfileDownloadHistorySettled(route) }
+                }
+                Os4MenuHost(active = false) {
+                    MainShell(
+                        state = currentState.value,
+                        viewModel = viewModel,
+                        bluetoothReaderState = currentBluetoothReaderState.value,
+                        onResolveReaderAccess = { currentOnResolveReaderAccess.value() },
+                        snackbarHostState = snackbarHostState,
+                        rootTabBack = rootTabBack,
+                    )
+                }
             }
             entry<AppRoute.BatchDownload>(swipeDismiss = swipeBackDirection) {
                 val batchState by viewModel.batchDownloadState.collectAsStateWithLifecycle()
@@ -1050,8 +1054,15 @@ private fun MainTabPage(
     }
 }
 
-// Longer than the 500 ms Miuix push, so the shell has settled before first run is removed below it.
-private const val FirstRunHandoffMillis = 600
+@Composable
+internal fun OnNavEntrySettled(key: Any?, onSettled: () -> Unit) {
+    val motion = LocalNavTransitionScope.current
+    val currentOnSettled by rememberUpdatedState(onSettled)
+    LaunchedEffect(motion, key) {
+        snapshotFlow { !motion.isRunning && motion.relativeDepth == 0f }.first { it }
+        currentOnSettled()
+    }
+}
 
 // No motion, no dim and a zero-length settle, so a stack correction never shows as a transition.
 private val InstantNavTransition = navGraphicsTransition(
