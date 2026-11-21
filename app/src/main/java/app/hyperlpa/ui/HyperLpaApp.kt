@@ -250,6 +250,7 @@ fun HyperLpaApp(
                 backStack = backStack,
                 onBack = { viewModel.navigateBack(navigationOwner) },
                 transition = if (viewModel.instantNavigation) InstantNavTransition else NavTransitions.MiuixDefault,
+                enablePredictiveBack = state.settings.predictiveBack,
                 effects = NavDisplayEffects(
                     enableCornerClip = true,
                     cornerClipRadius = navCornerRadius,

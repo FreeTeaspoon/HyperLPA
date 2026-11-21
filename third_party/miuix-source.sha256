@@ -873,7 +873,7 @@ bb83d44365df0cf963fe44b0372c11d5c51cd9329b7b0145b38120ea90edef5c  miuix-nav/src/
 af79c44044a8924a48e3bcb553e25361aca12050903298177b6f74da09741e27  miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/LocalNavTransitionScope.kt
 4f7ca1bd3df0a202dae1c6d1fbe11f8cc570b8ff4d943cf3421717f9b4b7a4bd  miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavBackStack.kt
 5de78bde72e4661b2fc155ca5c9e1b9d513a4ca4c721625224f966586f65476a  miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavController.kt
-c4cc60644aa17d925516713067a59c9a4acc1596a41105243e6144834c0e995c  miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt
+a7118dbda0a65f740cc67752676b56c76f2914a7b537bb4a0ad64ae25477d819  miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt
 070f4c488dd15eae46aa2186ee53de9a8c48b7cd2e316d152f5102a18530f6ac  miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplayEffects.kt
 b810ff02d6691d2ac6295ebfc2e50410bf15c54ec14f71e42649185d9a5cdee3  miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavEntry.kt
 de94a5378c33b2f539c4892c6109f4ab5e3ba6fa9961b6747bff361abe243241  miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavKey.kt
@@ -881,7 +881,7 @@ de94a5378c33b2f539c4892c6109f4ab5e3ba6fa9961b6747bff361abe243241  miuix-nav/src/
 6782eb2c7e459e5398ab9e54f1432b8da71389453b29d4231c5db66478e34c7a  miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavPredictiveBackDriver.kt
 aa2f81ba5a7b33105347a1c61ef22b75d31a4eeceddb265fc8405ff2dd0116ec  miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeArbitrator.kt
 d3faf0664e0ba6a37815650182ae7c0314fdf70b5b01d6fdc23cec05176d51be  miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeDismiss.kt
-77c5f24d5144b8dbd32d1b4102e3cfb15e74d15f222c55c6834b15b525f87e45  miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/PredictiveBackHandler.kt
+9cf1243d72b6b7ffc1ab748087d85c901c51bdef2e5495751d17f4e6aa502f6c  miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/PredictiveBackHandler.kt
 ee20df84ac39293bc1f6f41c0f2dde808a85bcd59cc9ab900f6ef1d550cbdefd  miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/WindowNavigationEventBridge.kt
 2c6141d76ba514c975ab6e208c0ca27c8920426ba9408f3db4ae54402812cfdf  miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/runtime/NavChange.kt
 7bf819a442c30d01ae3b7f1a01ff1274e489328ed6f2d99893c7f806bbc6dabf  miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/runtime/NavDriver.kt

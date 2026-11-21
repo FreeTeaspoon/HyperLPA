@@ -193,12 +193,17 @@ class StartupTest {
 
     @Test
     fun savedPredictiveBackDrawsWithoutStartupRecreation() {
-        checkStartup(predictiveBack = true, cachedPredictiveBack = false)
+        checkStartup(predictiveBack = true)
     }
 
     @Test
     fun disabledPredictiveBackDrawsAfterActivityRecreation() {
         checkStartup(predictiveBack = false, recreate = true)
+    }
+
+    @Test
+    fun togglingPredictiveBackKeepsTheAppearanceActivity() {
+        checkStartup(predictiveBack = false, togglePredictiveBack = true)
     }
 
     private suspend fun awaitFirstRunHandoff(viewModel: HyperLpaViewModel) {
@@ -254,12 +259,11 @@ class StartupTest {
     private fun checkStartup(
         predictiveBack: Boolean,
         recreate: Boolean = false,
-        cachedPredictiveBack: Boolean = predictiveBack,
+        togglePredictiveBack: Boolean = false,
     ) {
         val application = ApplicationProvider.getApplicationContext<HyperLpaApplication>()
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val originalSettings = runBlocking { application.settingsStore.settings.first() }
-        val originalRuntimeFlag = application.isPredictiveBackEnabled()
         val created = AtomicInteger()
         val callbacks = object : Application.ActivityLifecycleCallbacks {
             override fun onActivityCreated(activity: Activity, state: Bundle?) {
@@ -278,18 +282,30 @@ class StartupTest {
             // LiquidNavigationBarTest covers the hardware-rendered glass first draw separately.
             runBlocking { application.settingsStore.setBlurEnabled(false) }
             runBlocking { application.settingsStore.setPredictiveBack(predictiveBack) }
+            if (togglePredictiveBack) {
+                runBlocking { application.settingsStore.setCompatibilityWizardCompleted(true) }
+            }
             instrumentation.runOnMainSync {
-                // A previous process can leave this cache behind the saved preference.
-                application.setPredictiveBackEnabled(cachedPredictiveBack)
                 application.registerActivityLifecycleCallbacks(callbacks)
             }
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-                assertDraws(scenario)
+                val viewModel = assertDraws(scenario, predictiveBack)
                 assertEquals("Saved settings must not cause a startup recreation", 1, created.get())
-                assertEquals(predictiveBack, application.isPredictiveBackEnabled())
+                if (togglePredictiveBack) {
+                    scenario.onActivity { viewModel.navigate(AppRoute.AppearanceSettings) }
+                    for (enabled in listOf(true, false)) {
+                        scenario.onActivity { viewModel.setPredictiveBack(enabled) }
+                        assertDraws(scenario, enabled)
+                        instrumentation.waitForIdleSync()
+                        scenario.onActivity {
+                            assertEquals(1, created.get())
+                            assertEquals(AppRoute.AppearanceSettings, viewModel.navigationBackStack.last())
+                        }
+                    }
+                }
                 if (recreate) {
                     scenario.recreate()
-                    assertDraws(scenario)
+                    assertDraws(scenario, predictiveBack)
                     assertEquals(2, created.get())
                 }
             }
@@ -298,21 +314,26 @@ class StartupTest {
             runBlocking {
                 application.settingsStore.setPredictiveBack(originalSettings.predictiveBack)
                 application.settingsStore.setBlurEnabled(originalSettings.blurEnabled)
-            }
-            instrumentation.runOnMainSync {
-                application.setPredictiveBackEnabled(originalRuntimeFlag)
+                if (togglePredictiveBack) {
+                    application.settingsStore.setCompatibilityWizardCompleted(originalSettings.compatibilityWizardCompleted)
+                }
             }
         }
     }
 
-    private fun assertDraws(scenario: ActivityScenario<MainActivity>) {
+    private fun assertDraws(
+        scenario: ActivityScenario<MainActivity>,
+        predictiveBack: Boolean,
+    ): HyperLpaViewModel {
         lateinit var viewModel: HyperLpaViewModel
         scenario.onActivity { activity ->
             viewModel = ViewModelProvider(activity)[HyperLpaViewModel::class.java]
         }
         // A background-only draw must not count as a successful startup.
         runBlocking {
-            withTimeout(10_000) { viewModel.state.first { it.initialDataLoaded } }
+            withTimeout(10_000) {
+                viewModel.state.first { it.initialDataLoaded && it.settings.predictiveBack == predictiveBack }
+            }
         }
         val drawn = CountDownLatch(1)
         scenario.onActivity { activity ->
@@ -327,5 +348,6 @@ class StartupTest {
             content.invalidate()
         }
         assertTrue("The splash must release and allow app content to draw", drawn.await(10, TimeUnit.SECONDS))
+        return viewModel
     }
 }

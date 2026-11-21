@@ -569,10 +569,18 @@ index f218f9d2..b1b5498d 100644
      )
 
 diff --git a/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt b/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt
-index c6f6c28f..2ae0ed06 100644
+index c6f6c28f..71694905 100644
 --- a/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt
 +++ b/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/core/NavDisplay.kt
-@@ -463,6 +463,26 @@ private fun NavDisplayLayout(
+@@ -336,6 +336,7 @@ private fun NavDisplayLayout(
+     onBack: () -> Unit,
+     transition: NavTransition,
+     effects: NavDisplayEffects,
++    enablePredictiveBack: Boolean,
+     modifier: Modifier = Modifier,
+ ) {
+     val presentation = rememberNavPresentation(backStack.lastIndex)
+@@ -463,6 +464,26 @@ private fun NavDisplayLayout(
      // an older delayed terminal callback making a newer active session appear idle.
      val predictiveBackOwnership = remember { PredictiveBackOwnership() }
      val predictiveBackSessions = remember { mutableMapOf<Long, PredictiveBackSession>() }
@@ -599,7 +607,15 @@ index c6f6c28f..2ae0ed06 100644
      val cancelPredictiveBack: (Long) -> Unit = cancel@{ sessionId ->
          val session = predictiveBackSessions.remove(sessionId) ?: return@cancel
          // A delayed terminal callback from an older session must not settle or release the
-@@ -526,7 +546,7 @@ private fun NavDisplayLayout(
+@@ -482,6 +503,7 @@ private fun NavDisplayLayout(
+     }
+     PredictiveBackHandlerWithSessions(
+         enabled = backStack.size > 1,
++        progressEnabled = enablePredictiveBack,
+         onProgress = { sessionId, events ->
+             val session = PredictiveBackSession(ownershipLease = predictiveBackOwnership.acquire())
+             predictiveBackSessions[sessionId] = session
+@@ -526,7 +548,7 @@ private fun NavDisplayLayout(
              if (sessionId == null) {
                  // A bare completion (Desktop ESC / programmatic back) is discrete and must commit
                  // regardless of any pointer-dismiss gesture currently stored in presentation.
@@ -608,7 +624,7 @@ index c6f6c28f..2ae0ed06 100644
                  return@commit
              }
              val session = predictiveBackSessions[sessionId] ?: return@commit
-@@ -546,7 +566,7 @@ private fun NavDisplayLayout(
+@@ -546,7 +568,7 @@ private fun NavDisplayLayout(
                  // gesture left the float mid-flight. The gesture context stays frozen through the
                  // settle and is cleared when the leaving entry unloads.
                  try {
@@ -617,7 +633,7 @@ index c6f6c28f..2ae0ed06 100644
                  } finally {
                      predictiveBackOwnership.release(session.ownershipLease)
                  }
-@@ -635,7 +655,7 @@ private fun NavDisplayLayout(
+@@ -635,7 +657,7 @@ private fun NavDisplayLayout(
                  motion = topMotion,
                  settleSink = presentation,
                  externalGestureOwnership = { predictiveBackOwnership.generation },
@@ -626,10 +642,10 @@ index c6f6c28f..2ae0ed06 100644
                  onCancel = {},
                  onGesture = { presentation.gesture = it },
              ),
-@@ -686,10 +706,9 @@ private fun NavDisplayLayout(
+@@ -686,10 +708,9 @@ private fun NavDisplayLayout(
              }
          }
-
+ 
 -        // Highest visible layer; the fullscreen dim scrim renders just beneath it.
 -        val topMostVisibleIndex = visibleEntries.fold(-1) { acc, e ->
 -            maxOf(acc, indexByContentKey[e.contentKey] ?: -1)
@@ -637,18 +653,91 @@ index c6f6c28f..2ae0ed06 100644
 +        // A leaving entry and its replacement may share an index. Only the last
 +        // visible entry in draw order owns the fullscreen dim, by identity.
 +        val scrimOwner = visibleEntries.lastOrNull()
-
+ 
          visibleEntries.fastForEach { entry ->
              key(entry.contentKey) {
-@@ -713,7 +732,7 @@ private fun NavDisplayLayout(
+@@ -713,7 +734,7 @@ private fun NavDisplayLayout(
                      val upperEntry = presentation.presented.firstOrNull { indexByContentKey[it.contentKey] == entryIndex + 1 }
                      val upperTransition = upperEntry?.transitionOrNull() ?: transition
-
+ 
 -                    if (effects.dimAmount > 0f && entryIndex == topMostVisibleIndex && entryIndex > 0) {
 +                    if (effects.dimAmount > 0f && entry === scrimOwner && entryIndex > 0) {
                          // Fullscreen dim scrim UNDER the top-most visible layer (reference shell
                          // behavior): it must cover the entering page AND the backdrop revealed
                          // around it when a card-style transition scales layers down — a scrim
+@@ -968,6 +989,8 @@ private fun NavEntryHost(
+  * @param onBack callback for a system/predictive back; defaults to popping the last entry.
+  * @param transition the global default [NavTransition]; per-route overrides win.
+  * @param effects orthogonal visual effects (corner clip / dim / input blocking).
++ * @param enablePredictiveBack whether the route follows system Back gesture progress.
++ *   When disabled, completing Back still pops the route through its normal transition.
+  * @param content the route-registration DSL block.
+  */
+ @Composable
+@@ -977,6 +1000,7 @@ fun NavDisplay(
+     onBack: () -> Unit = { backStack.removeLastOrNull() },
+     transition: NavTransition = NavTransitions.MiuixDefault,
+     effects: NavDisplayEffects = NavDisplayEffects(),
++    enablePredictiveBack: Boolean = true,
+     content: NavEntryBuilder.() -> Unit,
+ ) {
+     val provider = remember(content) { entryProvider(content) }
+@@ -987,6 +1011,7 @@ fun NavDisplay(
+         onBack = onBack,
+         transition = transition,
+         effects = effects,
++        enablePredictiveBack = enablePredictiveBack,
+     )
+ }
+ 
+@@ -998,6 +1023,7 @@ fun NavDisplay(
+  * @param onBack callback for a system/predictive back; defaults to [NavController.pop].
+  * @param transition the global default [NavTransition]; per-route overrides win.
+  * @param effects orthogonal visual effects.
++ * @param enablePredictiveBack whether the route follows system Back gesture progress.
+  * @param content the route-registration DSL block.
+  */
+ @Composable
+@@ -1008,6 +1034,7 @@ fun NavDisplay(
+     onBack: () -> Unit = { navController.pop() },
+     transition: NavTransition = NavTransitions.MiuixDefault,
+     effects: NavDisplayEffects = NavDisplayEffects(),
++    enablePredictiveBack: Boolean = true,
+     content: NavEntryBuilder.() -> Unit,
+ ) {
+     NavDisplay(
+@@ -1016,6 +1043,7 @@ fun NavDisplay(
+         onBack = onBack,
+         transition = transition,
+         effects = effects,
++        enablePredictiveBack = enablePredictiveBack,
+         content = content,
+     )
+ }
+@@ -1032,6 +1060,7 @@ fun NavDisplay(
+  * @param onBack callback for a system/predictive back; defaults to popping the last entry.
+  * @param transition the global default [NavTransition]; per-route overrides win.
+  * @param effects orthogonal visual effects.
++ * @param enablePredictiveBack whether the route follows system Back gesture progress.
+  */
+ @Composable
+ internal fun NavDisplay(
+@@ -1041,6 +1070,7 @@ internal fun NavDisplay(
+     onBack: () -> Unit = { backStack.removeLastOrNull() },
+     transition: NavTransition = NavTransitions.MiuixDefault,
+     effects: NavDisplayEffects = NavDisplayEffects(),
++    enablePredictiveBack: Boolean = true,
+ ) {
+     require(backStack.isNotEmpty()) { "NavDisplay back stack cannot be empty" }
+     NavDisplayLayout(
+@@ -1049,6 +1079,7 @@ internal fun NavDisplay(
+         onBack = onBack,
+         transition = transition,
+         effects = effects,
++        enablePredictiveBack = enablePredictiveBack,
+         modifier = modifier,
+     )
+ }
 diff --git a/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeDismiss.kt b/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeDismiss.kt
 index 0e898b64..2bb8c360 100644
 --- a/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/NavSwipeDismiss.kt
@@ -682,6 +771,52 @@ index 0e898b64..2bb8c360 100644
                  // Unclamped here; anchoredProgress clamps the total to [min(anchor, 0), MAX_FINGER_PROGRESS].
                  val fingerProgress = dismissTravelPx / extent
                  val touchY = change.position.y
+diff --git a/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/PredictiveBackHandler.kt b/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/PredictiveBackHandler.kt
+index 515dcd35..f88c2c54 100644
+--- a/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/PredictiveBackHandler.kt
++++ b/miuix-nav/src/commonMain/kotlin/top/yukonga/miuix/kmp/nav/gesture/PredictiveBackHandler.kt
+@@ -95,6 +95,7 @@ fun PredictiveBackHandler(
+ @Composable
+ internal fun PredictiveBackHandlerWithSessions(
+     enabled: Boolean,
++    progressEnabled: Boolean = true,
+     onProgress: suspend (sessionId: Long, events: Flow<NavBackEvent>) -> Unit,
+     onCommit: (sessionId: Long?) -> Unit,
+     onCancel: (sessionId: Long) -> Unit,
+@@ -107,6 +108,7 @@ internal fun PredictiveBackHandlerWithSessions(
+     val handler = remember(dispatcher, scope) { NavigationEventFlowAdapter(scope) }
+     SideEffect {
+         handler.isBackEnabled = enabled
++        handler.progressEnabled = progressEnabled
+         handler.currentOnProgress = onProgress
+         handler.currentOnCommit = onCommit
+         handler.currentOnCancel = onCancel
+@@ -141,6 +143,7 @@ internal class NavigationEventFlowAdapter(
+     isBackEnabled = false,
+     isForwardEnabled = false,
+ ) {
++    var progressEnabled: Boolean = true
+     var currentOnProgress: suspend (sessionId: Long, events: Flow<NavBackEvent>) -> Unit = { _, _ -> }
+     var currentOnCommit: (sessionId: Long?) -> Unit = {}
+     var currentOnCancel: (sessionId: Long) -> Unit = {}
+@@ -161,6 +164,8 @@ internal class NavigationEventFlowAdapter(
+     override fun onBackCancelled() = handleBackCancelled()
+ 
+     internal fun handleBackStarted(event: NavigationEvent) {
++        // Keep the handler registered and treat a completed Back as a discrete pop.
++        if (!progressEnabled) return
+         val sessionId = ++nextSessionId
+         val ch = Channel<NavBackEvent>(capacity = Channel.UNLIMITED)
+         channel = ch
+@@ -182,7 +187,7 @@ internal class NavigationEventFlowAdapter(
+         collector = null
+         activeSessionId = null
+         if (ch == null || job == null || sessionId == null) {
+-            // Discrete trigger: no gesture session was ever started. Commit directly; the
++            // Discrete trigger or progress disabled. Commit directly; the
+             // commit settle animates the pop through the shared spring from wherever an
+             // in-flight transition currently sits.
+             currentOnCommit(null)
 diff --git a/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/PullToRefresh.kt b/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/PullToRefresh.kt
 index 0c576ee4..091a3877 100644
 --- a/miuix-ui/src/commonMain/kotlin/top/yukonga/miuix/kmp/basic/PullToRefresh.kt

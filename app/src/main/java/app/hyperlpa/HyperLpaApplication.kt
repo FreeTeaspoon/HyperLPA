@@ -1,9 +1,7 @@
 package app.hyperlpa
 
 import android.app.Application
-import android.content.pm.ApplicationInfo
 import android.util.Log
-import androidx.core.content.edit
 import app.hyperlpa.data.LpaRepository
 import app.hyperlpa.data.backup.HyperLpaBackupManager
 import app.hyperlpa.data.cloud.NekokoCloudService
@@ -64,20 +62,11 @@ class HyperLpaApplication : Application() {
                 runCatching { metadataStore.cleanupOrphanedIconFiles() }
             }
         }
-        runCatching {
-            val exemptions = buildList {
-                add("Landroid/content/pm/ApplicationInfo;->setEnableOnBackInvokedCallback")
-                if (BuildConfig.HAS_PRIVILEGED_TELEPHONY) {
-                    add("Landroid/telephony/")
-                    add("Lcom/android/internal/telephony/")
-                }
+        if (BuildConfig.HAS_PRIVILEGED_TELEPHONY) {
+            runCatching {
+                HiddenApiBypass.addHiddenApiExemptions("Landroid/telephony/", "Lcom/android/internal/telephony/")
             }
-            HiddenApiBypass.addHiddenApiExemptions(*exemptions.toTypedArray())
         }
-        applyPredictiveBackFlag(
-            getSharedPreferences(RuntimeUiPreferences, MODE_PRIVATE)
-                .getBoolean(PredictiveBackKey, true),
-        )
         applicationScope.launch { ProfileArtworkSnapshots.prewarm(this@HyperLpaApplication) }
         applicationScope.launch {
             // A temporarily unavailable Keystore must not prevent the app from
@@ -103,30 +92,7 @@ class HyperLpaApplication : Application() {
         provisioningCoordinator
     }
 
-    fun setPredictiveBackEnabled(enabled: Boolean) {
-        getSharedPreferences(RuntimeUiPreferences, MODE_PRIVATE)
-            .edit { putBoolean(PredictiveBackKey, enabled) }
-        applyPredictiveBackFlag(enabled)
-    }
-
-    fun isPredictiveBackEnabled(): Boolean =
-        getSharedPreferences(RuntimeUiPreferences, MODE_PRIVATE)
-            .getBoolean(PredictiveBackKey, true)
-
-    private fun applyPredictiveBackFlag(enabled: Boolean) {
-        runCatching {
-            val method = ApplicationInfo::class.java.getDeclaredMethod(
-                "setEnableOnBackInvokedCallback",
-                Boolean::class.javaPrimitiveType,
-            )
-            method.isAccessible = true
-            method.invoke(applicationInfo, enabled)
-        }
-    }
-
     private companion object {
-        const val RuntimeUiPreferences = "runtime_ui_preferences"
-        const val PredictiveBackKey = "predictive_back"
         const val RestoreLogTag = "HyperLpaRestore"
     }
 }

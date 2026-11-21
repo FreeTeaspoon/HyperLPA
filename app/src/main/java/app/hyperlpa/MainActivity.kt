@@ -91,9 +91,6 @@ class MainActivity : ComponentActivity() {
         initialSettings = runBlocking(Dispatchers.IO) {
             applicationGraph.settingsStore.settings.first()
         }
-        if (applicationGraph.isPredictiveBackEnabled() != initialSettings.predictiveBack) {
-            applicationGraph.setPredictiveBackEnabled(initialSettings.predictiveBack)
-        }
         super.onCreate(savedInstanceState)
         applyHyperLpaSystemBars(
             isDark = when (initialSettings.themeMode) {
@@ -179,16 +176,6 @@ class MainActivity : ComponentActivity() {
                     firstReaderConfiguration = false
                 } else if (!permissionRequestStarted) {
                     viewModel.refreshReaders()
-                }
-            }
-            LaunchedEffect(state.settingsLoaded, state.settings.predictiveBack) {
-                // Startup already applies the saved flag before onCreate. Recreate only
-                // when the preference changes while this activity is running.
-                if (state.settingsLoaded &&
-                    applicationGraph.isPredictiveBackEnabled() != state.settings.predictiveBack
-                ) {
-                    applicationGraph.setPredictiveBackEnabled(state.settings.predictiveBack)
-                    recreate()
                 }
             }
             HyperLpaTheme(settings = state.settings) {
