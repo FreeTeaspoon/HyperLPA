@@ -128,7 +128,7 @@ import top.yukonga.miuix.kmp.basic.SwitchDefaults
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.glass.Close
+import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.icon.glass.Delete
 import top.yukonga.miuix.kmp.icon.extended.Alarm
 import top.yukonga.miuix.kmp.icon.extended.Community
@@ -150,6 +150,7 @@ import top.yukonga.miuix.kmp.utils.PressFeedbackType
 import top.yukonga.miuix.kmp.utils.overScrollVertical
 import top.yukonga.miuix.kmp.utils.scrollEndHaptic
 import app.hyperlpa.ui.components.Os4BottomSheet as WindowBottomSheet
+import top.yukonga.miuix.kmp.basic.IconButton as PlainIconButton
 
 @Composable
 fun ProfilesScreen(
@@ -1599,15 +1600,7 @@ private fun NotificationDetailsSheet(
     WindowBottomSheet(
         show = show,
         title = profileName ?: stringResource(R.string.notification_details_title),
-        startAction = {
-            val dismissState = LocalDismissState.current
-            IconButton(onClick = { dismissState?.invoke() ?: onDismissRequest() }) {
-                Icon(
-                    imageVector = MiuixIcons.Glass.Close,
-                    contentDescription = stringResource(R.string.common_close),
-                )
-            }
-        },
+        startAction = { NotificationSheetCloseButton(onDismissRequest) },
         insideMargin = DpSize(24.dp, 0.dp),
         onDismissRequest = onDismissRequest,
         onDismissFinished = onDismissFinished,
@@ -1692,15 +1685,7 @@ private fun NotificationHistoryDetailsSheet(
     WindowBottomSheet(
         show = show,
         title = entry.profileName ?: operationLabel,
-        startAction = {
-            val dismissState = LocalDismissState.current
-            IconButton(onClick = { dismissState?.invoke() ?: onDismissRequest() }) {
-                Icon(
-                    imageVector = MiuixIcons.Glass.Close,
-                    contentDescription = stringResource(R.string.common_close),
-                )
-            }
-        },
+        startAction = { NotificationSheetCloseButton(onDismissRequest) },
         insideMargin = DpSize(24.dp, 0.dp),
         onDismissRequest = onDismissRequest,
         onDismissFinished = onDismissFinished,
@@ -1837,6 +1822,22 @@ private fun NotificationHistoryActionsSheet(
             )
             ProfileActionSheetFooterSpacer()
         }
+    }
+}
+
+@Composable
+private fun NotificationSheetCloseButton(onDismissRequest: () -> Unit) {
+    val dismiss = LocalDismissState.current ?: onDismissRequest
+    PlainIconButton(
+        onClick = dismiss,
+        minWidth = 44.dp,
+        minHeight = 44.dp,
+    ) {
+        Icon(
+            imageVector = MiuixIcons.Regular.Close,
+            contentDescription = stringResource(R.string.common_close),
+            tint = MiuixTheme.colorScheme.onSurface,
+        )
     }
 }
 
