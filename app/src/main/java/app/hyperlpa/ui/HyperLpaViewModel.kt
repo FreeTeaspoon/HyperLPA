@@ -708,8 +708,8 @@ class HyperLpaViewModel(
                 }
             }
             AppRoute.DownloadProfile -> {
-                activationCodeDraft.value = ""
                 pop()
+                activationCodeDraft.value = ""
             }
             AppRoute.CompatibilityWizard -> dismissCompatibilityWizard()
             is AppRoute.ProfileDownloadResult -> finishProfileDownload()

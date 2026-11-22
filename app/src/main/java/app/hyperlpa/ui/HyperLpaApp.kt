@@ -323,8 +323,11 @@ fun HyperLpaApp(
                 swipeDismiss = swipeBackDirection,
             ) {
                 val singleDownloadActive by viewModel.singleDownloadActive.collectAsStateWithLifecycle()
+                val draft = currentState.value.activationCodeDraft
+                var visibleDraft by remember { mutableStateOf(draft) }
+                if (AppRoute.DownloadProfile in backStack) visibleDraft = draft
                 DownloadProfileScreen(
-                    initialValue = currentState.value.activationCodeDraft,
+                    initialValue = visibleDraft,
                     imei = currentState.value.settings.imei,
                     busy = singleDownloadActive,
                     readers = currentState.value.lpa.readers,
