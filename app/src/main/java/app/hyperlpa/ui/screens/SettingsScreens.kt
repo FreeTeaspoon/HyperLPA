@@ -19,11 +19,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.InputTransformation
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.maxLength
 import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.runtime.LaunchedEffect
 import android.net.Uri
@@ -46,6 +48,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
@@ -98,6 +101,7 @@ import app.hyperlpa.ui.components.ValuePreference
 import app.hyperlpa.ui.navigation.AppRoute
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
+import top.yukonga.miuix.kmp.layout.DialogDefaults
 import top.yukonga.miuix.kmp.basic.Icon
 import app.hyperlpa.ui.components.Os4IconButton as IconButton
 import top.yukonga.miuix.kmp.basic.Slider
@@ -1377,7 +1381,6 @@ fun BackupRestoreSettingsScreen(onBack: () -> Unit, viewModel: HyperLpaViewModel
         }
     }
     OverlayDialog(show = showCreate, title = stringResource(R.string.backup_protect_title),
-        summary = stringResource(R.string.backup_protect_summary) + "\n" + stringResource(R.string.backup_keep_secure_summary),
         onDismissRequest = { showCreate = false },
         onDismissFinished = {
             if (!showCreate) {
@@ -1388,69 +1391,79 @@ fun BackupRestoreSettingsScreen(onBack: () -> Unit, viewModel: HyperLpaViewModel
     ) {
         val mismatch = confirmation.isNotEmpty() && (!backupPassword.startsWith(confirmation) ||
             confirmation.length >= backupPassword.length) && backupPassword != confirmation
-        TextField(value = backupPassword, onValueChange = { backupPassword = it.take(128) },
-            label = stringResource(R.string.backup_password), singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Next),
-            modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(12.dp))
-        TextField(value = confirmation, onValueChange = { confirmation = it.take(128) },
-            label = stringResource(R.string.backup_confirm_password), singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-            modifier = Modifier.fillMaxWidth())
-        if (mismatch) FieldError(stringResource(R.string.backup_passwords_differ))
-        Spacer(Modifier.height(12.dp))
-        DialogActionRow(onCancel = { showCreate = false }, confirmText = stringResource(R.string.common_save),
-            confirmEnabled = (backupPassword.isEmpty() && confirmation.isEmpty()) ||
-                (backupPassword.length >= 10 && backupPassword == confirmation),
-            onConfirm = {
-                if (showCreate) {
-                    if (viewModel.prepareBackup(backupPassword)) {
-                        showCreate = false
-                        runCatching { createPicker.launch("hyperlpa-backup-${LocalDate.now()}.json") }
-                            .onFailure {
-                                viewModel.cancelPreparedBackup()
-                                snackbar(pickerUnavailable, SnackbarDuration.Long)
-                            }
-                    } else snackbar(createFailed, SnackbarDuration.Short)
-                }
-            })
+        BackupDialogContent(
+            summary = stringResource(R.string.backup_protect_summary) + "\n" +
+                stringResource(R.string.backup_keep_secure_summary),
+            fields = {
+                TextField(value = backupPassword, onValueChange = { backupPassword = it.take(128) },
+                    label = stringResource(R.string.backup_password), singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Next),
+                    modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(12.dp))
+                TextField(value = confirmation, onValueChange = { confirmation = it.take(128) },
+                    label = stringResource(R.string.backup_confirm_password), singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                    modifier = Modifier.fillMaxWidth())
+                if (mismatch) { FieldError(stringResource(R.string.backup_passwords_differ)) }
+            },
+        ) {
+            DialogActionRow(onCancel = { showCreate = false }, confirmText = stringResource(R.string.common_save),
+                confirmEnabled = (backupPassword.isEmpty() && confirmation.isEmpty()) ||
+                    (backupPassword.length >= 10 && backupPassword == confirmation),
+                onConfirm = {
+                    if (showCreate) {
+                        if (viewModel.prepareBackup(backupPassword)) {
+                            showCreate = false
+                            runCatching { createPicker.launch("hyperlpa-backup-${LocalDate.now()}.json") }
+                                .onFailure {
+                                    viewModel.cancelPreparedBackup()
+                                    snackbar(pickerUnavailable, SnackbarDuration.Long)
+                                }
+                        } else snackbar(createFailed, SnackbarDuration.Short)
+                    }
+                })
+        }
     }
     OverlayDialog(show = showRestore, title = stringResource(R.string.backup_restore_dialog_title),
-        summary = stringResource(R.string.backup_restore_dialog_summary),
         onDismissRequest = { showRestore = false },
         onDismissFinished = {
             restoreDialogExiting = false
             if (!showRestore && !restoring) clearRestoreDraft()
         },
     ) {
-        TextField(value = restorePassword, onValueChange = { restorePassword = it.take(128); restoreError = false },
-            label = stringResource(R.string.backup_password), useLabelAsPlaceholder = true, singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-            modifier = Modifier.fillMaxWidth())
-        if (restoreError) FieldError(restoreFailed)
-        Spacer(Modifier.height(12.dp))
-        DialogActionRow(onCancel = { showRestore = false }, confirmText = stringResource(R.string.common_restore),
-            onConfirm = {
-                val uri = restoreUri
-                if (showRestore && !restoring && uri != null) {
-                    showRestore = false
-                    restoreDialogExiting = true
-                    restoring = true
-                    viewModel.restoreBackup(uri, restorePassword) { success ->
-                        restoring = false
-                        if (success) {
-                            if (!restoreDialogExiting) clearRestoreDraft()
-                        } else {
-                            restoreError = true
-                            showRestore = true
+        BackupDialogContent(
+            summary = stringResource(R.string.backup_restore_dialog_summary),
+            fields = {
+                TextField(value = restorePassword, onValueChange = { restorePassword = it.take(128); restoreError = false },
+                    label = stringResource(R.string.backup_password), useLabelAsPlaceholder = true, singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                    modifier = Modifier.fillMaxWidth())
+                if (restoreError) { FieldError(restoreFailed) }
+            },
+        ) {
+            DialogActionRow(onCancel = { showRestore = false }, confirmText = stringResource(R.string.common_restore),
+                onConfirm = {
+                    val uri = restoreUri
+                    if (showRestore && !restoring && uri != null) {
+                        showRestore = false
+                        restoreDialogExiting = true
+                        restoring = true
+                        viewModel.restoreBackup(uri, restorePassword) { success ->
+                            restoring = false
+                            if (success) {
+                                if (!restoreDialogExiting) clearRestoreDraft()
+                            } else {
+                                restoreError = true
+                                showRestore = true
+                            }
+                            snackbar(if (success) restored else restoreFailed, SnackbarDuration.Short)
                         }
-                        snackbar(if (success) restored else restoreFailed, SnackbarDuration.Short)
                     }
-                }
-            })
+                })
+        }
     }
     OverlayDialog(show = showReset, title = stringResource(R.string.backup_reset_dialog_title),
         summary = stringResource(R.string.backup_reset_dialog_summary), onDismissRequest = { showReset = false }) {
@@ -1467,6 +1480,28 @@ fun BackupRestoreSettingsScreen(onBack: () -> Unit, viewModel: HyperLpaViewModel
     app.hyperlpa.ui.components.CompactProgressDialog(progress) { locked ->
         progressLocked = locked
         viewModel.updateOperationPopupLock(locked, owner = "backup")
+    }
+}
+
+@Composable
+private fun BackupDialogContent(
+    summary: String,
+    fields: @Composable () -> Unit,
+    actions: @Composable () -> Unit,
+) {
+    Column(Modifier.fillMaxWidth()) {
+        Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+            Text(
+                text = summary,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                fontSize = MiuixTheme.textStyles.body1.fontSize,
+                textAlign = TextAlign.Center,
+                color = DialogDefaults.summaryColor(),
+            )
+            fields()
+        }
+        Spacer(Modifier.height(12.dp))
+        actions()
     }
 }
 
