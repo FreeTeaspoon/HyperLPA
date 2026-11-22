@@ -8,6 +8,8 @@ import android.os.Build
 import android.os.LocaleList
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ime
@@ -47,17 +49,21 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
@@ -65,6 +71,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import app.hyperlpa.data.LpaRepositoryState
 import app.hyperlpa.data.settings.ProfileLayout
@@ -98,7 +105,7 @@ import app.hyperlpa.ui.components.pageStateTransition
 import app.hyperlpa.ui.components.ResolvedProfileArtwork
 import app.hyperlpa.ui.components.ProfileArtworkState
 import app.hyperlpa.ui.components.SectionHeading
-import app.hyperlpa.ui.components.ValuePreference
+import app.hyperlpa.ui.components.PageStateFadeInMillis
 import app.hyperlpa.ui.components.DetailLazyScaffold
 import app.hyperlpa.ui.components.DialogActionRow
 import app.hyperlpa.ui.components.TextInputDialog
@@ -128,6 +135,7 @@ import top.yukonga.miuix.kmp.basic.SwitchDefaults
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.basic.ArrowRight
 import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.icon.glass.Delete
 import top.yukonga.miuix.kmp.icon.extended.Alarm
@@ -626,13 +634,10 @@ private fun ProfilesHeader(
             showEnrichmentLoading = true
         }
     }
-    // A reader without a cached card has no EID until it opens. Holding the row's place keeps
-    // the rows and the loading state below it from shifting when the EID arrives.
     val connecting = state.lpa.operation is LpaOperation.Connecting
     Column(modifier = modifier.fillMaxWidth()) {
-        val showEid = state.settings.showEidOnHome && (state.lpa.euiccInfo != null || connecting)
+        val showEid = state.settings.showEidOnHome
         val showReaderSelector = state.settings.showReaderSelectorOnHome && state.lpa.readers.isNotEmpty()
-        val cardName = state.currentEuiccName
         if (showReaderSelector || showEid) {
             GroupedCard {
                 if (showReaderSelector) {
@@ -654,26 +659,8 @@ private fun ProfilesHeader(
                         },
                     )
                 }
-                val info = state.lpa.euiccInfo
-                if (showEid && info == null) {
-                    ValuePreference(
-                        title = stringResource(R.string.euicc_eid),
-                        value = stringResource(R.string.euicc_eid_reading),
-                    )
-                } else if (showEid && info != null) {
-                    val redactedEid = redactIdentifier(
-                        value = info.eid,
-                        mode = state.settings.eidRedaction,
-                    )
-                    ArrowPreference(
-                        title = cardName ?: stringResource(R.string.euicc_eid),
-                        summary = if (cardName == null) {
-                            redactedEid
-                        } else {
-                            stringResource(R.string.euicc_eid_named_summary, redactedEid)
-                        },
-                        onClick = onOpenEuiccDetails,
-                    )
+                if (showEid) {
+                    ProfilesEidRow(state, connecting, onOpenEuiccDetails)
                 }
             }
         }
@@ -696,6 +683,67 @@ private fun ProfilesHeader(
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 modifier = Modifier.padding(horizontal = 28.dp).padding(bottom = 6.dp),
             )
+        }
+    }
+}
+
+@Composable
+private fun ProfilesEidRow(state: HyperLpaUiState, connecting: Boolean, onOpenDetails: () -> Unit) {
+    val info = state.lpa.euiccInfo
+    val cardName = state.currentEuiccName
+    val redaction = state.settings.eidRedaction
+    val title = cardName ?: stringResource(R.string.euicc_eid)
+    val summary = if (info == null) {
+        stringResource(if (connecting) R.string.euicc_eid_reading else R.string.common_unavailable)
+    } else {
+        val eid = redactIdentifier(info.eid, redaction)
+        if (cardName == null) eid else stringResource(R.string.euicc_eid_named_summary, eid)
+    }
+    val arrowAlpha = animateFloatAsState(
+        targetValue = if (info != null) 1f else 0f,
+        animationSpec = tween(PageStateFadeInMillis),
+        label = "EID arrow",
+    )
+    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    BasicComponent(
+        onClick = onOpenDetails.takeIf { info != null },
+        endActions = {
+            Icon(
+                imageVector = MiuixIcons.Basic.ArrowRight,
+                contentDescription = null,
+                modifier = Modifier.padding(start = 8.dp).size(width = 10.dp, height = 16.dp).graphicsLayer {
+                    alpha = arrowAlpha.value
+                    scaleX = if (rtl) -1f else 1f
+                },
+                tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
+            )
+        },
+    ) {
+        val labels = title to summary
+        key(redaction) {
+            AnimatedContent(
+                targetState = labels,
+                transitionSpec = { pageStateTransition() },
+                label = "EID labels",
+            ) { shown ->
+                Column(if (shown == labels) Modifier else Modifier.clearAndSetSemantics {}) {
+                    Text(
+                        text = shown.first,
+                        fontSize = MiuixTheme.textStyles.headline1.fontSize,
+                        fontWeight = FontWeight.Medium,
+                        color = MiuixTheme.colorScheme.onBackground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = shown.second,
+                        fontSize = MiuixTheme.textStyles.body2.fontSize,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
         }
     }
 }

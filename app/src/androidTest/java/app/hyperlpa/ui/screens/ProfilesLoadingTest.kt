@@ -14,6 +14,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.onRoot
 import androidx.test.core.app.ApplicationProvider
 import android.content.Context
@@ -134,6 +135,27 @@ class ProfilesLoadingTest {
         assertResultHidden()
         compose.runOnIdle { state.value = loaded }
         assertControlsEnabled()
+    }
+
+    @Test
+    fun switchingToAnOfflineReaderKeepsTheEidRowInPlace() {
+        val offline = ReaderInfo("offline", "Offline reader", ReaderKind.OMAPI)
+        val online = loaded.copy(lpa = loaded.lpa.copy(readers = listOf(reader, offline)))
+        val state = mutableStateOf(online)
+        show({ state.value })
+
+        val eidTitle = compose.onNodeWithText("EID", useUnmergedTree = true)
+        val originalTop = eidTitle.getUnclippedBoundsInRoot().top
+        compose.runOnIdle {
+            state.value = online.copy(lpa = online.lpa.copy(
+                selectedReaderId = offline.id, euiccInfo = null, profiles = emptyList(),
+            ))
+        }
+        assertEquals(originalTop, eidTitle.getUnclippedBoundsInRoot().top)
+        compose.onNodeWithText("Unavailable").assertIsDisplayed().assertHasNoClickAction()
+
+        compose.runOnIdle { state.value = online }
+        assertEquals(originalTop, eidTitle.getUnclippedBoundsInRoot().top)
     }
 
     @Test
