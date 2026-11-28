@@ -829,17 +829,11 @@ private fun MainShell(
             }
         }
     } else {
-        val profilesLoading = state.isProfilesLoading
-        val useStaticBackdrop = profilesLoading && mainPagerState.selectedPage == AppTab.PROFILES.ordinal
-        val backdrop = rememberAppBackdrop()
+        val profilesLoading = state.isProfilesLoading && mainPagerState.selectedPage == AppTab.PROFILES.ordinal
+        val backdrop = rememberAppBackdrop(captureContent = !profilesLoading)
         val blurActive = backdrop != null
         val showLabels = state.settings.navigationLabels == NavigationLabels.ICON_AND_TEXT
         val regularBarColor = if (blurActive) Color.Transparent else MiuixTheme.colorScheme.surface
-        val solidFloatingColor = if (profilesLoading) {
-            MiuixTheme.colorScheme.surface
-        } else {
-            MiuixTheme.colorScheme.surfaceContainer
-        }
 
         Scaffold(
             containerColor = MiuixTheme.colorScheme.surface,
@@ -856,7 +850,6 @@ private fun MainShell(
                             isBlurActive = blurActive,
                             isDark = MiuixTheme.colorScheme.surface.luminance() < 0.5f,
                             showLabels = showLabels,
-                            solidContainerColor = solidFloatingColor,
                         )
                     } else {
                         GlassNavigationBar(
@@ -896,23 +889,9 @@ private fun MainShell(
                 }
             },
         ) { padding ->
-            Box(Modifier.fillMaxSize()) {
-                if (useStaticBackdrop && backdrop != null) {
-                    Spacer(Modifier.fillMaxSize().layerBackdrop(backdrop))
-                }
-                pagerContent(
-                    Modifier
-                        .fillMaxSize()
-                        .then(
-                            if (backdrop != null && !useStaticBackdrop) {
-                                Modifier.layerBackdrop(backdrop)
-                            } else {
-                                Modifier
-                            },
-                        ),
-                    padding,
-                )
-            }
+            // Keep the capture's coordinates and layer through the first Profiles result.
+            val viewport = Modifier.fillMaxSize()
+            pagerContent(if (backdrop == null) viewport else viewport.layerBackdrop(backdrop), padding)
         }
     }
 }
@@ -933,9 +912,8 @@ private fun MainTabPage(
     val inboxRefreshing by viewModel.remoteDevices.inboxRefreshing.collectAsStateWithLifecycle()
     val inboxRefreshFailure by viewModel.remoteDevices.inboxRefreshFailure.collectAsStateWithLifecycle()
     val inboxTarget by viewModel.phoneInboxTarget.collectAsStateWithLifecycle()
-    val profilesLoading = state.isProfilesLoading
-    val useStaticBackdrop = profilesLoading && tab == AppTab.PROFILES
-    val backdrop = rememberAppBackdrop()
+    val profilesLoading = tab == AppTab.PROFILES && state.isProfilesLoading
+    val backdrop = rememberAppBackdrop(captureContent = !profilesLoading)
     val listState = rememberLazyListState()
     val gridState = rememberLazyGridState()
     val listViewport = rememberHeaderViewport(listState)
@@ -990,19 +968,9 @@ private fun MainTabPage(
             top = innerPadding.calculateTopPadding(),
             bottom = outerPadding.calculateBottomPadding(),
         )
-        val modifier = Modifier
-            .fillMaxSize()
-            .then(
-                if (backdrop != null && !useStaticBackdrop) {
-                    Modifier.layerBackdrop(backdrop)
-                } else {
-                    Modifier
-                },
-            )
-        Box(Modifier.fillMaxSize().horizontalCutoutPadding()) {
-            if (useStaticBackdrop && backdrop != null) {
-                Spacer(Modifier.fillMaxSize().layerBackdrop(backdrop))
-            }
+        val modifier = Modifier.fillMaxSize()
+        val viewport = modifier.horizontalCutoutPadding()
+        Box(if (backdrop == null) viewport else viewport.layerBackdrop(backdrop)) {
             when (tab) {
                 AppTab.PROFILES -> ProfilesScreen(
                     listState = listState, gridState = gridState, onViewportChanged = { profilesViewport = it },

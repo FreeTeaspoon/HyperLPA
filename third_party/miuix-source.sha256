@@ -636,7 +636,7 @@ e2c1970ad672a105bd0c0c1ac68c500218747927ac92bf8ffcffa8760a1f4234  miuix-glass/sr
 defee21e4d8b81869cff844b754fb0296682a28ede47ea144882d1efcfa85a7c  miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassIconButton.kt
 5402f24fe5ccc714fd63c474a5af432cab7a3cf16b160a83eacc61e9b1a57342  miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassIconDropdownMenu.kt
 eef39533c43404696564fd437f0c8a112f7fea6f90e6f8d37d26eeea2ff21964  miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassMotion.kt
-6e9e2a87edcd3ced9c9455ea65a9683c4368333680506b0eb00caae066b909cc  miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassNavigationBar.kt
+566457e1b693ac548bea7ef0f95cc75e463229b674c3b7bfd316af0e2a78d774  miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassNavigationBar.kt
 f436390ecd5aad90e471d014fec3070cb82e56ed6bb6f2824423aaab14c5d016  miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassNavigationBarLayout.kt
 a64296f95250ab087a2890394bc30f78e14b8f710b4968b7dcb343efefcdbaab  miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassPanel.kt
 4c4aa5ce9640e2650fbfbeaaacb8f028cdb7fc0593d21a26891290fa2911d52c  miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassPopup.kt

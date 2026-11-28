@@ -394,7 +394,7 @@ index 87020d1e..cab7d4c2 100644
              groups.forEachIndexed { groupIndex, entry ->
                  entry.items.forEachIndexed { itemIndex, item ->
 diff --git a/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassNavigationBar.kt b/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassNavigationBar.kt
-index 419c06c3..1e822771 100644
+index 419c06c3..477686d5 100644
 --- a/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassNavigationBar.kt
 +++ b/miuix-glass/src/commonMain/kotlin/top/yukonga/miuix/kmp/glass/GlassNavigationBar.kt
 @@ -230,6 +230,7 @@ fun GlassNavigationBar(
@@ -405,7 +405,25 @@ index 419c06c3..1e822771 100644
  ) {
      if (items.isEmpty()) return
      val index = selectedIndex.coerceIn(0, items.lastIndex)
-@@ -550,12 +551,15 @@ fun GlassNavigationBar(
+@@ -459,10 +460,14 @@ fun GlassNavigationBar(
+                     .layout { measurable, constraints ->
+                         // Both edges are clamped on every frame, not just at the target. Keep the
+                         // spring alive so the other edge still rebounds.
++                        val widthPx = constraints.maxWidth.toFloat()
++                        val initialSlot = ((widthPx - contentInset * 2f) / items.size).coerceAtLeast(0f)
++                        val initialLeft = contentInset - overhang + index * initialSlot
++                        val hasAnimatedBounds = right.value > left.value
+                         val bounds = navigationIndicatorBounds(
+-                            left.value,
+-                            right.value,
+-                            constraints.maxWidth.toFloat(),
++                            if (hasAnimatedBounds) left.value else initialLeft,
++                            if (hasAnimatedBounds) right.value else initialLeft + initialSlot + overhang * 2f,
++                            widthPx,
+                             contentInset - overhang,
+                         )
+                         val start = bounds.x.roundToInt()
+@@ -550,12 +555,15 @@ fun GlassNavigationBar(
                                  horizontalAlignment = Alignment.CenterHorizontally,
                                  verticalArrangement = Arrangement.spacedBy(GlassNavigationBarDefaults.LabelSpacing),
                              ) {

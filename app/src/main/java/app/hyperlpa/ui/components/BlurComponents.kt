@@ -15,7 +15,7 @@ import top.yukonga.miuix.kmp.material.isRenderEffectSupported
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 @Composable
-fun rememberAppBackdrop(): LayerBackdrop? {
+fun rememberAppBackdrop(captureContent: Boolean = true): LayerBackdrop? {
     if (
         !LocalBlurEnabled.current ||
         !isRenderEffectSupported() ||
@@ -24,7 +24,7 @@ fun rememberAppBackdrop(): LayerBackdrop? {
     val surface = MiuixTheme.colorScheme.surface
     return rememberLayerBackdrop {
         drawRect(surface)
-        drawContent()
+        if (captureContent) drawContent()
     }
 }
 

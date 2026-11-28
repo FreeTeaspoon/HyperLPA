@@ -1,6 +1,7 @@
 package app.hyperlpa
 
 import android.Manifest
+import android.app.UiModeManager
 import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -154,6 +155,16 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val state = viewModel.state.collectAsStateWithLifecycle().value
+            LaunchedEffect(state.settings.themeMode) {
+                // Android uses the last application night mode for its launch window.
+                getSystemService(UiModeManager::class.java)?.setApplicationNightMode(
+                    when (state.settings.themeMode) {
+                        ThemeMode.SYSTEM -> UiModeManager.MODE_NIGHT_AUTO
+                        ThemeMode.LIGHT -> UiModeManager.MODE_NIGHT_NO
+                        ThemeMode.DARK -> UiModeManager.MODE_NIGHT_YES
+                    },
+                )
+            }
             var firstReaderConfiguration by remember { mutableStateOf(true) }
             LaunchedEffect(
                 state.settings.compatibilityWizardCompleted,
